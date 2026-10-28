@@ -16,8 +16,11 @@ include(FetchContent)
 FetchContent_Declare(lzokay
     GIT_REPOSITORY https://github.com/AxioDL/lzokay.git
     GIT_TAG db2df1fcbebc2ed06c10f727f72567d40f06a2be
-    GIT_SHALLOW FALSE)
+    GIT_SHALLOW FALSE
+    SOURCE_SUBDIR __dotm_skip_upstream_build)
 FetchContent_MakeAvailable(lzokay)
+add_library(lzokay STATIC "${lzokay_SOURCE_DIR}/lzokay.cpp")
+target_include_directories(lzokay PUBLIC "${lzokay_SOURCE_DIR}")
 add_library(dotm_ue3_package STATIC ue3_package.cpp)
 target_include_directories(dotm_ue3_package PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(dotm_ue3_package PRIVATE lzokay)
