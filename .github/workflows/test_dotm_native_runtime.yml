@@ -53,6 +53,8 @@ jobs:
           path: |
             native-build/dotm_ue3_probe
             native-build/dotm_ue3_probe.exe
+            native-build/dotm_dds_export
+            native-build/dotm_dds_export.exe
             native-build/dotm_pe_probe
             native-build/dotm_pe_probe.exe
           if-no-files-found: error
