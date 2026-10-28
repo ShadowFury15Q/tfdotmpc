@@ -1,12 +1,13 @@
 #include "xam_guest_input.hpp"
 #include <array>
-#include <atomic>
+#include <mutex>
 #include <cstdint>
 
 namespace dotm {
 namespace {
-std::atomic<XamInputHost*> active_input{nullptr};
-std::atomic<GuestMemory*> active_memory{nullptr};
+std::mutex active_mutex;
+XamInputHost* active_input=nullptr;
+GuestMemory* active_memory=nullptr;
 bool valid_write(std::uint32_t address) {
     constexpr std::uint64_t n=kXboxInputStateBytes;
     constexpr std::uint64_t table_begin=GuestMemory::kFunctionTableOffset;
@@ -35,15 +36,16 @@ std::uint32_t xam_input_get_state_guest(
     return kXamOk;
 }
 void bind_xam_guest_input(XamInputHost* input,GuestMemory* memory) noexcept {
-    // Host must unbind before releasing either service, and the caller must
-    // synchronize replacement against any concurrently executing guest calls.
-    active_input.store(input,std::memory_order_release);
-    active_memory.store(memory,std::memory_order_release);
+    std::lock_guard lock(active_mutex);
+    // Protect the pair so a guest never sees a half-updated binding.
+    active_input=input;
+    active_memory=memory;
 }
 std::uint32_t xam_bound_input_get_state(
     std::uint32_t user,std::uint32_t flags,std::uint32_t guest_address) {
-    auto* const in=active_input.load(std::memory_order_acquire);
-    auto* const mem=active_memory.load(std::memory_order_acquire);
+    std::lock_guard lock(active_mutex);
+    auto* const in=active_input;
+    auto* const mem=active_memory;
     if(!in||!mem)return kXamDeviceNotConnected;
     return xam_input_get_state_guest(*in,*mem,user,flags,guest_address);
 }
