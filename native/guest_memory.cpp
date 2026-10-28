@@ -116,8 +116,16 @@ void GuestMemory::load_pe(const std::filesystem::path& path){
  }
  copy_to_guest(kImageBase,b.first(header));
  for(const auto& section:checked){
-  if(section.length)commit(std::uint64_t(kImageBase)+section.rva,
-                           static_cast<std::size_t>(section.length));
+  if(section.length){
+   commit(std::uint64_t(kImageBase)+section.rva,
+          static_cast<std::size_t>(section.length));
+   // Committing an already mapped page does NOT clear it (VirtualAlloc
+   // MEM_COMMIT on Windows and mprotect on Linux both retain old bytes).
+   // A fresh PE image must zero its entire virtual section, including BSS,
+   // before copying the raw initialized portion on every load.
+   std::memset(address(kImageBase+section.rva),0,
+               static_cast<std::size_t>(section.length));
+  }
   if(section.raw)std::memcpy(address(kImageBase+section.rva),
                              v.data()+section.file_off,section.raw);
  }

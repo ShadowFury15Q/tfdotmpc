@@ -65,7 +65,7 @@ int main(int argc,char** argv){
   put16(pe,0x98,0x10b);put32(pe,0x98+28,dotm::GuestMemory::kImageBase);
   put32(pe,0x98+60,0x200);
   std::memcpy(pe.data()+0x178,".text",5);
-  put32(pe,0x178+8,0x100);put32(pe,0x178+12,0x1000);
+  put32(pe,0x178+8,0x200);put32(pe,0x178+12,0x1000);
   put32(pe,0x178+16,0x100);put32(pe,0x178+20,0x200);
   pe[0x200]=0xab;
   const auto file=std::filesystem::temp_directory_path()/
@@ -79,9 +79,21 @@ int main(int argc,char** argv){
              static_cast<std::streamsize>(bytes.size()));
    if(!out)throw std::runtime_error("Cannot write synthetic PE fixture");
   };
+  // This page was committed earlier. A PE load must not inherit stale
+  // bytes in either raw-section padding or its virtual-only BSS tail.
+  m.address(0x82001080)[0]=0xcd;
+  m.address(0x82001180)[0]=0xef;
   save(pe);m.load_pe(file);
   check(m.address(0x82001000)[0]==0xab,"Synthetic Xbox PE section mapped");
   check(m.address(0x82001001)[0]==0,"PE virtual zero-fill");
+  check(m.address(0x82001080)[0]==0,"PE initialized raw bytes replace stale data");
+  check(m.address(0x82001180)[0]==0,"PE virtual-only BSS zeroed on reused page");
+  m.address(0x82001080)[0]=0x12;
+  m.address(0x82001180)[0]=0x34;
+  m.load_pe(file);
+  check(m.address(0x82001000)[0]==0xab,"Repeated PE load restores initialized data");
+  check(m.address(0x82001080)[0]==0,"Repeated PE load clears old raw padding");
+  check(m.address(0x82001180)[0]==0,"Repeated PE load clears old virtual BSS");
   auto reject=[&](std::vector<std::uint8_t> invalid,const char* reason){
    save(invalid);
    bool failed=false;
