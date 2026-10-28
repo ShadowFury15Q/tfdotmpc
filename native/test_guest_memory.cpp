@@ -3,8 +3,8 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
-void fallback(void*,std::uint8_t*){}
-void target(void*,std::uint8_t*){}
+void fallback(PPCContext&,std::uint8_t*){}
+void target(PPCContext&,std::uint8_t*){}
 void check(bool ok,const char* reason){if(!ok)throw std::runtime_error(reason);}
 int main(int argc,char** argv){
  try {
