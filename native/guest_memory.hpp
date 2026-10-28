@@ -3,8 +3,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <span>
+struct PPCContext; // XenonRecomp's original CPU context; definition stays in private generated code.
 namespace dotm {
-using NativeFunction=void(*)(void*,std::uint8_t*);
+using NativeFunction=void(*)(PPCContext&,std::uint8_t*);
 struct FunctionEntry {std::uint32_t guest_address;NativeFunction native_function;};
 class GuestMemory {
 public:
