@@ -89,6 +89,8 @@ std::vector<std::uint8_t> package_with_exports(){
  const auto first=add_export(2,0,0,4);
  const auto second=add_export(1,1,0,3);
  const auto third=add_export(0,1,1,2);
+ put32(b,third+8,2);     // Third object lives inside export #2.
+ put32(b,second+16,3);   // Display suffix is name-number minus one.
  put32(b,53,std::uint32_t(b.size()));  // depends table begins after exports
  for(auto [idx,sz]:{std::pair{first,4u},std::pair{second,3u},std::pair{third,2u}}){
    put32(b,idx+36,std::uint32_t(b.size()));
@@ -123,6 +125,9 @@ int main(){
           px.exports()[2].generation_net_object_counts.size()==1 &&
           px.exports()[2].generation_net_object_counts[0]==200,
           "Single-generation package export");
+  require(px.object_reference_path(-1)=="Engine","Package import reference");
+  require(px.object_reference_path(3)=="Package_2.Core","Nested export and numbered FName");
+  require(px.export_class_path(0)=="Engine","Cross-table class reference");
   require(px.serialized_object(0).size()==4 && px.serialized_object(0)[0]==0x5Au,
           "View serialized object contents");
   auto pxz=dotm::Ue3Package::parse(compressed(with_exports));
@@ -134,6 +139,13 @@ int main(){
                      (std::uint32_t(with_exports[43])<<8)|with_exports[44];
   bad_extension=with_exports;
   bad_extension[export_offset+44]=2;
+  auto cyclic=with_exports;
+  put32(cyclic,export_offset+45+8,3);
+  auto cyclic_package=dotm::Ue3Package::parse(cyclic);
+  bool cycle_threw=false;
+  try{(void)cyclic_package.object_reference_path(3);}
+  catch(const std::runtime_error&){cycle_threw=true;}
+  require(cycle_threw,"Reject cyclic UE3 outer chains");
   bool extension_threw=false;
   try{(void)dotm::Ue3Package::parse(bad_extension);}
   catch(const std::runtime_error&){extension_threw=true;}
