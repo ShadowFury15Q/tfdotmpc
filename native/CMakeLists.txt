@@ -12,6 +12,13 @@ add_executable(dotm_recomp_bridge_test test_recomp_bridge.cpp)
 target_link_libraries(dotm_recomp_bridge_test PRIVATE dotm_recomp_bridge)
 enable_testing()
 add_test(NAME recompiled_ppc_dispatch_and_guest_store COMMAND dotm_recomp_bridge_test)
+add_executable(dotm_compiled_adapter_test
+  test_compiled_ppc_adapter.cpp compiled_ppc_adapter.cpp)
+target_include_directories(dotm_compiled_adapter_test
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures)
+target_link_libraries(dotm_compiled_adapter_test PRIVATE dotm_recomp_bridge)
+add_test(NAME xenonrecomp_real_mapping_abi_smoke COMMAND dotm_compiled_adapter_test)
+
 add_test(NAME guest_memory_and_native_dispatch COMMAND dotm_memory_test)
 
 add_executable(dotm_pe_probe boot_probe.cpp)
