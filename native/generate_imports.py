@@ -20,6 +20,10 @@ def main() -> int:
         if "__imp__XamInputGetState" not in names:
             raise SystemExit("XamInputGetState import is not declared in private generated header")
         names.remove("__imp__XamInputGetState")
+        # If the game imports capability discovery, it is implemented by
+        # the same native XAM module and must not receive a duplicate stub.
+        if "__imp__XamInputGetCapabilities" in names:
+            names.remove("__imp__XamInputGetCapabilities")
     lines = ['#include "ppc_recomp_shared.h"', '#include <cstdio>', '#include <cstdlib>',
              '// Unsupported API imports must abort rather than silently fake success.']
     for name in names:
@@ -30,7 +34,7 @@ def main() -> int:
     Path(sys.argv[2]).write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Generated {len(names)} native import handlers (fail-fast diagnostics)")
     if native_xam:
-        print("XamInputGetState is implemented separately in native/xam_ppc_import.cpp")
+        print("XamInputGetState and supported XAM capabilities are native in xam_ppc_import.cpp")
     return 0
 
 if __name__ == "__main__":
