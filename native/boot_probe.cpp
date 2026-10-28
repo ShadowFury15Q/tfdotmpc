@@ -4,7 +4,7 @@
 #include <exception>
 #include <stdexcept>
 namespace {
-void unresolved_indirect(void*,std::uint8_t*) {
+void unresolved_indirect(PPCContext&,std::uint8_t*) {
     throw std::runtime_error("Unresolved native DOTM function mapping");
 }
 }
