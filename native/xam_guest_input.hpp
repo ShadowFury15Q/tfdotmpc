@@ -10,7 +10,12 @@ namespace dotm {
 std::uint32_t xam_input_get_state_guest(
     XamInputHost& input,GuestMemory& memory,
     std::uint32_t user,std::uint32_t flags,std::uint32_t guest_address);
+std::uint32_t xam_input_get_capabilities_guest(
+    XamInputHost& input,GuestMemory& memory,
+    std::uint32_t user,std::uint32_t flags,std::uint32_t guest_address);
 void bind_xam_guest_input(XamInputHost* input,GuestMemory* memory) noexcept;
+std::uint32_t xam_bound_input_get_capabilities(
+    std::uint32_t user,std::uint32_t flags,std::uint32_t guest_address);
 std::uint32_t xam_bound_input_get_state(
     std::uint32_t user,std::uint32_t flags,std::uint32_t guest_address);
 }
