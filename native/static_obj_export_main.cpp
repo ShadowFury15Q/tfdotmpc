@@ -4,6 +4,8 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <limits>
 #include <string>
 #include <cctype>
 #include <cstdint>
@@ -19,6 +21,7 @@ void write_obj(const std::filesystem::path&dest,const std::string&name,
                const dotm::StaticMeshLOD&lod){
  std::ofstream out(dest,std::ios::trunc);
  if(!out)throw std::runtime_error("Cannot write mesh OBJ file");
+ out<<std::setprecision(std::numeric_limits<float>::max_digits10);
  out<<"# Original DOTM Xbox360 StaticMesh LOD0; no recentering, rescaling or rotations\n";
  out<<"# Original material names, normals and skeletal skinning not yet exported\n";
  out<<"o "<<safe(name)<<"\n";
