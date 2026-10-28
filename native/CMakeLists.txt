@@ -98,3 +98,44 @@ target_include_directories(dotm_xam_ppc_import_test
 target_link_libraries(dotm_xam_ppc_import_test PRIVATE dotm_xam_input)
 add_test(NAME xenonrecomp_xam_input_original_import_abi
   COMMAND dotm_xam_ppc_import_test)
+
+# PRIVATE link-only validation of the original XenonRecomp output.
+# This target is intentionally absent from public CI and never calls _xstart.
+# Point DOTM_PRIVATE_PPC_DIR at the locally generated, uncommitted ppc/ directory.
+set(DOTM_PRIVATE_PPC_DIR "" CACHE PATH "Private XenonRecomp C++ directory (never commit it)")
+if(DOTM_PRIVATE_PPC_DIR)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  foreach(required_file ppc_recomp_shared.h ppc_context.h ppc_func_mapping.cpp)
+    if(NOT EXISTS "${DOTM_PRIVATE_PPC_DIR}/${required_file}")
+      message(FATAL_ERROR "Private XenonRecomp file missing: ${required_file}")
+    endif()
+  endforeach()
+  file(GLOB DOTM_PRIVATE_PPC_UNITS CONFIGURE_DEPENDS
+       "${DOTM_PRIVATE_PPC_DIR}/ppc_recomp.*.cpp")
+  list(LENGTH DOTM_PRIVATE_PPC_UNITS DOTM_PRIVATE_PPC_UNIT_COUNT)
+  if(DOTM_PRIVATE_PPC_UNIT_COUNT LESS 600)
+    message(FATAL_ERROR "Expected at least 600 private PPC translation units; got ${DOTM_PRIVATE_PPC_UNIT_COUNT}")
+  endif()
+  set(DOTM_PRIVATE_STUBS "${CMAKE_CURRENT_BINARY_DIR}/private_link_stubs.cpp")
+  add_custom_command(
+    OUTPUT "${DOTM_PRIVATE_STUBS}"
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/generate_private_link_stubs.py"
+            "${DOTM_PRIVATE_PPC_DIR}" "${DOTM_PRIVATE_STUBS}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/generate_private_link_stubs.py"
+            "${DOTM_PRIVATE_PPC_DIR}/ppc_recomp_shared.h"
+            "${DOTM_PRIVATE_PPC_DIR}/ppc_func_mapping.cpp"
+            ${DOTM_PRIVATE_PPC_UNITS}
+    VERBATIM)
+  add_executable(dotm_private_link_probe EXCLUDE_FROM_ALL
+    private_link_probe_main.cpp compiled_ppc_adapter.cpp xam_ppc_import.cpp
+    "${DOTM_PRIVATE_PPC_DIR}/ppc_func_mapping.cpp"
+    ${DOTM_PRIVATE_PPC_UNITS} "${DOTM_PRIVATE_STUBS}")
+  target_include_directories(dotm_private_link_probe
+    PRIVATE "${DOTM_PRIVATE_PPC_DIR}")
+  target_link_libraries(dotm_private_link_probe
+    PRIVATE dotm_recomp_bridge dotm_xam_input)
+  if(MSVC)
+    target_compile_options(dotm_private_link_probe PRIVATE /bigobj)
+  endif()
+endif()
