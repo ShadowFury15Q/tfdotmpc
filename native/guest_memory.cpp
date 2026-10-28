@@ -70,27 +70,55 @@ void GuestMemory::copy_to_guest(std::uint32_t a,std::span<const std::uint8_t> b)
 void GuestMemory::load_pe(const std::filesystem::path& path){
  const auto v=read(path);std::span<const std::uint8_t>b(v);
  if(v.size()<512||u16(b,0)!=0x5a4d)throw std::runtime_error("Expected decrypted Xbox 360 PE");
- auto nt=std::size_t(u32(b,0x3c));
- if(u32(b,nt)!=0x4550||u16(b,nt+4)!=0x01F2)throw std::runtime_error("Not an Xbox 360 PPC PE");
- std::size_t opt=nt+24; std::size_t sections=opt+u16(b,nt+20); std::size_t count=u16(b,nt+6);
- if(u16(b,opt)!=0x10b||u32(b,opt+28)!=kImageBase)throw std::runtime_error("Unexpected image base");
- auto header=u32(b,opt+60);
- if(header>v.size()||header>kImageSize)throw std::runtime_error("Invalid PE headers");
- copy_to_guest(kImageBase,b.first(header));
- for(std::size_t i=0;i<count;i++){
-  auto sh=sections+40*i;
-  if(sh>v.size()||v.size()-sh<40)throw std::runtime_error("Truncated section");
+ const auto nt=std::size_t(u32(b,0x3c));
+ if(nt>v.size()||v.size()-nt<24||u32(b,nt)!=0x4550||u16(b,nt+4)!=0x01F2)
+  throw std::runtime_error("Not an Xbox 360 PPC PE");
+ const auto optional_size=std::size_t(u16(b,nt+20));
+ const auto opt=nt+24;
+ const auto count=std::size_t(u16(b,nt+6));
+ if(optional_size<64||opt>v.size()||optional_size>v.size()-opt)
+  throw std::runtime_error("Truncated Xbox PE optional header");
+ const auto sections=opt+optional_size;
+ if(count>(v.size()-sections)/40)
+  throw std::runtime_error("Truncated Xbox PE section table");
+ if(u16(b,opt)!=0x10b||u32(b,opt+28)!=kImageBase)
+  throw std::runtime_error("Unexpected image base");
+ const auto header=std::size_t(u32(b,opt+60));
+ if(header>v.size()||header>kImageSize||header<sections+40*count)
+  throw std::runtime_error("Invalid PE headers");
+
+ struct Section {std::uint32_t rva,raw,file_off;std::uint64_t length;};
+ std::vector<Section> checked;
+ checked.reserve(count);
+ // Validate every section before changing guest memory: malformed private
+ // images must never partially overwrite guest code or the native call table.
+ for(std::size_t i=0;i<count;++i){
+  const auto sh=sections+40*i;
   std::string name(reinterpret_cast<const char*>(v.data()+sh),8);
   name.resize(std::min<std::size_t>(8,name.find('\0')));
-  // PE .reloc extends into XenonRecomp's native indirect-call table.
-  // Guest image keeps its original base, so relocations are unnecessary.
+  const auto virtual_size=u32(b,sh+8),rva=u32(b,sh+12);
+  const auto raw=u32(b,sh+16),file_off=u32(b,sh+20);
+  const std::uint64_t len=std::max(virtual_size,raw);
+  if(raw&&(file_off>v.size()||raw>v.size()-file_off))
+   throw std::runtime_error("Invalid PE section raw size");
+  // The PE .reloc can extend into XenonRecomp's native indirect-call table.
+  // The guest image is fixed-base, so do not map this section.
   if(name==".reloc")continue;
-  auto virtual_size=u32(b,sh+8),rva=u32(b,sh+12),raw=u32(b,sh+16),file_off=u32(b,sh+20);
-  auto len=std::max(virtual_size,raw);
-  if(rva>=kImageSize||len>kImageSize-rva)throw std::runtime_error("PE section intersects native dispatch table");
-  if(raw&&(file_off>v.size()||raw>v.size()-file_off))throw std::runtime_error("Invalid section raw size");
-  if(len)commit(std::uint64_t(kImageBase)+rva,len);
-  if(raw)std::memcpy(address(kImageBase+rva),v.data()+file_off,raw);
+  if(rva>=kImageSize||len>kImageSize-rva)
+   throw std::runtime_error("PE section intersects native dispatch table");
+  if(len&&rva<header)throw std::runtime_error("PE section overlaps headers");
+  for(const auto& other:checked)
+   if(len&&other.length&&std::uint64_t(rva)<std::uint64_t(other.rva)+other.length&&
+      std::uint64_t(other.rva)<std::uint64_t(rva)+len)
+    throw std::runtime_error("Overlapping PE virtual sections");
+  checked.push_back({rva,raw,file_off,len});
+ }
+ copy_to_guest(kImageBase,b.first(header));
+ for(const auto& section:checked){
+  if(section.length)commit(std::uint64_t(kImageBase)+section.rva,
+                           static_cast<std::size_t>(section.length));
+  if(section.raw)std::memcpy(address(kImageBase+section.rva),
+                             v.data()+section.file_off,section.raw);
  }
 }
 void GuestMemory::initialize_function_table(NativeFunction fallback){
