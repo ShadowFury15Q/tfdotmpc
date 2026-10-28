@@ -22,6 +22,18 @@
 - `UI_FrontEnd_m.xxx` also imports `WL_DX_BUMBEE`.
 - Those extra packages are present in the ISO manifest. Their contents were not included in the initial private 20-file ZIP.
 
+## Stage 8 — Native UE3 export map and object-reference validation (28 Oct 2026)
+
+- Reverse-engineered the DOTM-specific UE3 licensee 174 export serialization: a 45-byte mandatory record plus an optional 1-byte flag-dependent extension.
+- Extended records contain generation counts, a 16-byte GUID and a 4-byte metadata field.
+- Validated **108,220 exported objects** across **17 original Xbox 360 .xxx packages**.
+- **422** records use the optional extension. All export maps end at the package-specified DependsOffset.
+- Native C++ reader now exposes export metadata, serialized-object byte ranges, class/super/outer/archetype references and FName-qualified object paths.
+- Ran the GitHub-built native Linux probe **dotm_ue3_probe --verify-all** privately on all 17 original game packages: **108,220 object references checked, zero failures, exit code 0**.
+- Synthetic asset-free unit tests cover export flags, generation counts, LZO, object data views and cyclic reference rejection.
+- Game archives and generated game code remain private; public repository contains source code and tests only.
+
+**Not a playable port yet.** Object metadata and raw data ranges are readable, but actual UObject serialization, renderer, audio and Xbox 360 platform services remain unimplemented.
 ## Still missing for a playable native port
 - Resolve native UE3 package export objects (currently only headers, name and import metadata are decoded).
 - Native UE3 object/asset serialization and game-specific engine integrations.
