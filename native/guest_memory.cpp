@@ -72,7 +72,7 @@ void GuestMemory::load_pe(const std::filesystem::path& path){
  if(v.size()<512||u16(b,0)!=0x5a4d)throw std::runtime_error("Expected decrypted Xbox 360 PE");
  auto nt=std::size_t(u32(b,0x3c));
  if(u32(b,nt)!=0x4550||u16(b,nt+4)!=0x01F2)throw std::runtime_error("Not an Xbox 360 PPC PE");
- auto opt=nt+24,sections=opt+u16(b,nt+20),count=u16(b,nt+6);
+ std::size_t opt=nt+24; std::size_t sections=opt+u16(b,nt+20); std::size_t count=u16(b,nt+6);
  if(u16(b,opt)!=0x10b||u32(b,opt+28)!=kImageBase)throw std::runtime_error("Unexpected image base");
  auto header=u32(b,opt+60);
  if(header>v.size()||header>kImageSize)throw std::runtime_error("Invalid PE headers");
