@@ -8,6 +8,7 @@
 #include <wrl/client.h>
 #include "ue3_lod.hpp"
 #include "ue3_package.hpp"
+#include "win32_input.hpp"
 #include <algorithm>
 #include <cstring>
 #include <cmath>
@@ -49,6 +50,8 @@ void check(HRESULT hr,const char* stage) {
     if(FAILED(hr))throw std::runtime_error(stage);
 }
 LRESULT CALLBACK wndproc(HWND wnd,UINT msg,WPARAM w,LPARAM l){
+    if(auto* input=reinterpret_cast<dotm::Win32Input*>(GetWindowLongPtrW(wnd,GWLP_USERDATA)))
+        input->handle(msg,w,l);
     if(msg==WM_DESTROY){PostQuitMessage(0);return 0;}
     if(msg==WM_KEYDOWN&&w==VK_ESCAPE){DestroyWindow(wnd);return 0;}
     return DefWindowProcW(wnd,msg,w,l);
@@ -91,6 +94,10 @@ void run(const std::filesystem::path&source,const std::string&filter) {
         WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,1100,780,
         nullptr,nullptr,hinst,nullptr);
     if(!wnd)throw std::runtime_error("CreateWindowExW failed");
+    dotm::NativeInput pc_input;
+    dotm::Win32Input win_input(pc_input);
+    SetWindowLongPtrW(wnd,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(&win_input));
+    win_input.register_raw_mouse(wnd);
     RECT rect{};GetClientRect(wnd,&rect);
     const UINT width=UINT(rect.right),height=UINT(rect.bottom);
     DXGI_SWAP_CHAIN_DESC desc{};
@@ -181,17 +188,20 @@ void run(const std::filesystem::path&source,const std::string&filter) {
     context->PSSetShader(ps.Get(),nullptr,0);
     context->OMSetRenderTargets(1,rtv.GetAddressOf(),dsv.Get());
     const float clear[4]={0.07f,0.10f,0.14f,1.0f};
-    const auto start=GetTickCount64();
+    float camera_yaw=0.0f, camera_pitch=0.28f;
     MSG msg{};
     while(true){
         while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){
             if(msg.message==WM_QUIT)return;
             TranslateMessage(&msg);DispatchMessageW(&msg);
         }
-        const float angle=float(GetTickCount64()-start)*0.0002f;
+        const auto input_frame=pc_input.next_frame();
+        camera_yaw+=input_frame.look_x*0.003f;
+        camera_pitch=std::clamp(camera_pitch-input_frame.look_y*0.003f,-1.3f,1.3f);
         const auto world=XMMatrixTranslation(-cx,-cy,-cz);
-        const auto eye=XMVectorSet(std::sin(angle)*radius*2.4f,radius*0.7f,
-                                   -std::cos(angle)*radius*2.4f,1.f);
+        const auto eye=XMVectorSet(std::sin(camera_yaw)*std::cos(camera_pitch)*radius*2.4f,
+                                   std::sin(camera_pitch)*radius*2.4f,
+                                   -std::cos(camera_yaw)*std::cos(camera_pitch)*radius*2.4f,1.f);
         const auto view=XMMatrixLookAtLH(eye,XMVectorZero(),XMVectorSet(0,1,0,0));
         const auto proj=XMMatrixPerspectiveFovLH(XM_PIDIV4,float(width)/float(height),
                                                std::max(radius*0.0001f,0.01f),radius*12.f);
