@@ -40,9 +40,12 @@ def audit(directory: Path) -> dict:
                             not x.startswith("__imp__sub_") and x!="__imp___xstart")
     helper_symbols=sorted(x for x in decl if HELPER.fullmatch(x))
     other_undefined=sorted(x for x in decl if x not in impl and
+                           ("__imp__"+x) not in impl and
                            not x.startswith("__imp__") and x not in helper_symbols)
     mapped_undefined=sorted(x for x in all_names if
                             x not in impl and ("__imp__"+x) not in impl)
+    mapped_platform_imports=sorted(x for x in mapped_undefined if x.startswith("__imp__"))
+    missing_generated=sorted(x for x in mapped_undefined if not x.startswith("__imp__"))
     unique_address_count=len(set(addresses))
     map_entry_name=entries.get(entry)
     result={
@@ -57,9 +60,11 @@ def audit(directory: Path) -> dict:
            map_entry_name in impl or "__imp__"+map_entry_name in impl)),
         "platform_imports_declarations":len(platform_imports),
         "helper_declarations":len(helper_symbols),
-        "unresolved_mapped_symbols":len(mapped_undefined),
+        "guest_platform_imports_not_implemented":len(mapped_platform_imports),
+        "missing_generated_mapping_symbols":len(missing_generated),
         "unresolved_other_declarations":len(other_undefined),
-        "unresolved_mapped_examples":mapped_undefined[:15],
+        "guest_platform_import_examples":mapped_platform_imports[:15],
+        "missing_generated_examples":missing_generated[:15],
         "unresolved_other_examples":other_undefined[:15],
         "missing_preconditions":[]
     }
@@ -68,7 +73,7 @@ def audit(directory: Path) -> dict:
         result["missing_preconditions"].append("Duplicate guest function addresses")
     if map_entry_name!="_xstart" or not result["entry_resolved_to_implementation"]:
         result["missing_preconditions"].append("Missing or unimplemented DOTM entry _xstart")
-    if mapped_undefined:
+    if missing_generated:
         result["missing_preconditions"].append("Mapped guest functions missing from generated C++")
     return result
 
