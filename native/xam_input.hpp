@@ -18,7 +18,7 @@ struct XboxGamepad {
     bool operator==(const XboxGamepad&) const = default;
 };
 constexpr std::uint32_t kXamOk=0;
-constexpr std::uint32_t kXamBadArguments=87;
+constexpr std::uint32_t kXamBadArguments=160; // X_ERROR_BAD_ARGUMENTS (0xA0), not ERROR_INVALID_PARAMETER (0x57)
 constexpr std::uint32_t kXamDeviceNotConnected=1167;
 constexpr std::size_t kXboxInputStateBytes=16;
 class XamInputHost {
