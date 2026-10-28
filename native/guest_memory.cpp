@@ -4,6 +4,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <vector>
 #ifdef _WIN32
 #define NOMINMAX
@@ -132,10 +133,18 @@ void GuestMemory::initialize_function_table(NativeFunction fallback){
 }
 void GuestMemory::install_functions(std::span<const FunctionEntry> entries){
  if(!table_initialized_)throw std::logic_error("Uninitialized function mapping");
- for(auto e:entries){
+ // Validate the entire batch before changing any dispatch entry. A malformed
+ // mapping must not leave a mixture of old and new recompiled functions.
+ std::unordered_set<std::uint32_t> seen;
+ seen.reserve(entries.size());
+ for(const auto& e:entries){
   if(e.guest_address<kCodeBase||std::uint64_t(e.guest_address)-kCodeBase>=kCodeSize||(e.guest_address&3)||!e.native_function)
    throw std::invalid_argument("Invalid PPC function address");
-  auto a=kFunctionTableOffset+2ULL*(e.guest_address-kCodeBase);
+  if(!seen.insert(e.guest_address).second)
+   throw std::invalid_argument("Duplicate PPC function address");
+ }
+ for(const auto& e:entries){
+  const auto a=kFunctionTableOffset+2ULL*(e.guest_address-kCodeBase);
   std::memcpy(base_+a,&e.native_function,sizeof(e.native_function));
  }
 }
