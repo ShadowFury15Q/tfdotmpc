@@ -21,7 +21,7 @@ FetchContent_Declare(lzokay
 FetchContent_MakeAvailable(lzokay)
 add_library(lzokay STATIC "${lzokay_SOURCE_DIR}/lzokay.cpp")
 target_include_directories(lzokay PUBLIC "${lzokay_SOURCE_DIR}")
-add_library(dotm_ue3_package STATIC ue3_package.cpp ue3_properties.cpp)
+add_library(dotm_ue3_package STATIC ue3_package.cpp ue3_properties.cpp ue3_texture.cpp)
 target_include_directories(dotm_ue3_package PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(dotm_ue3_package PRIVATE lzokay)
 add_executable(dotm_ue3_package_test test_ue3_package.cpp)
