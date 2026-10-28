@@ -37,6 +37,7 @@ std::vector<std::uint8_t> mock_package(){
  put32(b,49,std::uint32_t(b.size()));
  // Import {class package=Core, class name=Package, outer=0, object name=Engine}.
  for(auto v:{0u,0u,1u,0u,0u,2u,0u})append32(b,v);
+ put32(b,41,std::uint32_t(b.size())); // export map is empty, and begins at depends offset
  put32(b,53,std::uint32_t(b.size()));
  put32(b,12,std::uint32_t(b.size()));
  return b;
