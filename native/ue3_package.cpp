@@ -127,8 +127,10 @@ Ue3Package Ue3Package::parse(const std::vector<std::uint8_t>& raw) {
     const auto name_offset = be32(d, h + 8);
     package.info_.export_count = be32(d, h + 12);
     package.info_.import_count = be32(d, h + 20);
+    const auto export_offset = be32(d, h + 16);
     const auto import_offset = be32(d, h + 24);
-    if (name_count > 100000 || package.info_.import_count > 100000)
+    const auto depends_offset = be32(d, h + 28);
+    if (name_count > 100000 || package.info_.import_count > 100000 || package.info_.export_count > 100000)
         throw std::runtime_error("UE3 table count exceeds safety limit");
     std::size_t p = name_offset;
     for (std::size_t i = 0; i < name_count; ++i) {
@@ -165,7 +167,66 @@ Ue3Package Ue3Package::parse(const std::vector<std::uint8_t>& raw) {
         package.imports_.push_back({at_name(be32(d, off)), at_name(be32(d, off + 8)),
                                     outer, at_name(be32(d, off + 20))});
     }
+    // Transformers licensee version >= 116 uses a one-byte extension
+    // discriminator after ExportFlags. If it is zero, the record ends.
+    // If it is one, net-generation count array, GUID, and uint32 metadata
+    // follow. All offsets are in the DECOMPRESSED logical package space.
+    check_span(export_offset, 0, d.size());
+    if (depends_offset < export_offset || depends_offset > d.size())
+        throw std::runtime_error("Invalid UE3 export/depends table offsets");
+    std::size_t pos = export_offset;
+    package.exports_.reserve(package.info_.export_count);
+    for (std::uint32_t i = 0; i < package.info_.export_count; ++i) {
+        check_span(pos, 45, depends_offset);
+        Ue3Export e;
+        e.class_index = si32(d, pos);
+        e.super_index = si32(d, pos + 4);
+        e.outer_index = si32(d, pos + 8);
+        e.object_name = at_name(be32(d, pos + 12));
+        e.object_name_number = si32(d, pos + 16);
+        e.archetype_index = si32(d, pos + 20);
+        e.object_flags = (std::uint64_t(be32(d, pos + 24)) << 32) | be32(d, pos + 28);
+        const auto size = si32(d, pos + 32);
+        const auto offset = si32(d, pos + 36);
+        if (size < 0 || offset < 0) throw std::runtime_error("Negative UE3 serialized object bounds");
+        e.serial_size = std::uint32_t(size);
+        e.serial_offset = std::uint32_t(offset);
+        check_span(e.serial_offset, e.serial_size, d.size());
+        e.export_flags = be32(d, pos + 40);
+        const auto extension = d[pos + 44];
+        if (extension > 1) throw std::runtime_error("Unsupported DOTM export extension flag");
+        pos += 45;
+        if (extension == 1) {
+            e.has_package_metadata = true;
+            check_span(pos, 4, depends_offset);
+            const auto n = be32(d, pos);
+            pos += 4;
+            if (n > 64) throw std::runtime_error("Too many UE3 net object generations");
+            check_span(pos, std::size_t(n) * 4 + 20, depends_offset);
+            for (std::uint32_t k = 0; k < n; ++k, pos += 4)
+                e.generation_net_object_counts.push_back(be32(d, pos));
+            std::copy_n(d.data() + pos, 16, e.package_guid.begin());
+            pos += 16;
+            e.package_metadata = be32(d, pos);
+            pos += 4;
+        }
+        auto valid_ref = [&](std::int32_t ref) {
+            return ref >= -std::int64_t(package.info_.import_count) &&
+                   ref <= std::int64_t(package.info_.export_count);
+        };
+        if (!valid_ref(e.class_index) || !valid_ref(e.super_index) ||
+            !valid_ref(e.outer_index) || !valid_ref(e.archetype_index))
+            throw std::runtime_error("UE3 export object reference out of range");
+        package.exports_.push_back(std::move(e));
+    }
+    if (pos != depends_offset)
+        throw std::runtime_error("UE3 export map did not end at depends table");
     return package;
+}
+std::span<const std::uint8_t> Ue3Package::serialized_object(std::size_t index) const {
+    if (index >= exports_.size()) throw std::out_of_range("UE3 object index out of range");
+    const auto& e = exports_[index];
+    return {data_.data() + e.serial_offset, e.serial_size};
 }
 std::vector<std::string> Ue3Package::imported_package_names() const {
     std::set<std::string> names;
