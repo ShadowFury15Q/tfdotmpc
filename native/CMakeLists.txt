@@ -8,3 +8,6 @@ add_executable(dotm_memory_test test_guest_memory.cpp)
 target_link_libraries(dotm_memory_test PRIVATE dotm_guest_memory)
 enable_testing()
 add_test(NAME guest_memory_and_native_dispatch COMMAND dotm_memory_test)
+
+add_executable(dotm_pe_probe boot_probe.cpp)
+target_link_libraries(dotm_pe_probe PRIVATE dotm_guest_memory)
