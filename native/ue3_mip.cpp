@@ -118,3 +118,4 @@ std::vector<std::uint8_t> read_ue3_texture_mip_bytes(
         return expand_lzo(source,m.element_count);
     return {source.begin(),source.end()};
 }
+} // namespace dotm
