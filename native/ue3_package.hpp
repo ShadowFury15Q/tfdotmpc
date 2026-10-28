@@ -13,6 +13,7 @@ struct Ue3Import {
     std::string class_name;
     std::int32_t outer_index = 0;
     std::string object_name;
+    std::int32_t object_name_number = 0;
 };
 // Xbox 360 Transformers: Dark of the Moon UE3 FObjectExport (537/174).
 // Extension byte == 1: uint32 generation count, generation counts,
@@ -55,6 +56,10 @@ public:
     std::span<const std::uint8_t> serialized_object(std::size_t index) const;
     const std::vector<std::uint8_t>& uncompressed_data() const noexcept { return data_; }
     std::vector<std::string> imported_package_names() const;
+    // Resolve a signed UE3 package reference into a relative object path.
+    // Positive values refer to 1-based exports; negatives to 1-based imports.
+    std::string object_reference_path(std::int32_t reference) const;
+    std::string export_class_path(std::size_t index) const;
 private:
     Ue3PackageInfo info_{};
     std::vector<std::string> names_;
