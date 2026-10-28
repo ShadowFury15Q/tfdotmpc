@@ -32,6 +32,21 @@ int main(){
   require(xbox.get_state(0xFF,1,buffer)==dotm::kXamOk,
           "Xam ANY_USER maps to native Windows keyboard and mouse");
 
+  std::array<std::uint8_t,20> caps{};
+  require(xbox.get_capabilities(0,1,caps)==dotm::kXamOk,
+          "GetCapabilities advertises native keyboard/mouse virtual gamepad");
+  require(caps[0]==1&&caps[1]==1&&caps[2]==0&&caps[3]==0,
+          "Xbox XINPUT_CAPABILITIES type/subtype and BE flags");
+  require(caps[4]==0xF3&&caps[5]==0xFF&&caps[6]==255&&caps[7]==255,
+          "Xbox capability supported buttons and maximum triggers");
+  require(caps[16]==0&&caps[17]==0&&caps[18]==0&&caps[19]==0,
+          "Do not falsely advertise rumble support");
+  require(xbox.get_capabilities(1,1,caps)==dotm::kXamDeviceNotConnected,
+          "Capabilities reject unconnected second player");
+  require(xbox.get_capabilities(0,1,{caps.data(),19})==dotm::kXamBadArguments,
+          "Capabilities reject truncated destination");
+  require(xbox.get_state(1,0x40000001,buffer)==dotm::kXamOk,
+          "XAM ANY_USER flag 1<<30 resolves PC player zero");
   pc.set_button('W',true);
   pc.set_button('D',true);
   pc.set_button(dotm::kMouseLeft,true);
