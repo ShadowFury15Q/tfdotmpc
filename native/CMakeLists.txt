@@ -31,5 +31,5 @@ add_executable(dotm_ue3_probe ue3_package_probe.cpp)
 target_link_libraries(dotm_ue3_probe PRIVATE dotm_ue3_package)
 
 add_executable(dotm_ue3_properties_test test_ue3_properties.cpp)
-target_link_libraries(dotm_ue3_properties_test PRIVATE dotm_ue3_package)
+target_link_libraries(dotm_ue3_properties_test PRIVATE dotm_ue3_package lzokay)
 add_test(NAME ue3_tagged_property_stream COMMAND dotm_ue3_properties_test)
