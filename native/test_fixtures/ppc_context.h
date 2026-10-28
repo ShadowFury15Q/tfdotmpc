@@ -3,7 +3,11 @@
 // Original game code and XEX content are never included.
 #include <cstddef>
 #include <cstdint>
-struct PPCContext { std::uint32_t calls=0; };
+struct PPCRegister { std::uint64_t u64=0; };
+struct PPCContext {
+ std::uint32_t calls=0;
+ PPCRegister r3{},r4{},r5{};
+};
 typedef void PPCFunc(PPCContext& __restrict ctx,std::uint8_t* base);
 struct PPCFuncMapping { std::size_t guest; PPCFunc* host; };
 extern PPCFuncMapping PPCFuncMappings[];
