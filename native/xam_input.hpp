@@ -21,6 +21,7 @@ constexpr std::uint32_t kXamOk=0;
 constexpr std::uint32_t kXamBadArguments=160; // X_ERROR_BAD_ARGUMENTS (0xA0), not ERROR_INVALID_PARAMETER (0x57)
 constexpr std::uint32_t kXamDeviceNotConnected=1167;
 constexpr std::size_t kXboxInputStateBytes=16;
+constexpr std::size_t kXboxInputCapabilitiesBytes=20;
 class XamInputHost {
 public:
     // Store a new PC input frame. Only increment packet when BUTTON/AXIS
@@ -30,6 +31,10 @@ public:
     // Invalid devices/users fail without modifying output bytes.
     std::uint32_t get_state(std::uint32_t user, std::uint32_t flags,
                              std::span<std::uint8_t> output) const;
+    // Xbox360 X_INPUT_CAPABILITIES: 2 type bytes + BE flags + 12-byte
+    // capability gamepad + 4-byte BE motor ranges; no rumble motor here.
+    std::uint32_t get_capabilities(std::uint32_t user, std::uint32_t flags,
+                                    std::span<std::uint8_t> output) const;
     XboxGamepad snapshot() const;
     std::uint32_t packet_number() const;
     void set_mouse_stick_scale(float stick_units_per_pixel);
