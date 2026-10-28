@@ -1,0 +1,46 @@
+name: Test DOTM native runtime (Windows + Linux)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'native/**'
+      - '.github/workflows/test_dotm_native_runtime.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test_runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    runs-on: \${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable Windows compiler
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+      - name: Configure runtime
+        shell: pwsh
+        run: |
+          if ($IsWindows -or $env:RUNNER_OS -eq 'Windows') {
+            cmake -S native -B native-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang-cl
+          } else {
+            cmake -S native -B native-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++
+          }
+          if ($LASTEXITCODE -ne 0) { throw "Configure failed" }
+      - name: Build runtime
+        shell: pwsh
+        run: |
+          cmake --build native-build --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "Build failed" }
+      - name: Run host unit tests
+        shell: pwsh
+        run: |
+          ctest --test-dir native-build --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw "Native runtime tests failed" }
