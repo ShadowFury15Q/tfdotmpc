@@ -44,3 +44,15 @@ jobs:
         run: |
           ctest --test-dir native-build --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw "Native runtime tests failed" }
+
+      - name: Upload native diagnostic binaries (no game files)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DOTM-Native-Diagnostics-${{ matrix.os }}
+          path: |
+            native-build/dotm_ue3_probe
+            native-build/dotm_ue3_probe.exe
+            native-build/dotm_pe_probe
+            native-build/dotm_pe_probe.exe
+          if-no-files-found: error
