@@ -70,6 +70,29 @@ std::uint32_t XamInputHost::get_state(
     write16(out,14,static_cast<std::uint16_t>(state_.ry));
     return kXamOk;
 }
+
+std::uint32_t XamInputHost::get_capabilities(
+    std::uint32_t user,std::uint32_t flags,std::span<std::uint8_t> out) const {
+    if((flags&0xffU)!=0 && (flags&1U)==0)return kXamDeviceNotConnected;
+    if(user!=0 && (user&0xffU)!=0xffU && !(flags&0x40000000U))
+        return kXamDeviceNotConnected;
+    if(out.size()<kXboxInputCapabilitiesBytes)return kXamBadArguments;
+    // This is the capability bitmask of the virtual keyboard/mouse controller,
+    // not a simulated "currently pressed" state. XAM flags: no force feedback.
+    out[0]=1; // XINPUT_DEVTYPE_GAMEPAD
+    out[1]=1; // XINPUT_DEVSUBTYPE_GAMEPAD
+    write16(out,2,0);
+    write16(out,4,0xF3FFu); // all standard buttons except reserved 0x0C00
+    out[6]=255;
+    out[7]=255;
+    write16(out,8,0xFFFFu); // thumb axis range capability markers
+    write16(out,10,0xFFFFu);
+    write16(out,12,0xFFFFu);
+    write16(out,14,0xFFFFu);
+    write16(out,16,0); // vibration not implemented
+    write16(out,18,0);
+    return kXamOk;
+}
 XboxGamepad XamInputHost::snapshot() const {
     std::lock_guard lock(mutex_);
     return state_;
