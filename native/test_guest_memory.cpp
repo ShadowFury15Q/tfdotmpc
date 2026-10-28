@@ -19,9 +19,39 @@ int main(int argc,char** argv){
   m.commit(0x82002003,8192);
   m.initialize_function_table(fallback);
   check(m.find_function(0x82500000)==fallback,"fallback dispatch");
-  const dotm::FunctionEntry entry{0x82500004,target};
-  m.install_functions(std::span<const dotm::FunctionEntry>(&entry,1));
-  check(m.find_function(0x82500004)==target,"native PPC function mapping");
+  const auto reject_mapping=[&](std::span<const dotm::FunctionEntry> entries,
+                                const char* reason){
+   bool failed=false;
+   try{m.install_functions(entries);}catch(const std::invalid_argument&){failed=true;}
+   check(failed,reason);
+   check(m.find_function(0x82500000)==fallback,
+         "Rejected batch must not modify its first dispatch slot");
+   check(m.find_function(0x82500004)==fallback,
+         "Rejected batch must not modify its second dispatch slot");
+  };
+  const std::array<dotm::FunctionEntry,2> bad_late{{
+   {0x82500000,target},{0x82500003,target}
+  }};
+  reject_mapping(bad_late,"Reject late unaligned PPC address atomically");
+  const std::array<dotm::FunctionEntry,2> bad_null{{
+   {0x82500000,target},{0x82500004,nullptr}
+  }};
+  reject_mapping(bad_null,"Reject late null native function atomically");
+  const std::array<dotm::FunctionEntry,2> bad_duplicate{{
+   {0x82500000,target},{0x82500000,target}
+  }};
+  reject_mapping(bad_duplicate,"Reject duplicate PPC function atomically");
+  const std::array<dotm::FunctionEntry,2> bad_range{{
+   {0x82500000,target},{dotm::GuestMemory::kCodeBase+
+    dotm::GuestMemory::kCodeSize,target}
+  }};
+  reject_mapping(bad_range,"Reject out-of-range PPC address atomically");
+  const std::array<dotm::FunctionEntry,2> good{{
+   {0x82500000,target},{0x82500004,target}
+  }};
+  m.install_functions(good);
+  check(m.find_function(0x82500000)==target,"first native PPC function mapping");
+  check(m.find_function(0x82500004)==target,"second native PPC function mapping");
   // Synthetic Xbox PPC PE fixture: no copyrighted game bytes.
   auto pe=std::vector<std::uint8_t>(0x600,0);
   auto put16=[](std::vector<std::uint8_t>& bytes,std::size_t p,std::uint16_t n){
