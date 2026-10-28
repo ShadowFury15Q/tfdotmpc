@@ -165,7 +165,7 @@ Ue3Package Ue3Package::parse(const std::vector<std::uint8_t>& raw) {
         std::size_t off = import_offset + 28 * i;
         auto outer = si32(d, off + 16);
         package.imports_.push_back({at_name(be32(d, off)), at_name(be32(d, off + 8)),
-                                    outer, at_name(be32(d, off + 20))});
+                                    outer, at_name(be32(d, off + 20)), si32(d, off + 24)});
     }
     // Transformers licensee version >= 116 uses a one-byte extension
     // discriminator after ExportFlags. If it is zero, the record ends.
@@ -227,6 +227,43 @@ std::span<const std::uint8_t> Ue3Package::serialized_object(std::size_t index) c
     if (index >= exports_.size()) throw std::out_of_range("UE3 object index out of range");
     const auto& e = exports_[index];
     return {data_.data() + e.serial_offset, e.serial_size};
+}
+
+std::string Ue3Package::object_reference_path(std::int32_t reference) const {
+    if (reference == 0) return "None";
+    std::string path;
+    std::vector<std::int32_t> visited;
+    for (std::size_t depth = 0; reference != 0; ++depth) {
+        if (depth >= 64 || std::find(visited.begin(), visited.end(), reference) != visited.end())
+            throw std::runtime_error("Cyclic or excessively deep UE3 object outer chain");
+        visited.push_back(reference);
+        std::string name;
+        std::int32_t number = 0;
+        if (reference < 0) {
+            const auto index = std::int64_t(-1) - reference;
+            if (index < 0 || std::uint64_t(index) >= imports_.size())
+                throw std::out_of_range("UE3 import reference out of range");
+            const auto& object = imports_[std::size_t(index)];
+            name = object.object_name;
+            number = object.object_name_number;
+            reference = object.outer_index;
+        } else {
+            const auto index = std::uint64_t(reference - 1);
+            if (index >= exports_.size()) throw std::out_of_range("UE3 export reference out of range");
+            const auto& object = exports_[std::size_t(index)];
+            name = object.object_name;
+            number = object.object_name_number;
+            reference = object.outer_index;
+        }
+        // UE3's FName.Number is 1-based for names with an explicit numeric suffix.
+        if (number > 0) name += "_" + std::to_string(number - 1);
+        path = path.empty() ? name : name + "." + path;
+    }
+    return path;
+}
+std::string Ue3Package::export_class_path(std::size_t index) const {
+    if (index >= exports_.size()) throw std::out_of_range("UE3 export index out of range");
+    return object_reference_path(exports_[index].class_index);
 }
 std::vector<std::string> Ue3Package::imported_package_names() const {
     std::set<std::string> names;
