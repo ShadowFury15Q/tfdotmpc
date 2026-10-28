@@ -57,6 +57,8 @@ jobs:
             native-build/dotm_dds_export.exe
             native-build/dotm_mesh_probe
             native-build/dotm_mesh_probe.exe
+            native-build/dotm_static_obj_export
+            native-build/dotm_static_obj_export.exe
             native-build/dotm_pe_probe
             native-build/dotm_pe_probe.exe
           if-no-files-found: error
