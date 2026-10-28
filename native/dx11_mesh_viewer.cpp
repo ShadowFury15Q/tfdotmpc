@@ -232,7 +232,6 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int){
         std::string message="Native DOTM DX11 preview failed: ";
         message+=err.what();
         MessageBoxA(nullptr,message.c_str(),"DOTM native DX11",MB_OK|MB_ICONERROR);
-        LocalFree(argv);
         return 1;
     }
 }
