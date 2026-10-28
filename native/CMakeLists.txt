@@ -11,3 +11,18 @@ add_test(NAME guest_memory_and_native_dispatch COMMAND dotm_memory_test)
 
 add_executable(dotm_pe_probe boot_probe.cpp)
 target_link_libraries(dotm_pe_probe PRIVATE dotm_guest_memory)
+
+include(FetchContent)
+FetchContent_Declare(lzokay
+    GIT_REPOSITORY https://github.com/AxioDL/lzokay.git
+    GIT_TAG db2df1fcbebc2ed06c10f727f72567d40f06a2be
+    GIT_SHALLOW FALSE)
+FetchContent_MakeAvailable(lzokay)
+add_library(dotm_ue3_package STATIC ue3_package.cpp)
+target_include_directories(dotm_ue3_package PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(dotm_ue3_package PRIVATE lzokay)
+add_executable(dotm_ue3_package_test test_ue3_package.cpp)
+target_link_libraries(dotm_ue3_package_test PRIVATE dotm_ue3_package lzokay)
+add_test(NAME ue3_be_lzo_and_imports COMMAND dotm_ue3_package_test)
+add_executable(dotm_ue3_probe ue3_package_probe.cpp)
+target_link_libraries(dotm_ue3_probe PRIVATE dotm_ue3_package)
