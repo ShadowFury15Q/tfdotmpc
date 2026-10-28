@@ -10,10 +10,12 @@ def main() -> None:
     upstream = Path(sys.argv[1])
     source = upstream / "XenonRecomp" / "recompiler.cpp"
     header = upstream / "XenonRecomp" / "dotm_instruction_cases.inc"
-    patch = Path(__file__).resolve().parents[1] / "patches" / "dotm_instruction_cases.inc"
+    root = Path(__file__).resolve().parents[1]
+    patch = root / "patches" / "dotm_instruction_cases.inc"
+    extra = root / "patches" / "dotm_extra_cases.inc"
     original = source.read_text(encoding="utf-8")
     anchor = "    default:\n        return false;\n    }\n"
-    insert = '#include "dotm_instruction_cases.inc"\n'
+    insert = '#include "dotm_instruction_cases.inc"\n#include "dotm_extra_cases.inc"\n'
     if original.count(anchor) != 1:
         raise SystemExit(f"ERROR: Upstream switch changed; found {original.count(anchor)} anchors, expected 1")
     patched = original.replace(anchor, insert + anchor, 1)
@@ -21,8 +23,9 @@ def main() -> None:
         raise SystemExit("ERROR: Patch insertion failed")
     source.write_text(patched, encoding="utf-8")
     shutil.copyfile(patch, header)
+    shutil.copyfile(extra, upstream / "XenonRecomp" / "dotm_extra_cases.inc")
     print(f"Patched {source} with {len(patch.read_text().splitlines())} lines")
-    print(f"Cases defined: {patch.read_text().count('case PPC_INST_')}")
+    print(f"Cases defined: {patch.read_text().count('case PPC_INST_') + extra.read_text().count('case PPC_INST_')}")
 
 if __name__ == "__main__":
     main()
