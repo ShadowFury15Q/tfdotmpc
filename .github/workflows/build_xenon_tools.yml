@@ -2,6 +2,12 @@ name: Build XenonRecomp tools (Windows)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'patches/**'
+      - 'scripts/**'
+      - '.github/workflows/build_xenon_tools.yml'
 
 permissions:
   contents: read
@@ -11,6 +17,9 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 40
     steps:
+      - name: Checkout DOTM open-source patches
+        uses: actions/checkout@v4
+
       - name: Enable MSVC environment on cloud runner
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -37,6 +46,8 @@ jobs:
           ninja --version
           git clone --depth 1 --recurse-submodules https://github.com/hedge-dev/XenonRecomp.git XenonRecomp
           if ($LASTEXITCODE -ne 0) { throw 'git clone failed' }
+          python scripts/apply_xenon_patch.py XenonRecomp
+          if ($LASTEXITCODE -ne 0) { throw 'DOTM instruction patch failed' }
           cmake -S XenonRecomp -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
           if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed' }
           cmake --build build --config Release --parallel 4
@@ -50,11 +61,11 @@ jobs:
           $header = Get-ChildItem XenonRecomp -Recurse -File -Filter 'ppc_context.h' | Select-Object -First 1
           if (-not $header) { throw 'ppc_context.h not found' }
           Copy-Item $header.FullName 'dist\bin\ppc_context.h'
-          Compress-Archive -Path 'dist\bin\*' -DestinationPath 'dist\XenonRecomp_Windows_Tools.zip' -Force
+          Compress-Archive -Path 'dist\bin\*' -DestinationPath 'dist\XenonRecomp_Windows_Tools_DOTM_Patched.zip' -Force
 
       - name: Upload compiled Windows tools
         uses: actions/upload-artifact@v4
         with:
-          name: XenonRecomp-Windows-Tools
-          path: dist/XenonRecomp_Windows_Tools.zip
+          name: XenonRecomp-Windows-Tools-DOTM-PATCHED
+          path: dist/XenonRecomp_Windows_Tools_DOTM_Patched.zip
           if-no-files-found: error
