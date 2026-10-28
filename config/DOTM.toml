@@ -1,0 +1,43 @@
+# DOTM Xbox 360 (USA) title 415608A4, SHA256 XEX:
+# 6fd9ae9fb94ea8e9cc91a6a0cc62b04441411bdafe2479f0d380d4a3a9957ca6
+# Test: original upstream 316 invalid switch target messages; with these overrides: 0.
+# Warning: this is not a proven gameplay/runtime correctness test.
+# Directory layout: ../private/default.xex, ../ppc, switch TOML here.
+[main]
+file_path = "../private/default.xex"
+out_directory_path = "../ppc"
+switch_table_file_path = "DOTM_absolute_switches.toml"
+skip_lr = false
+skip_msr = false
+ctr_as_local = false
+xer_as_local = false
+reserved_as_local = false
+cr_as_local = false
+non_argument_as_local = false
+non_volatile_as_local = false
+restgprlr_14_address = 0x8328CD40
+savegprlr_14_address = 0x8328CCF0
+restfpr_14_address = 0x8328CDEC
+savefpr_14_address = 0x8328CDA0
+restvmx_14_address = 0x8328FFC8
+savevmx_14_address = 0x8328FD30
+restvmx_64_address = 0x8329005C
+savevmx_64_address = 0x8328FDC4
+functions = [
+    { address = 0x8255B168, size = 0x208 },
+    { address = 0x82A1DD40, size = 0x88 },
+    { address = 0x82AECAC0, size = 0xF8 },
+    { address = 0x82AEE9D8, size = 0xEC },
+    { address = 0x82C56000, size = 0x78 },
+    { address = 0x82D899D8, size = 0x3A8 },
+    { address = 0x82F49358, size = 0x260 },
+    { address = 0x834704A0, size = 0x1D8 },
+    { address = 0x834ADA08, size = 0x178 },
+    { address = 0x82C523D8, size = 0x190 },
+    { address = 0x82C56558, size = 0x160 },
+    { address = 0x82FF17F8, size = 0x2A8 },
+    { address = 0x83067458, size = 0x150 },
+    { address = 0x830675F8, size = 0x264 },
+    { address = 0x83431178, size = 0xE0 },
+    { address = 0x8348CBB8, size = 0x158 },
+]
