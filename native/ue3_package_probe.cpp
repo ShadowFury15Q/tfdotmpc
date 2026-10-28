@@ -1,5 +1,7 @@
 #include "ue3_package.hpp"
 #include <cstdio>
+#include <algorithm>
+#include <cstdint>
 #include <exception>
 int main(int argc, char**argv) {
  if(argc < 2) {std::fprintf(stderr,"Usage: dotm_ue3_probe <UE3 Xbox360 .xxx files...>\n");return 2;}
@@ -10,7 +12,14 @@ int main(int argc, char**argv) {
    const auto& q=p.info();
    std::printf("%s: UE3 version=%u licensee=%u names=%zu imports=%u exports=%u LZO chunks=%u blocks=%u\n",
                argv[i],q.version,q.licensee_version,p.names().size(),q.import_count,q.export_count,q.compressed_chunks,q.decompressed_blocks);
-   for(const auto&name:p.imported_package_names())std::printf("  depends: %s\n",name.c_str());
+   for(const auto&name:p.imported_package_names())std::printf("  depends: %s\\n",name.c_str());
+   const auto limit=std::min<std::size_t>(p.exports().size(),5);
+   for(std::size_t n=0;n<limit;++n) {
+     const auto& e=p.exports()[n];
+     std::printf("  export[%zu] %s class=%s serialized=%u bytes @0x%X\\n",
+         n,p.object_reference_path(std::int32_t(n+1)).c_str(),p.export_class_path(n).c_str(),
+         e.serial_size,e.serial_offset);
+   }
   }catch(const std::exception&e){std::fprintf(stderr,"%s: %s\n",argv[i],e.what());++failed;}
  }
  return failed?1:0;
