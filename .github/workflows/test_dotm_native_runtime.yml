@@ -45,6 +45,12 @@ jobs:
           ctest --test-dir native-build --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw "Native runtime tests failed" }
 
+      - name: Test private link stub generator (synthetic sources only)
+        shell: pwsh
+        run: |
+          python native/test_generate_private_link_stubs.py
+          if ($LASTEXITCODE -ne 0) { throw "Private link stub generator tests failed" }
+
       - name: Upload native diagnostic binaries (no game files)
         if: success()
         uses: actions/upload-artifact@v4
