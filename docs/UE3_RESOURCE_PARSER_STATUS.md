@@ -50,7 +50,7 @@
 ## Stage 10 — Xbox 360 Texture2D mip loading and native DXT-to-DDS conversion (28 Oct 2026)
 
 - 760/760 original Texture2D objects, 3,570 mip records validated, zero metadata errors.
-- 1,369 embedded unswizzled/untiled raw mips, 1 embedded LZO mip, 440 externally streamed mips, and 1,760 nonresident mip placeholders.
+- 1,369 embedded GPU-tiled mips with uncompressed UE3 bulk storage, 1 embedded LZO mip, 440 externally streamed mips, and 1,760 nonresident mip placeholders.
 - Native C++ decoder `native/ue3_mip.cpp` reads flags 0x00 (inline), 0x10 (LZO), 0x11 (external), 0x21 (missing) and enforces exact logical-offset/data-length consistency.
 - Native C++ probe `dotm_ue3_probe --verify-mips` processed 760 textures/3,570 mip entries and loaded 40,185,856 embedded mip bytes on original private DOTM game files, zero errors, exit code 0.
 - `native/ue3_dds.cpp` detiles Xbox 360 Xenos DXT1 / DXT5 BC blocks, swaps their 16-bit word byte order and writes standard 128-byte-header DDS assets.
