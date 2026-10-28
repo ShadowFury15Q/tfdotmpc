@@ -60,7 +60,7 @@ std::vector<std::uint8_t> expand(std::span<const std::uint8_t> raw, Ue3PackageIn
         virtual_size = std::max(virtual_size, std::size_t(guest_off) + guest_size);
     }
     std::vector<std::uint8_t> logical(virtual_size);
-    std::memcpy(logical.data(), raw.data(), kHeaderLength == 113 ? 0x6D : 0x6D);
+    std::memcpy(logical.data(), raw.data(), 0x6D);
     std::size_t previous_guest_end = 0x6D;
     for (std::size_t chunk = 0; chunk < info.compressed_chunks; ++chunk) {
         const auto off = chunk_table + chunk * 16;
