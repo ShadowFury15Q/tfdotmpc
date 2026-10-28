@@ -56,7 +56,7 @@ void XamInputHost::publish(const InputFrame& frame) {
 std::uint32_t XamInputHost::get_state(
     std::uint32_t user,std::uint32_t flags,std::span<std::uint8_t> out) const {
     if((flags&0xffU)!=0 && (flags&1U)==0)return kXamDeviceNotConnected;
-    if(user!=0 && (user&0xffU)!=0xffU && !(flags&0x10000000U))
+    if(user!=0 && (user&0xffU)!=0xffU && !(flags&0x40000000U))
         return kXamDeviceNotConnected;
     if(out.size()<kXboxInputStateBytes)return kXamBadArguments;
     std::lock_guard lock(mutex_);
