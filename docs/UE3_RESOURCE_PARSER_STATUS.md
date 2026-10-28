@@ -34,6 +34,19 @@
 - Game archives and generated game code remain private; public repository contains source code and tests only.
 
 **Not a playable port yet.** Object metadata and raw data ranges are readable, but actual UObject serialization, renderer, audio and Xbox 360 platform services remain unimplemented.
+## Stage 9 — Serialized UObject properties and Texture2D metadata (28 October 2026)
+
+- Inspected the original game object streams. DOTM uses a 4-byte UObject net index followed by big-endian tagged properties, terminated by the FName `None`.
+- Corrected DOTM tag semantics: `BoolProperty` stores a 32-bit boolean inside the tag with zero data length, `StructProperty` has an 8-byte FName struct subtype, and `ByteProperty` has no extra header enum FName. Treating bools as 1 byte caused misalignment.
+- Added `native/ue3_properties.hpp` / `.cpp` with bounded parsing of tagged properties, safe payload views and typed big-endian integer/float reads.
+- Added `native/ue3_texture.hpp` / `.cpp` to decode original Texture2D dimensions, original dimensions, mip-tail base index, format FName and native data span. It does NOT convert the Xbox GPU mip/tiled compression layout to Windows textures.
+- Native C++ probe `dotm_ue3_probe --verify-tags` validated **1,428 gameplay assets, 9,273 tagged properties, zero failures** across all 17 private, original Xbox 360 UE3 packages.
+- Native C++ probe `dotm_ue3_probe --verify-textures` validated **760 Texture2D exports, zero failures**: PF_DXT1 = 259, PF_DXT5 = 474, PF_A8R8G8B8 = 19, PF_G8 = 8.
+- Synthetic-property C++ tests cover 32-bit bools, ints, vector floats, enum name values, native object trailing data and invalid name indices; tests and compilation pass on Windows and Linux cloud runners.
+- CI run: https://github.com/ShadowFury15Q/tfdotmpc/actions/runs/40746609587
+- Original game assets and per-object metadata have not been uploaded to the public repository; local original-file verification was done privately.
+
+**Status: not a playable native PC build.** Actual UObject class-native data, Xenos swizzled/tiled texture mip payloads, model rendering, Xbox 360 platform APIs and game boot remain to be implemented and tested.
 ## Still missing for a playable native port
 - Resolve native UE3 package export objects (currently only headers, name and import metadata are decoded).
 - Native UE3 object/asset serialization and game-specific engine integrations.
