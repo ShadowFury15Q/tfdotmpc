@@ -47,6 +47,20 @@
 - Original game assets and per-object metadata have not been uploaded to the public repository; local original-file verification was done privately.
 
 **Status: not a playable native PC build.** Actual UObject class-native data, Xenos swizzled/tiled texture mip payloads, model rendering, Xbox 360 platform APIs and game boot remain to be implemented and tested.
+## Stage 10 — Xbox 360 Texture2D mip loading and native DXT-to-DDS conversion (28 Oct 2026)
+
+- 760/760 original Texture2D objects, 3,570 mip records validated, zero metadata errors.
+- 1,369 embedded unswizzled/untiled raw mips, 1 embedded LZO mip, 440 externally streamed mips, and 1,760 nonresident mip placeholders.
+- Native C++ decoder `native/ue3_mip.cpp` reads flags 0x00 (inline), 0x10 (LZO), 0x11 (external), 0x21 (missing) and enforces exact logical-offset/data-length consistency.
+- Native C++ probe `dotm_ue3_probe --verify-mips` processed 760 textures/3,570 mip entries and loaded 40,185,856 embedded mip bytes on original private DOTM game files, zero errors, exit code 0.
+- `native/ue3_dds.cpp` detiles Xbox 360 Xenos DXT1 / DXT5 BC blocks, swaps their 16-bit word byte order and writes standard 128-byte-header DDS assets.
+- `native/dotm_dds_export` produced **600 PC-readable DDS textures** from the private 17-package boot asset collection: **0 conversion errors**; 160 assets remain nonresident in this subset or use formats not yet supported.
+- Independently created Python DDS and native C++ DDS were **byte-identical for 8 matched textures**. All 600 exported DDS files successfully loaded and decompressed with Pillow.
+- Synthetic unit tests check bulk flags, inline/LZO payloads, missing external data refusal, BC1/BC3 tiling and DDS header consistency on Windows and Linux.
+- CI: https://github.com/ShadowFury15Q/tfdotmpc/actions/runs/40749241765 — both Windows and Ubuntu builds/tests successful.
+- A private ZIP with 600 DDS resources and preview PNGs was delivered to the game owner; original commercial game resources are NOT committed to this public GitHub repository.
+
+**Still not a playable native port.** Windows graphics API integration and Unreal Engine UObject/material/mesh loaders, audio, import stubs and game startup are not implemented at game-ready fidelity.
 ## Still missing for a playable native port
 - Resolve native UE3 package export objects (currently only headers, name and import metadata are decoded).
 - Native UE3 object/asset serialization and game-specific engine integrations.
