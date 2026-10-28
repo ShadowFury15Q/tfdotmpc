@@ -42,9 +42,9 @@ void bind_xam_guest_input(XamInputHost* input,GuestMemory* memory) noexcept {
 }
 std::uint32_t xam_bound_input_get_state(
     std::uint32_t user,std::uint32_t flags,std::uint32_t guest_address) {
-    const auto* const in=active_input.load(std::memory_order_acquire);
+    auto* const in=active_input.load(std::memory_order_acquire);
     auto* const mem=active_memory.load(std::memory_order_acquire);
     if(!in||!mem)return kXamDeviceNotConnected;
-    return xam_input_get_state_guest(*const_cast<XamInputHost*>(in),*mem,user,flags,guest_address);
+    return xam_input_get_state_guest(*in,*mem,user,flags,guest_address);
 }
 }
