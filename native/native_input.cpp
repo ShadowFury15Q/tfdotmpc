@@ -10,11 +10,10 @@ NativeInput::NativeInput() {
  // against the title's original context-sensitive robot/vehicle controls.
  bindings_ = {
   'W','S','A','D',0x20, // movement and space
-  kMouseLeft,kMouseRight,0x02, // primary, secondary, aim (will rebind below)
+  kMouseLeft,kMouseMiddle,kMouseRight, // primary fire, alternate fire, aim
   'F','Q','V',0x10, // transform, ability, melee, shift/dash
   'E','R',0x1B // interact, reload, escape
  };
- bindings_[static_cast<std::size_t>(InputAction::Aim)] = kMouseMiddle;
 }
 void NativeInput::bind(InputAction action,std::uint16_t code) {
  if(code>=kKeyCount) throw std::invalid_argument("Unsupported Windows input binding");
