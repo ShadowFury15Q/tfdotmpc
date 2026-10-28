@@ -8,6 +8,7 @@
 #include <stdexcept>
 
 PPC_EXTERN_FUNC(__imp__XamInputGetState);
+PPC_EXTERN_FUNC(__imp__XamInputGetCapabilities);
 
 namespace {
 void require(bool pass,const char* message){if(!pass)throw std::runtime_error(message);}
@@ -49,6 +50,21 @@ int main(){
     __imp__XamInputGetState(ctx,memory.base());
     require(ctx.r3.u64==dotm::kXamBadArguments,
             "Disallow Xbox input writes into native PPC dispatch table");
+
+    constexpr std::uint32_t caps_ptr=0x82033000u;
+    ctx.r3.u64=0;
+    ctx.r4.u64=1;
+    ctx.r5.u64=caps_ptr;
+    __imp__XamInputGetCapabilities(ctx,memory.base());
+    require(ctx.r3.u64==dotm::kXamOk,"Original PPC capabilities import returns success");
+    const auto* caps=memory.address(caps_ptr);
+    require(caps[0]==1&&caps[1]==1&&caps[4]==0xF3&&caps[5]==0xFF,
+            "PPC XamInputGetCapabilities wrote big endian 20-byte guest struct");
+    ctx.r3.u64=0;
+    ctx.r5.u64=0;
+    __imp__XamInputGetCapabilities(ctx,memory.base());
+    require(ctx.r3.u64==dotm::kXamBadArguments,
+            "XAM capabilities cannot write to null guest destination");
     dotm::bind_xam_guest_input(nullptr,nullptr);
     ctx.r3.u64=0;
     ctx.r5.u64=guest_ptr;
