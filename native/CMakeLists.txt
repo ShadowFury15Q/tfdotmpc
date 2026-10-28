@@ -48,3 +48,8 @@ add_test(NAME ue3_kdop_collision_and_skeletal_bounds COMMAND dotm_ue3_mesh_test)
 
 add_executable(dotm_static_obj_export static_obj_export_main.cpp)
 target_link_libraries(dotm_static_obj_export PRIVATE dotm_ue3_package)
+
+if(WIN32)
+  add_executable(dotm_dx11_mesh_viewer WIN32 dx11_mesh_viewer.cpp)
+  target_link_libraries(dotm_dx11_mesh_viewer PRIVATE dotm_ue3_package d3d11 d3dcompiler dxgi user32 shell32)
+endif()
