@@ -1,10 +1,12 @@
 #include "ue3_package.hpp"
 #include "ue3_properties.hpp"
+#include "ue3_texture.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <map>
 #include <stdexcept>
 #include <string_view>
 
@@ -23,12 +25,14 @@ bool gameplay_asset_class(std::string_view cls){
 int main(int argc, char** argv) {
  const bool verify_all=argc>1&&std::strcmp(argv[1],"--verify-all")==0;
  const bool verify_tags=argc>1&&std::strcmp(argv[1],"--verify-tags")==0;
- const int first=verify_all||verify_tags?2:1;
+ const bool verify_textures=argc>1&&std::strcmp(argv[1],"--verify-textures")==0;
+ const int first=verify_all||verify_tags||verify_textures?2:1;
  if(argc<=first) {
-  std::fprintf(stderr,"Usage: dotm_ue3_probe [--verify-all|--verify-tags] <UE3 Xbox360 .xxx files...>\n");
+  std::fprintf(stderr,"Usage: dotm_ue3_probe [--verify-all|--verify-tags|--verify-textures] <UE3 Xbox360 .xxx files...>\n");
   return 2;
  }
- std::size_t total_exports=0,validated_refs=0,tagged_assets=0,tag_count=0,failures=0;
+ std::size_t total_exports=0,validated_refs=0,tagged_assets=0,tag_count=0,failures=0,textures=0;
+ std::map<std::string,std::size_t> format_histogram;
  for(int i=first;i<argc;++i){
   try {
    const auto pkg=dotm::Ue3Package::load(argv[i]);
@@ -36,7 +40,7 @@ int main(int argc, char** argv) {
    std::printf("%s: names=%zu imports=%u exports=%u LZO chunks=%u blocks=%u\n",
                argv[i],pkg.names().size(),q.import_count,q.export_count,q.compressed_chunks,q.decompressed_blocks);
    total_exports+=pkg.exports().size();
-   if(!verify_all&&!verify_tags) {
+   if(!verify_all&&!verify_tags&&!verify_textures) {
     for(const auto&name:pkg.imported_package_names())std::printf("  depends: %s\n",name.c_str());
     for(std::size_t n=0;n<std::min<std::size_t>(pkg.exports().size(),5);++n) {
       const auto& e=pkg.exports()[n];
@@ -45,10 +49,15 @@ int main(int argc, char** argv) {
           pkg.export_class_path(n).c_str(),e.serial_size);
     }
    }
-   if(verify_all||verify_tags)for(std::size_t n=0;n<pkg.exports().size();++n){
+   if(verify_all||verify_tags||verify_textures)for(std::size_t n=0;n<pkg.exports().size();++n){
     try {
      const auto& e=pkg.exports()[n];
-     if(verify_tags) {
+     if(verify_textures){
+      if(e.serial_size==0||pkg.export_class_path(n)!="Engine.Texture2D")continue;
+      const auto tx=dotm::inspect_ue3_texture2d(pkg,n);
+      ++textures;
+      ++format_histogram[tx.format];
+     }else if(verify_tags) {
       const auto class_path=pkg.export_class_path(n);
       if(!gameplay_asset_class(class_path)||e.serial_size==0)continue;
       const auto stream=dotm::parse_ue3_tagged_properties(pkg,n);
@@ -83,5 +92,11 @@ int main(int argc, char** argv) {
                             total_exports,validated_refs,failures);
  if(verify_tags)std::printf("Tagged game assets: exports=%zu checked=%zu properties=%zu failures=%zu\n",
                             total_exports,tagged_assets,tag_count,failures);
+ if(verify_textures){
+  std::printf("DOTM Texture2D assets: exports=%zu checked=%zu failures=%zu\n",
+              total_exports,textures,failures);
+  for(const auto& [format,count]:format_histogram)
+   std::printf("  %s: %zu\n",format.c_str(),count);
+ }
  return failures?1:0;
 }
