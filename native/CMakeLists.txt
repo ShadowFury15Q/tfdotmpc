@@ -65,3 +65,15 @@ if(WIN32)
   add_executable(dotm_dx11_mesh_viewer WIN32 dx11_mesh_viewer.cpp)
   target_link_libraries(dotm_dx11_mesh_viewer PRIVATE dotm_ue3_package d3d11 d3dcompiler dxgi user32 shell32)
 endif()
+
+# Platform-independent native Windows keyboard/mouse action-state engine.
+add_library(dotm_native_input STATIC native_input.cpp)
+target_include_directories(dotm_native_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+add_executable(dotm_native_input_test test_native_input.cpp)
+target_link_libraries(dotm_native_input_test PRIVATE dotm_native_input)
+add_test(NAME native_keyboard_mouse_actions COMMAND dotm_native_input_test)
+
+if(WIN32)
+  add_library(dotm_win32_input STATIC win32_input.cpp)
+  target_link_libraries(dotm_win32_input PUBLIC dotm_native_input user32)
+endif()
