@@ -1,5 +1,7 @@
 #include "ue3_properties.hpp"
 #include "ue3_texture.hpp"
+#include "ue3_mip.hpp"
+#include <lzokay.hpp>
 #include <cmath>
 #include <cstdint>
 #include <exception>
@@ -26,7 +28,7 @@ void add_tag(std::vector<std::uint8_t>&b,std::uint32_t name,std::uint32_t type,
  add_fname(b,name);add_fname(b,type);add32(b,len);add32(b,idx);
 }
 void check(bool b,const char*msg){if(!b)throw std::runtime_error(msg);}
-std::vector<std::uint8_t> example(bool corrupt=false) {
+std::vector<std::uint8_t> example(bool corrupt=false,bool with_mips=false,bool compressed=false) {
  // These are entirely synthetic, never extracted from a commercial game.
  std::vector<std::uint8_t> b(113);
  set32(b,0,0x9E2A83C1U);set32(b,4,0x00AE0219U);
@@ -59,7 +61,37 @@ std::vector<std::uint8_t> example(bool corrupt=false) {
  add32(b,0x3f800000u);add32(b,0x40000000u);add32(b,0x40400000u);
  add_tag(b,8,9,8);add_fname(b,21); // Format:ByteProperty FName PF_DXT5
  add_fname(b,0);                 // None terminal
- add32(b,0x12345678u);          // Native class-specific data after properties
+ if(!with_mips) {
+  add32(b,0x12345678u);          // Native class-specific data after properties
+ } else {
+  add32(b,3); // Three synthetic mips.
+  std::vector<std::uint8_t> source;
+  std::uint32_t rawsize=8;
+  if(compressed){
+   rawsize=32;
+   std::vector<std::uint8_t> raw(32,0x5a);
+   std::vector<std::uint8_t> packed(lzokay::compress_worst_size(raw.size()));
+   std::size_t packed_len=0;
+   if(lzokay::compress(raw.data(),raw.size(),packed.data(),packed.size(),packed_len)!=lzokay::EResult::Success)
+    throw std::runtime_error("Synthetic LZO texture encoding failed");
+   packed.resize(packed_len);
+   add32(source,0x9E2A83C1u);add32(source,131072);
+   add32(source,std::uint32_t(packed_len));add32(source,rawsize);
+   add32(source,std::uint32_t(packed_len));add32(source,rawsize);
+   source.insert(source.end(),packed.begin(),packed.end());
+  }else source={1,2,3,4,5,6,7,8};
+  add32(b,compressed?0x10u:0u);add32(b,rawsize);
+  add32(b,std::uint32_t(source.size()));
+  const auto ptr=b.size();add32(b,0); // FByteBulkData offsetInFile.
+  add32(b,0xDEADBEEFu);             // Opaque per-mip field.
+  set32(b,ptr,std::uint32_t(b.size()));
+  b.insert(b.end(),source.begin(),source.end());
+  add32(b,32);add32(b,32);
+  add32(b,0x11);add32(b,16384);add32(b,1234);add32(b,0x800000);
+  add32(b,0xAABBCCDDu);add32(b,16);add32(b,16);
+  add32(b,0x21);add32(b,0);add32(b,0xFFFFFFFFu);add32(b,0xFFFFFFFFu);
+  add32(b,0x55);add32(b,8);add32(b,8);
+ }
  set32(b,exports+32,std::uint32_t(b.size())-obj);
  set32(b,exports+36,obj);
  set32(b,12,std::uint32_t(b.size()));
@@ -94,6 +126,23 @@ int main(){
   check(tx.native_payload_bytes==4,"Texture2D native serialized data length");
   const auto native=pkg.serialized_object(0);
   check(native.size()-p.native_data_offset==4,"Native trailing object payload");
+  for(const bool compressed:{false,true}){
+   auto fixture=dotm::Ue3Package::parse(example(false,true,compressed));
+   const auto mip=dotm::parse_ue3_texture_mips(fixture,0);
+   check(mip.size()==3,"UE3 mipmap count");
+   check(mip[0].width==32&&mip[0].height==32,"Embedded mip dimensions");
+   check(mip[0].storage==(compressed?dotm::Ue3MipStorage::LzoEmbedded:dotm::Ue3MipStorage::Embedded),"Mip storage flag");
+   check(mip[0].opaque_word==0xDEADBEEFu,"Preserve opaque mip word");
+   auto bytes=dotm::read_ue3_texture_mip_bytes(fixture,0,mip[0]);
+   check(bytes.size()==(compressed?32u:8u),"Mip raw/LZO decoded length");
+   check(bytes[0]==(compressed?0x5a:1),"Mip binary payload");
+   check(mip[1].storage==dotm::Ue3MipStorage::External &&
+         mip[2].storage==dotm::Ue3MipStorage::Absent,"Streaming and absent mips");
+   bool external_rejected=false;
+   try{(void)dotm::read_ue3_texture_mip_bytes(fixture,0,mip[1]);}
+   catch(const std::runtime_error&){external_rejected=true;}
+   check(external_rejected,"Do not fabricate external mip data");
+  }
   bool threw=false;
   try {
    const auto broken=dotm::Ue3Package::parse(example(true));
