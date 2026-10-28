@@ -6,8 +6,8 @@ namespace dotm {
 void Win32Input::register_raw_mouse(HWND hwnd) {
  if(!hwnd)throw std::invalid_argument("Raw mouse requires a valid HWND");
  RAWINPUTDEVICE device{};
- device.usUsagePage=HID_USAGE_PAGE_GENERIC;
- device.usUsage=HID_USAGE_GENERIC_MOUSE;
+ device.usUsagePage=0x01; // Generic Desktop usage page
+ device.usUsage=0x02; // Mouse usage
  device.dwFlags=0; // foreground-only raw mouse input
  device.hwndTarget=hwnd;
  if(!RegisterRawInputDevices(&device,1,sizeof(device)))
