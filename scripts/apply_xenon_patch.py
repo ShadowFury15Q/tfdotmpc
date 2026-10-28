@@ -21,6 +21,37 @@ def main() -> None:
     patched = original.replace(anchor, insert + anchor, 1)
     if patched.count(insert) != 1:
         raise SystemExit("ERROR: Patch insertion failed")
+    # Upstream currently emits a hard debug trap for vcmpbfp(128).
+    # Replace it with vector per-lane bounds checks and the CR6 record flag.
+    old_bounds = '''    case PPC_INST_VCMPBFP:
+    case PPC_INST_VCMPBFP128:
+        println("\\t__builtin_debugtrap();");
+        break;'''
+    new_bounds = r'''    case PPC_INST_VCMPBFP:
+    case PPC_INST_VCMPBFP128:
+    {
+        printSetFlushMode(true);
+        // Preserve B if destination and B alias.
+        println("\t{} = {};", vTemp(), v(insn.operands[2]));
+        for (size_t lane = 0; lane < 4; ++lane)
+        {
+            println("\t{}.f64 = {}.f32[{}];", temp(), v(insn.operands[1]), lane);
+            println("\t{}.u32[{}] = ({}.f64 != {}.f64 || {}.f32[{}] != {}.f32[{}]) ? 0xC0000000u : (({}.f64 > {}.f32[{}] ? 0x40000000u : 0u) | ({}.f64 < -double({}.f32[{}]) ? 0x80000000u : 0u));",
+                v(insn.operands[0]), lane, temp(), temp(), vTemp(), lane, vTemp(), lane, temp(), vTemp(), lane, temp(), vTemp(), lane);
+        }
+        if (strchr(insn.opcode->name, '.'))
+        {
+            println("\t{}.lt = false;", cr(6));
+            println("\t{}.gt = false;", cr(6));
+            println("\t{}.eq = ({}.u32[0] | {}.u32[1] | {}.u32[2] | {}.u32[3]) == 0;",
+                cr(6), v(insn.operands[0]), v(insn.operands[0]), v(insn.operands[0]), v(insn.operands[0]));
+            println("\t{}.so = false;", cr(6));
+        }
+        break;
+    }'''
+    if patched.count(old_bounds) != 1:
+        raise SystemExit(f"ERROR: vcmpbfp trap anchor changed; found {patched.count(old_bounds)}")
+    patched = patched.replace(old_bounds, new_bounds, 1)
     source.write_text(patched, encoding="utf-8")
     shutil.copyfile(patch, header)
     shutil.copyfile(extra, upstream / "XenonRecomp" / "dotm_extra_cases.inc")
