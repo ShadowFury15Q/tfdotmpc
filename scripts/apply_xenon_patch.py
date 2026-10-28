@@ -52,6 +52,20 @@ def main() -> None:
     if patched.count(old_bounds) != 1:
         raise SystemExit(f"ERROR: vcmpbfp trap anchor changed; found {patched.count(old_bounds)}")
     patched = patched.replace(old_bounds, new_bounds, 1)
+    # A linked branch to LR is an indirect call, not a debug trap.
+    old_blrl = '''    case PPC_INST_BLRL:
+        println("__builtin_debugtrap();");
+        break;'''
+    new_blrl = r'''    case PPC_INST_BLRL:
+        println("\t{}.u32 = uint32_t(ctx.lr);", temp());
+        if (!config.skipLr)
+            println("\tctx.lr = 0x{:X};", base + 4);
+        println("\tPPC_CALL_INDIRECT_FUNC({}.u32);", temp());
+        csrState = CSRState::Unknown;
+        break;'''
+    if patched.count(old_blrl) != 1:
+        raise SystemExit(f"ERROR: BLRL trap anchor changed; found {patched.count(old_blrl)}")
+    patched = patched.replace(old_blrl, new_blrl, 1)
     source.write_text(patched, encoding="utf-8")
     shutil.copyfile(patch, header)
     shutil.copyfile(extra, upstream / "XenonRecomp" / "dotm_extra_cases.inc")
