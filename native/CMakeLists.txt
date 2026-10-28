@@ -78,3 +78,23 @@ if(WIN32)
   target_link_libraries(dotm_win32_input PUBLIC dotm_native_input user32)
   target_link_libraries(dotm_dx11_mesh_viewer PRIVATE dotm_win32_input)
 endif()
+
+# Xbox 360 XAM input ABI backed by native Win32 keyboard/mouse actions.
+# Public CI tests use no original game code or assets.
+add_library(dotm_xam_input STATIC xam_input.cpp xam_guest_input.cpp)
+target_include_directories(dotm_xam_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(dotm_xam_input PUBLIC dotm_native_input dotm_guest_memory)
+
+add_executable(dotm_xam_input_test test_xam_input.cpp)
+target_link_libraries(dotm_xam_input_test PRIVATE dotm_xam_input)
+add_test(NAME xbox360_be_gamepad_from_pc_actions COMMAND dotm_xam_input_test)
+
+# Public CI uses synthetic PPCContext. A private game build must compile
+# xam_ppc_import.cpp against the actual generated ppc_recomp_shared.h.
+add_executable(dotm_xam_ppc_import_test
+  test_xam_ppc_import.cpp xam_ppc_import.cpp)
+target_include_directories(dotm_xam_ppc_import_test
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures)
+target_link_libraries(dotm_xam_ppc_import_test PRIVATE dotm_xam_input)
+add_test(NAME xenonrecomp_xam_input_original_import_abi
+  COMMAND dotm_xam_ppc_import_test)
