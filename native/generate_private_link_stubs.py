@@ -44,6 +44,19 @@ def generate(directory: Path, minimum_units: int = 600) -> tuple[str, int, int]:
     addresses = [address for address, _ in mapping_entries]
     if len(addresses) != len(set(addresses)):
         raise ValueError("Duplicate guest addresses in original PPC mapping")
+    # The native dispatcher only accepts aligned addresses inside the original
+    # DOTM executable range. Reject corrupt mappings before a private link can
+    # appear successful and fail later during dispatch installation.
+    code_begin = 0x82500000
+    code_end = code_begin + 0x0132235C
+    invalid = [(address, name) for address, name in mapping_entries
+               if address < code_begin or address >= code_end or address % 4]
+    if invalid:
+        address, name = invalid[0]
+        raise ValueError(
+            f"Invalid original PPC mapping address 0x{address:08X} ({name}): "
+            "outside executable range or not 4-byte aligned"
+        )
     if dict(mapping_entries).get(0x8277F670) != "_xstart" or "_xstart" not in definitions:
         raise ValueError("Original DOTM _xstart mapping or implementation missing")
     missing_game = sorted({
