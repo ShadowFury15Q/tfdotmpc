@@ -50,14 +50,24 @@ def strip_inactive_preprocessor(code: str) -> str:
     stack = []
     inactive = False
     output = []
-    continuation = False
-    for line in code.splitlines(keepends=True):
-        if continuation:
-            output.append(mask(line))
-            continuation = line.rstrip('\r\n').endswith('\\')
-            continue
+    lines = code.splitlines(keepends=True)
+    index = 0
+    while index < len(lines):
+        line = lines[index]
         match = re.match(r'^\s*#\s*(if|ifdef|ifndef|elif|else|endif|define)\b(.*)', line)
         if match:
+            # C/C++ phase 2 splices backslash-newline before parsing #if.
+            # A continued literal 0 must not expose disabled PPC definitions.
+            directive_lines = [line]
+            while (directive_lines[-1].rstrip('\r\n').endswith('\\')
+                   and index + 1 < len(lines)):
+                index += 1
+                directive_lines.append(lines[index])
+            directive_code = re.sub(r'\\\r?\n', ' ', ''.join(directive_lines))
+            match = re.match(
+                r'^\s*#\s*(if|ifdef|ifndef|elif|else|endif|define)\b(.*)',
+                directive_code
+            )
             directive, expr = match.groups()
             if directive in ('if', 'ifdef', 'ifndef'):
                 value = literal_bool(expr) if directive == 'if' else None
@@ -87,10 +97,10 @@ def strip_inactive_preprocessor(code: str) -> str:
                 inactive = frame['outer'] or not frame['active']
             elif directive == 'endif' and stack:
                 inactive = stack.pop()['outer']
-            output.append(mask(line))
-            continuation = line.rstrip('\r\n').endswith('\\')
+            output.extend(mask(part) for part in directive_lines)
         else:
             output.append(mask(line) if inactive else line)
+        index += 1
     return ''.join(output)
 
 

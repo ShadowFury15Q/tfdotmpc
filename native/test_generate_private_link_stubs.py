@@ -339,6 +339,52 @@ class PrivateLinkStubsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
                 generate(root, 1)
 
+    def test_line_spliced_if_zero_cannot_fake_game_definition(self):
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "ppc_recomp_shared.h").write_text(
+                    "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+                (root / "ppc_func_mapping.cpp").write_text(
+                    "{0x8277F670, _xstart},\n", encoding="utf-8")
+                (root / "ppc_recomp.0.cpp").write_text(
+                    "#if \\" + newline + "0" + newline +
+                    "PPC_FUNC_IMPL(_xstart) {}" + newline +
+                    "#endif" + newline, encoding="utf-8", newline="")
+                with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
+                    generate(root, 1)
+
+    def test_line_spliced_elif_one_keeps_active_definition(self):
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "ppc_recomp_shared.h").write_text(
+                    "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+                (root / "ppc_func_mapping.cpp").write_text(
+                    "{0x8277F670, _xstart},\n", encoding="utf-8")
+                (root / "ppc_recomp.0.cpp").write_text(
+                    "#if 0" + newline +
+                    "PPC_FUNC_IMPL(_xstart) {}" + newline +
+                    "#elif \\" + newline + "1" + newline +
+                    "PPC_FUNC_IMPL(_xstart) {}" + newline +
+                    "#endif" + newline, encoding="utf-8", newline="")
+                _, units, unresolved = generate(root, 1)
+                self.assertEqual((units, unresolved), (1, 0))
+
+    def test_line_spliced_define_cannot_fake_game_definition(self):
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "ppc_recomp_shared.h").write_text(
+                    "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+                (root / "ppc_func_mapping.cpp").write_text(
+                    "{0x8277F670, _xstart},\n", encoding="utf-8")
+                (root / "ppc_recomp.0.cpp").write_text(
+                    "#define FAKE \\" + newline +
+                    "PPC_FUNC_IMPL(_xstart) {}" + newline, encoding="utf-8", newline="")
+                with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
+                    generate(root, 1)
+
     def test_default_requires_all_696_private_units(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
