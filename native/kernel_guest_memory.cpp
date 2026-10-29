@@ -1,6 +1,7 @@
 #include "kernel_guest_memory.hpp"
 #include <cstdint>
 #include <mutex>
+#include <new>
 #include <stdexcept>
 
 namespace dotm {
