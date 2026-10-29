@@ -81,6 +81,19 @@ def generate(directory: Path, minimum_units: int = 696) -> tuple[str, int, int]:
     addresses = [address for address, _ in mapping_entries]
     if len(addresses) != len(set(addresses)):
         raise ValueError("Duplicate guest addresses in original PPC mapping")
+    # Every mapped platform import must be visible to the linker. An import
+    # omitted from the private header and all PPC bodies cannot be resolved
+    # by either the native bridge or generated fail-fast stubs.
+    missing_imports = sorted({
+        name for _, name in mapping_entries
+        if name.startswith("__imp__")
+        and name not in declarations and name not in definitions
+    })
+    if missing_imports:
+        raise ValueError(
+            "Mapped PPC imports lack declarations or implementations: "
+            + ", ".join(missing_imports[:8])
+        )
     # The native dispatcher only accepts aligned addresses inside the original
     # DOTM executable range. Reject corrupt mappings before a private link can
     # appear successful and fail later during dispatch installation.
