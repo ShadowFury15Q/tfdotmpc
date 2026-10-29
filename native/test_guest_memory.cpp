@@ -83,17 +83,35 @@ int main(int argc,char** argv){
   // bytes in either raw-section padding or its virtual-only BSS tail.
   m.address(0x82001080)[0]=0xcd;
   m.address(0x82001180)[0]=0xef;
+  // A prior image may leave data in unmapped section gaps and unused
+  // header padding. A new load must clear those too, without touching the
+  // adjacent native dispatch table.
+  m.commit(0x82000800,1);
+  m.address(0x82000800)[0]=0x71;
+  m.address(0x820001f0)[0]=0x72;
+  m.address(0x82002000)[0]=0x73;
   save(pe);m.load_pe(file);
   check(m.address(0x82001000)[0]==0xab,"Synthetic Xbox PE section mapped");
   check(m.address(0x82001001)[0]==0,"PE virtual zero-fill");
   check(m.address(0x82001080)[0]==0,"PE initialized raw bytes replace stale data");
   check(m.address(0x82001180)[0]==0,"PE virtual-only BSS zeroed on reused page");
+  check(m.address(0x82000800)[0]==0,"PE section gap must be cleared");
+  check(m.address(0x820001f0)[0]==0,"PE header padding must be cleared");
+  check(m.address(0x82002000)[0]==0,"PE unlisted page must be cleared");
+  check(m.find_function(0x82500000)==target,
+        "Loading PE must not overwrite native PPC dispatch table");
   m.address(0x82001080)[0]=0x12;
   m.address(0x82001180)[0]=0x34;
+  m.address(0x82000800)[0]=0x56;
+  m.address(0x82002000)[0]=0x78;
   m.load_pe(file);
   check(m.address(0x82001000)[0]==0xab,"Repeated PE load restores initialized data");
   check(m.address(0x82001080)[0]==0,"Repeated PE load clears old raw padding");
   check(m.address(0x82001180)[0]==0,"Repeated PE load clears old virtual BSS");
+  check(m.address(0x82000800)[0]==0,"Repeated PE load clears section gaps");
+  check(m.address(0x82002000)[0]==0,"Repeated PE load clears unmapped image pages");
+  check(m.find_function(0x82500004)==target,
+        "Repeated PE load must preserve native PPC dispatch mappings");
   auto reject=[&](std::vector<std::uint8_t> invalid,const char* reason){
    save(invalid);
    bool failed=false;
