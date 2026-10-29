@@ -20,6 +20,9 @@ or any other original Xbox ABI entry point.
 - `test_guest_virtual_allocator.cpp` uses synthetic addresses and exercises
   allocation, alignment, fixed reservations, fragmentation/reuse, bounds,
   invalid requests and accounting on Windows/Linux CI.
+- The existing synthetic PPC linker smoke now allocates its XAM output
+  buffer from this guest heap and links the allocator with the native
+  PPC/XAM bridge; it then verifies guest writes and releases the allocation.
 
 ## Limits / next work
 
