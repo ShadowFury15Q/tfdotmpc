@@ -177,6 +177,6 @@ target_include_directories(dotm_synthetic_private_link_test PRIVATE
   "${DOTM_SYNTHETIC_PPC_DIR}"
   "${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures")
 target_link_libraries(dotm_synthetic_private_link_test
-  PRIVATE dotm_recomp_bridge dotm_xam_input)
+  PRIVATE dotm_recomp_bridge dotm_xam_input dotm_guest_virtual_allocator)
 add_test(NAME synthetic_full_ppc_link_and_xam_import
   COMMAND dotm_synthetic_private_link_test)
