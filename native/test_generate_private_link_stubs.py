@@ -141,6 +141,51 @@ class PrivateLinkStubsTests(unittest.TestCase):
             _, count, unresolved = generate(root, 1)
             self.assertEqual((count, unresolved), (1, 0))
 
+    def test_line_spliced_comment_cannot_fake_game_definition(self):
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "ppc_recomp_shared.h").write_text(
+                    "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+                (root / "ppc_func_mapping.cpp").write_text(
+                    "{0x8277F670, _xstart},\n", encoding="utf-8")
+                (root / "ppc_recomp.0.cpp").write_text(
+                    "// commented out \\" + newline +
+                    "PPC_FUNC_IMPL(_xstart) {}" + newline, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
+                    generate(root, 1)
+
+    def test_line_spliced_comment_cannot_fake_mapping(self):
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "ppc_recomp_shared.h").write_text(
+                    "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+                (root / "ppc_func_mapping.cpp").write_text(
+                    "// commented out \\" + newline +
+                    "{0x8277F670, _xstart}," + newline, encoding="utf-8")
+                (root / "ppc_recomp.0.cpp").write_text(
+                    "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "No original PPC function mappings"):
+                    generate(root, 1)
+
+    def test_line_spliced_comment_cannot_create_import(self):
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "ppc_recomp_shared.h").write_text(
+                    "PPC_EXTERN_FUNC(__imp__XamInputGetState);" + newline +
+                    "// commented out \\" + newline +
+                    "PPC_EXTERN_FUNC(__imp__KeWaitForSingleObject);" + newline,
+                    encoding="utf-8")
+                (root / "ppc_func_mapping.cpp").write_text(
+                    "{0x8277F670, _xstart},\n", encoding="utf-8")
+                (root / "ppc_recomp.0.cpp").write_text(
+                    "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+                source, count, unresolved = generate(root, 1)
+                self.assertEqual((count, unresolved), (1, 0))
+                self.assertNotIn("PPC_FUNC(__imp__KeWaitForSingleObject)", source)
+
     def test_default_requires_all_696_private_units(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
