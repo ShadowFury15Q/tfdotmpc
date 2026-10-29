@@ -22,6 +22,12 @@ public:
     bool allocate_at(std::uint32_t address, std::uint64_t bytes);
     // Exact-base release revokes host access; failure preserves tracking.
     bool release(std::uint32_t address);
+    // Exact-base query used by the NT MEM_RELEASE ABI; interior pointers fail.
+    std::optional<std::uint64_t> allocation_size(std::uint32_t address) const noexcept {
+        const auto it = blocks_.find(address);
+        if (it == blocks_.end()) return std::nullopt;
+        return it->second;
+    }
     std::size_t allocation_count() const noexcept { return blocks_.size(); }
     std::uint64_t allocated_bytes() const noexcept { return allocated_bytes_; }
 
