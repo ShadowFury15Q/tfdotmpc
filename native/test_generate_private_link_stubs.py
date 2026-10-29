@@ -18,6 +18,8 @@ class PrivateLinkStubsTests(unittest.TestCase):
             (root / "ppc_recomp_shared.h").write_text(
                 "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n"
                 "PPC_EXTERN_FUNC(__imp__XamInputGetCapabilities);\n"
+                "PPC_EXTERN_FUNC(__imp__NtAllocateVirtualMemory);\n"
+                "PPC_EXTERN_FUNC(__imp__NtFreeVirtualMemory);\n"
                 "PPC_EXTERN_FUNC(__imp__KeWaitForSingleObject);\n"
                 "PPC_EXTERN_FUNC(__savegprlr_14);\n"
                 "PPC_EXTERN_FUNC(_xstart);\n", encoding="utf-8")
@@ -36,6 +38,8 @@ class PrivateLinkStubsTests(unittest.TestCase):
             self.assertNotIn("PPC_FUNC(_xstart)", source)
             self.assertNotIn("PPC_FUNC(__imp__XamInputGetState)", source)
             self.assertNotIn("PPC_FUNC(__imp__XamInputGetCapabilities)", source)
+            self.assertNotIn("PPC_FUNC(__imp__NtAllocateVirtualMemory)", source)
+            self.assertNotIn("PPC_FUNC(__imp__NtFreeVirtualMemory)", source)
             self.assertIn("std::abort()", source)
             self.assertNotIn("synthetic mapping", source)
 
