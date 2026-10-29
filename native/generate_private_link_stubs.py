@@ -30,10 +30,75 @@ CPP_NONCODE = re.compile(
 )
 
 
+def strip_inactive_preprocessor(code: str) -> str:
+    """Exclude literal #if 0 branches and preprocessor directives from link checks.
+
+    Unknown conditional expressions remain visible rather than guessing which
+    platform branch is active. Keep line breaks intact for stable diagnostics.
+    """
+    def mask(line: str) -> str:
+        return re.sub(r'[^\r\n]', ' ', line)
+
+    def literal_bool(expr: str):
+        expr = expr.strip()
+        if re.fullmatch(r'0|\(\s*0\s*\)', expr):
+            return False
+        if re.fullmatch(r'1|\(\s*1\s*\)', expr):
+            return True
+        return None
+
+    stack = []
+    inactive = False
+    output = []
+    continuation = False
+    for line in code.splitlines(keepends=True):
+        if continuation:
+            output.append(mask(line))
+            continuation = line.rstrip('\r\n').endswith('\\')
+            continue
+        match = re.match(r'^\s*#\s*(if|ifdef|ifndef|elif|else|endif|define)\b(.*)', line)
+        if match:
+            directive, expr = match.groups()
+            if directive in ('if', 'ifdef', 'ifndef'):
+                value = literal_bool(expr) if directive == 'if' else None
+                stack.append({
+                    'outer': inactive, 'known': value is not None,
+                    'taken': value is True, 'active': value is not False
+                })
+                inactive = stack[-1]['outer'] or not stack[-1]['active']
+            elif directive in ('elif', 'else') and stack:
+                frame = stack[-1]
+                if frame['known']:
+                    if directive == 'else':
+                        frame['active'] = not frame['taken']
+                        frame['taken'] = True
+                    elif frame['taken']:
+                        frame['active'] = False
+                    else:
+                        value = literal_bool(expr)
+                        if value is None:
+                            frame['known'] = False
+                            frame['active'] = True
+                        else:
+                            frame['active'] = value
+                            frame['taken'] = value
+                else:
+                    frame['active'] = True
+                inactive = frame['outer'] or not frame['active']
+            elif directive == 'endif' and stack:
+                inactive = stack.pop()['outer']
+            output.append(mask(line))
+            continuation = line.rstrip('\r\n').endswith('\\')
+        else:
+            output.append(mask(line) if inactive else line)
+    return ''.join(output)
+
+
 def cpp_code_only(source: str) -> str:
-    return CPP_NONCODE.sub(
+    code = CPP_NONCODE.sub(
         lambda match: re.sub(r'[^\r\n]', ' ', match.group(0)), source
     )
+    return strip_inactive_preprocessor(code)
 
 
 def generate(directory: Path, minimum_units: int = 696) -> tuple[str, int, int]:

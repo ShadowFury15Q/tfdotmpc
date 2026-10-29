@@ -277,6 +277,68 @@ class PrivateLinkStubsTests(unittest.TestCase):
                 self.assertEqual((count, unresolved), (1, 0))
                 self.assertNotIn("PPC_FUNC(__imp__KeWaitForSingleObject)", source)
 
+    def test_disabled_preprocessor_definition_cannot_satisfy_mapping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "#if 0\nPPC_FUNC_IMPL(_xstart) {}\n#endif\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
+                generate(root, 1)
+
+    def test_disabled_preprocessor_mapping_is_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "#if 0\n{0x8277F670, _xstart},\n#endif\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "No original PPC function mappings"):
+                generate(root, 1)
+
+    def test_preprocessor_else_keeps_real_definition(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "#if 0\nPPC_FUNC_IMPL(_xstart) {}\n"
+                "#else\nPPC_FUNC_IMPL(_xstart) {}\n#endif\n", encoding="utf-8")
+            _, count, unresolved = generate(root, 1)
+            self.assertEqual((count, unresolved), (1, 0))
+
+    def test_nested_disabled_preprocessor_definition_with_crlf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "#if 0\r\n#if 1\r\nPPC_FUNC_IMPL(_xstart) {}\r\n"
+                "#endif\r\n#endif\r\n", encoding="utf-8", newline="")
+            with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
+                generate(root, 1)
+
+    def test_macro_definition_is_not_a_function_body(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "#define FAKE_ENTRY PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
+                generate(root, 1)
+
     def test_default_requires_all_696_private_units(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
