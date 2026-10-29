@@ -23,7 +23,7 @@ CPP_NONCODE = re.compile(
     r'R"(?P<raw_delimiter>[^ ()\\\t\r\n]{0,16})\([\s\S]*?\)(?P=raw_delimiter)"'
     r'|"(?:\\[\s\S]|[^"\\])*"'
     r"|'(?:\\[\s\S]|[^'\\])*'"
-    r'|//[^\n]*'
+    r'|//(?:\\\r?\n|[^\n])*'
     r'|/\*[\s\S]*?\*/'
 )
 
