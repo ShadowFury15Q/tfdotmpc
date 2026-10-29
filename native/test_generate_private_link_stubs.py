@@ -71,6 +71,23 @@ class PrivateLinkStubsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Duplicate guest addresses"):
                 generate(root, 1)
 
+    def test_out_of_range_or_unaligned_mapping_is_rejected(self):
+        # These entries would be rejected by the runtime dispatch table;
+        # catch them before compiling hundreds of private PPC units.
+        for address in ("0x824FFFFC", "0x8382235C", "0x82500002"):
+            with self.subTest(address=address), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "ppc_recomp_shared.h").write_text(
+                    "PPC_EXTERN_FUNC(__imp__XamInputGetState);\\n"
+                    "PPC_EXTERN_FUNC(_xstart);\\n", encoding="utf-8")
+                (root / "ppc_func_mapping.cpp").write_text(
+                    "{0x8277F670, _xstart},\\n"
+                    f"{{{address}, _xstart}},\\n", encoding="utf-8")
+                (root / "ppc_recomp.0.cpp").write_text(
+                    "PPC_FUNC_IMPL(_xstart) {}\\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "Invalid original PPC mapping address"):
+                    generate(root, 1)
+
     def test_missing_original_entry_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
