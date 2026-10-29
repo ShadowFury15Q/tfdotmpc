@@ -64,7 +64,9 @@ std::uint32_t nt_allocate_virtual_memory_guest(
     const std::uint64_t needed = std::uint64_t(requested_size) + offset;
     if (needed > 0xFFFFFFFFULL) return kNtInvalidParameter;
     const std::uint64_t rounded = (needed + page - 1) & ~(page - 1);
-    if (rounded > 0xFFFFFFFFULL) return kNtInvalidParameter;
+    if (rounded > 0xFFFFFFFFULL ||
+        (requested_base && aligned_base + rounded > GuestMemory::kAddressSpaceSize))
+        return kNtInvalidParameter;
     try {
         std::optional<std::uint32_t> allocated;
         if (requested_base) {
