@@ -22,9 +22,8 @@ class PrivateLinkStubsTests(unittest.TestCase):
                 "PPC_EXTERN_FUNC(__savegprlr_14);\n"
                 "PPC_EXTERN_FUNC(_xstart);\n", encoding="utf-8")
             (root / "ppc_func_mapping.cpp").write_text(
-                "{0x8277F670, _xstart},\
-{0x82500000, __imp__KeWaitForSingleObject},\
-",
+                "{0x8277F670, _xstart},\n"
+                "{0x82500000, __imp__KeWaitForSingleObject},\n",
                 encoding="utf-8")
             (root / "ppc_recomp.0.cpp").write_text(
                 "PPC_FUNC_IMPL(_xstart) { /* synthetic */ }\n", encoding="utf-8")
