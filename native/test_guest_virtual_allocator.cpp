@@ -98,6 +98,32 @@ int main() {
         shared.decommit(shared_first + 3 * 4096, 4096);
         require(guarded.allocate_at(shared_first + 3 * 4096, 4096),
                 "Explicitly decommitted external page becomes available");
+        // Fragmented external commits must not cause repeated full-range
+        // scans or let first-fit allocations overwrite foreign guest pages.
+        dotm::GuestMemory fragmented;
+        constexpr std::uint32_t fragmented_first = 0x40000000U;
+        Alloc fragmented_heap(fragmented, fragmented_first,
+                              fragmented_first + 64 * 4096);
+        for (std::uint32_t page = 0; page < 64; page += 5) {
+            const auto address = fragmented_first + page * 4096;
+            fragmented.commit(address, 4096);
+            fragmented.address(address)[0] = static_cast<std::uint8_t>(page + 1);
+        }
+        require(!fragmented_heap.allocate(5 * 4096),
+                "Fragmented guest space cannot satisfy a five-page run");
+        const auto fragmented_a = fragmented_heap.allocate(4 * 4096);
+        const auto fragmented_b = fragmented_heap.allocate(3 * 4096, 8192);
+        require(fragmented_a == fragmented_first + 4096 &&
+                fragmented_b == fragmented_first + 6 * 4096,
+                "Fragmented first-fit respects alignment and committed holes");
+        require(fragmented_heap.allocation_count() == 2 &&
+                fragmented_heap.allocated_bytes() == 7 * 4096,
+                "Fragmented allocation accounting stays consistent");
+        for (std::uint32_t page = 0; page < 64; page += 5) {
+            const auto address = fragmented_first + page * 4096;
+            require(fragmented.address(address)[0] == page + 1,
+                    "Fragmented allocator preserves externally owned pages");
+        }
         std::cout << "DOTM guest virtual allocator synthetic tests PASS\n";
         return 0;
     } catch (const std::exception& e) {
