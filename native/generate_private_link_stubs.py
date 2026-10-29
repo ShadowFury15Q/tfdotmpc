@@ -105,6 +105,9 @@ def strip_inactive_preprocessor(code: str) -> str:
 
 
 def cpp_code_only(source: str) -> str:
+    # C++ translation phase 2 removes backslash-newline before tokenization.
+    # Splice before comment stripping: even // or PPC_FUNC_IMPL can be split.
+    source = re.sub(r'\\\r?\n', '', source)
     code = CPP_NONCODE.sub(
         lambda match: re.sub(r'[^\r\n]', ' ', match.group(0)), source
     )
