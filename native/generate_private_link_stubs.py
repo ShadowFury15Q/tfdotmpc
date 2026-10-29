@@ -12,7 +12,8 @@ DECL = re.compile(r"\bPPC_EXTERN_FUNC\s*\(\s*([A-Za-z_]\w*)\s*\)\s*;")
 DEF = re.compile(r"\bPPC_FUNC(?:_IMPL)?\s*\(\s*([A-Za-z_]\w*)\s*\)")
 MAPPING = re.compile(r"\{\s*(0x[0-9A-Fa-f]+)\s*,\s*([A-Za-z_]\w*)\s*\}")
 HELPER = re.compile(r"__?(?:save|rest)(?:gprlr|fpr|vmx)_\d+")
-NATIVE = {"__imp__XamInputGetState", "__imp__XamInputGetCapabilities"}
+NATIVE = {"__imp__XamInputGetState", "__imp__XamInputGetCapabilities",
+          "__imp__NtAllocateVirtualMemory", "__imp__NtFreeVirtualMemory"}
 
 
 def generate(directory: Path, minimum_units: int = 600) -> tuple[str, int, int]:
