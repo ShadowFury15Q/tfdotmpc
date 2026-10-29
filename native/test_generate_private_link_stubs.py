@@ -508,7 +508,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
 
 
     def test_nonconditional_preprocessor_directives_do_not_create_ppc_symbols(self):
-        for newline in ("\\n", "\\r\\n"):
+        for newline in ("\n", "\r\n"):
             with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 (root / "ppc_recomp_shared.h").write_text(
@@ -532,11 +532,11 @@ class PrivateLinkStubsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "ppc_recomp_shared.h").write_text(
-                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\\n", encoding="utf-8")
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
             (root / "ppc_func_mapping.cpp").write_text(
-                "{0x8277F670, _xstart},\\n", encoding="utf-8")
+                "{0x8277F670, _xstart},\n", encoding="utf-8")
             (root / "ppc_recomp.0.cpp").write_text(
-                "#pragma vendor PPC_FUNC_IMPL(_xstart) {}\\n", encoding="utf-8")
+                "#pragma vendor PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
                 generate(root, 1)
 
