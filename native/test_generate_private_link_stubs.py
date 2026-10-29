@@ -146,12 +146,12 @@ class PrivateLinkStubsTests(unittest.TestCase):
             with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 (root / "ppc_recomp_shared.h").write_text(
-                    "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+                    "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8", newline="")
                 (root / "ppc_func_mapping.cpp").write_text(
-                    "{0x8277F670, _xstart},\n", encoding="utf-8")
+                    "{0x8277F670, _xstart},\n", encoding="utf-8", newline="")
                 (root / "ppc_recomp.0.cpp").write_text(
                     "// commented out \\" + newline +
-                    "PPC_FUNC_IMPL(_xstart) {}" + newline, encoding="utf-8")
+                    "PPC_FUNC_IMPL(_xstart) {}" + newline, encoding="utf-8", newline="")
                 with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
                     generate(root, 1)
 
@@ -160,12 +160,12 @@ class PrivateLinkStubsTests(unittest.TestCase):
             with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 (root / "ppc_recomp_shared.h").write_text(
-                    "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+                    "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8", newline="")
                 (root / "ppc_func_mapping.cpp").write_text(
                     "// commented out \\" + newline +
-                    "{0x8277F670, _xstart}," + newline, encoding="utf-8")
+                    "{0x8277F670, _xstart}," + newline, encoding="utf-8", newline="")
                 (root / "ppc_recomp.0.cpp").write_text(
-                    "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+                    "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8", newline="")
                 with self.assertRaisesRegex(ValueError, "No original PPC function mappings"):
                     generate(root, 1)
 
@@ -177,11 +177,11 @@ class PrivateLinkStubsTests(unittest.TestCase):
                     "PPC_EXTERN_FUNC(__imp__XamInputGetState);" + newline +
                     "// commented out \\" + newline +
                     "PPC_EXTERN_FUNC(__imp__KeWaitForSingleObject);" + newline,
-                    encoding="utf-8")
+                    encoding="utf-8", newline="")
                 (root / "ppc_func_mapping.cpp").write_text(
-                    "{0x8277F670, _xstart},\n", encoding="utf-8")
+                    "{0x8277F670, _xstart},\n", encoding="utf-8", newline="")
                 (root / "ppc_recomp.0.cpp").write_text(
-                    "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+                    "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8", newline="")
                 source, count, unresolved = generate(root, 1)
                 self.assertEqual((count, unresolved), (1, 0))
                 self.assertNotIn("PPC_FUNC(__imp__KeWaitForSingleObject)", source)
