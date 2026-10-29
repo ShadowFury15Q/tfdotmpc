@@ -65,6 +65,20 @@ int main() {
               "Unaligned fixed base rounds down");
         check(read32(memory, ptr) == 0x40003000U &&
               read32(memory, size_ptr) == 4096, "Fixed allocation outputs");
+        // MEM_RELEASE writes RegionSize after decommitting the region.
+        // The output pointer must not be inside the allocation being freed.
+        write32(memory, ptr, 0x40003000U);
+        write32(memory, 0x40003000U, 0);
+        ctx.r3.u64 = ptr;
+        ctx.r4.u64 = 0x40003000U;
+        ctx.r5.u64 = 0x8000U;
+        ctx.r6.u64 = 0;
+        __imp__NtFreeVirtualMemory(ctx, memory.base());
+        check(ctx.r3.u64 == dotm::kNtInvalidParameter,
+              "MEM_RELEASE rejects an output word in revoked guest pages");
+        check(memory.committed_range(0x40003000U, 4) &&
+              heap.allocation_size(0x40003000U).has_value(),
+              "Rejected MEM_RELEASE preserves the original allocation");
         check(allocate(0x40003000U, 4096) == dotm::kNtNoMemory,
               "Overlapping fixed address rejected");
         check(read32(memory, ptr) == 0x40003000U &&

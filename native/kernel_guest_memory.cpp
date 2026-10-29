@@ -101,6 +101,14 @@ std::uint32_t nt_free_virtual_memory_guest(
     if (size != 0) return kNtInvalidParameter;
     const auto existing = allocator.allocation_size(base);
     if (!existing) return kNtMemoryNotAllocated;
+    // RegionSize is an output parameter. Releasing pages containing that
+    // word would make the required post-release write access revoked memory.
+    // Validate this before changing the allocation or its page protections.
+    const std::uint64_t release_begin = base;
+    const std::uint64_t release_end = release_begin + *existing;
+    const std::uint64_t output_begin = size_pointer;
+    if (output_begin < release_end && output_begin + 4 > release_begin)
+        return kNtInvalidParameter;
     try {
         if (!allocator.release(base)) return kNtMemoryNotAllocated;
     } catch (const std::exception&) {
