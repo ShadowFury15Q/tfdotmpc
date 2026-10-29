@@ -79,6 +79,19 @@ class PrivateLinkStubsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "_xstart mapping"):
                 generate(root, 1)
 
+    def test_unmapped_nonplatform_symbol_is_not_stubbed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\\n"
+                "PPC_EXTERN_FUNC(sub_82500004);\\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "PPC_FUNC_IMPL(_xstart) {}\\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Unimplemented non-platform PPC symbols"):
+                generate(root, 1)
+
     def test_missing_expected_xam_import_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
