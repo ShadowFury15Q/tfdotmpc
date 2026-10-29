@@ -87,6 +87,7 @@ int main(int argc,char** argv){
   // header padding. A new load must clear those too, without touching the
   // adjacent native dispatch table.
   m.commit(0x82000800,1);
+  m.commit(0x820001f0,1);
   m.address(0x82000800)[0]=0x71;
   m.address(0x820001f0)[0]=0x72;
   m.address(0x82002000)[0]=0x73;
