@@ -114,18 +114,14 @@ void GuestMemory::load_pe(const std::filesystem::path& path){
     throw std::runtime_error("Overlapping PE virtual sections");
   checked.push_back({rva,raw,file_off,len});
  }
- copy_to_guest(kImageBase,b.first(header));
+ // A PE load replaces the entire fixed-base image, not just its sections.
+ // Section gaps, skipped .reloc bytes and the tail of shorter headers must
+ // never inherit data from a previous load. The native dispatch table starts
+ // exactly at kImageBase + kImageSize and must remain untouched.
+ commit(kImageBase,kImageSize);
+ std::memset(address(kImageBase),0,kImageSize);
+ std::memcpy(address(kImageBase),v.data(),header);
  for(const auto& section:checked){
-  if(section.length){
-   commit(std::uint64_t(kImageBase)+section.rva,
-          static_cast<std::size_t>(section.length));
-   // Committing an already mapped page does NOT clear it (VirtualAlloc
-   // MEM_COMMIT on Windows and mprotect on Linux both retain old bytes).
-   // A fresh PE image must zero its entire virtual section, including BSS,
-   // before copying the raw initialized portion on every load.
-   std::memset(address(kImageBase+section.rva),0,
-               static_cast<std::size_t>(section.length));
-  }
   if(section.raw)std::memcpy(address(kImageBase+section.rva),
                              v.data()+section.file_off,section.raw);
  }
