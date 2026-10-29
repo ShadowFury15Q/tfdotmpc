@@ -443,6 +443,52 @@ class PrivateLinkStubsTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
                     generate(root, 1)
 
+    def test_negated_integer_guards_on_ppc_definitions(self):
+        for condition, active in (
+            ("!1", False), ("!!0", False), ("!(0x1UL)", False),
+            ("!0", True), ("!(0x0UL)", True), ("(!(!1))", True),
+        ):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(condition=condition, newline=repr(newline)), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    (root / "ppc_recomp_shared.h").write_text(
+                        "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+                    (root / "ppc_func_mapping.cpp").write_text(
+                        "{0x8277F670, _xstart},\n", encoding="utf-8")
+                    (root / "ppc_recomp.0.cpp").write_text(
+                        "#if " + condition + newline +
+                        "PPC_FUNC_IMPL(_xstart) {}" + newline +
+                        "#endif" + newline, encoding="utf-8", newline="")
+                    if active:
+                        _, units, unresolved = generate(root, 1)
+                        self.assertEqual((units, unresolved), (1, 0))
+                    else:
+                        with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
+                            generate(root, 1)
+
+    def test_negated_false_guards_cannot_fabricate_imports_or_mappings(self):
+        for condition in ("!1", "!!0", "!(1U)"):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(condition=condition, newline=repr(newline)), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    (root / "ppc_recomp_shared.h").write_text(
+                        "#if " + condition + newline +
+                        "PPC_EXTERN_FUNC(__imp__KeWaitForSingleObject);" + newline +
+                        "#endif" + newline +
+                        "PPC_EXTERN_FUNC(__imp__XamInputGetState);" + newline,
+                        encoding="utf-8", newline="")
+                    (root / "ppc_func_mapping.cpp").write_text(
+                        "#if " + condition + newline +
+                        "{0x82500000, sub_82500000}," + newline +
+                        "#endif" + newline +
+                        "{0x8277F670, _xstart}," + newline,
+                        encoding="utf-8", newline="")
+                    (root / "ppc_recomp.0.cpp").write_text(
+                        "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+                    source, units, unresolved = generate(root, 1)
+                    self.assertEqual((units, unresolved), (1, 0))
+                    self.assertNotIn("KeWaitForSingleObject", source)
+
     def test_default_requires_all_696_private_units(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
