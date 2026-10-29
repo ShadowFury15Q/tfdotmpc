@@ -130,8 +130,8 @@ if(DOTM_PRIVATE_PPC_DIR)
   file(GLOB DOTM_PRIVATE_PPC_UNITS CONFIGURE_DEPENDS
        "${DOTM_PRIVATE_PPC_DIR}/ppc_recomp.*.cpp")
   list(LENGTH DOTM_PRIVATE_PPC_UNITS DOTM_PRIVATE_PPC_UNIT_COUNT)
-  if(DOTM_PRIVATE_PPC_UNIT_COUNT LESS 600)
-    message(FATAL_ERROR "Expected at least 600 private PPC translation units; got ${DOTM_PRIVATE_PPC_UNIT_COUNT}")
+  if(DOTM_PRIVATE_PPC_UNIT_COUNT LESS 696)
+    message(FATAL_ERROR "Expected at least 696 private PPC translation units; got ${DOTM_PRIVATE_PPC_UNIT_COUNT}")
   endif()
   set(DOTM_PRIVATE_STUBS "${CMAKE_CURRENT_BINARY_DIR}/private_link_stubs.cpp")
   add_custom_command(

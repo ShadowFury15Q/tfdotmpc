@@ -16,7 +16,7 @@ NATIVE = {"__imp__XamInputGetState", "__imp__XamInputGetCapabilities",
           "__imp__NtAllocateVirtualMemory", "__imp__NtFreeVirtualMemory"}
 
 
-def generate(directory: Path, minimum_units: int = 600) -> tuple[str, int, int]:
+def generate(directory: Path, minimum_units: int = 696) -> tuple[str, int, int]:
     header = directory / "ppc_recomp_shared.h"
     mapping = directory / "ppc_func_mapping.cpp"
     units = sorted(directory.glob("ppc_recomp.*.cpp"))
@@ -24,6 +24,16 @@ def generate(directory: Path, minimum_units: int = 600) -> tuple[str, int, int]:
         raise ValueError("Missing private ppc_recomp_shared.h or ppc_func_mapping.cpp")
     if len(units) < minimum_units:
         raise ValueError(f"Incomplete private recompilation: {len(units)} translation units; expected >= {minimum_units}")
+    # A count alone can hide a missing XenonRecomp object if another file
+    # with an unexpected index is present. Require the complete 0..N-1 set.
+    indices = []
+    for path in units:
+        match = re.fullmatch(r"ppc_recomp\.(\d+)\.cpp", path.name)
+        if not match:
+            raise ValueError(f"Invalid private PPC unit filename: {path.name}")
+        indices.append(int(match.group(1)))
+    if sorted(indices) != list(range(len(units))):
+        raise ValueError("Private PPC translation unit indices must be contiguous from 0")
     declarations = set(DECL.findall(header.read_text(encoding="utf-8")))
     if not declarations:
         raise ValueError("No PPC_EXTERN_FUNC declarations found in private header")
@@ -99,7 +109,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("private_ppc_dir", type=Path)
     parser.add_argument("output_cpp", type=Path)
-    parser.add_argument("--minimum-units", type=int, default=600)
+    parser.add_argument("--minimum-units", type=int, default=696)
     args = parser.parse_args()
     if args.minimum_units < 1:
         parser.error("--minimum-units must be positive")

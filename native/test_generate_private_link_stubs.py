@@ -88,6 +88,34 @@ class PrivateLinkStubsTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Invalid original PPC mapping address"):
                     generate(root, 1)
 
+    def test_default_requires_all_696_private_units(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n",
+                encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "expected >= 696"):
+                generate(root)
+
+    def test_missing_ppc_unit_index_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n",
+                encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+            (root / "ppc_recomp.2.cpp").write_text(
+                "PPC_FUNC_IMPL(sub_82500000) {}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "indices must be contiguous"):
+                generate(root, 2)
+
     def test_missing_original_entry_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
