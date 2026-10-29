@@ -113,6 +113,42 @@ class PrivateLinkStubsTests(unittest.TestCase):
             self.assertEqual((count, unresolved), (1, 1))
             self.assertIn("PPC_FUNC(__imp__KeWaitForSingleObject)", source)
 
+    def test_undeclared_mapped_platform_import_is_rejected(self):
+        for name in ("__imp__KeWaitForSingleObject",
+                     "__imp__XamInputGetCapabilities"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "ppc_recomp_shared.h").write_text(
+                    "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n",
+                    encoding="utf-8")
+                (root / "ppc_func_mapping.cpp").write_text(
+                    "{0x8277F670, _xstart},\n"
+                    f"{{0x82500000, {name}}},\n", encoding="utf-8")
+                (root / "ppc_recomp.0.cpp").write_text(
+                    "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+                with self.assertRaisesRegex(
+                    ValueError, "Mapped PPC imports lack declarations or implementations"
+                ):
+                    generate(root, 1)
+
+    def test_mapped_import_defined_in_private_code_needs_no_declaration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n",
+                encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\n"
+                "{0x82500000, __imp__SyntheticPlatform},\n",
+                encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "PPC_FUNC_IMPL(_xstart) {}\n"
+                "PPC_FUNC(__imp__SyntheticPlatform) {}\n",
+                encoding="utf-8")
+            source, units, unresolved = generate(root, 1)
+            self.assertEqual((units, unresolved), (1, 0))
+            self.assertNotIn("PPC_FUNC(__imp__SyntheticPlatform)", source)
+
     def test_duplicate_guest_addresses_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
