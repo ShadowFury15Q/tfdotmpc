@@ -16,6 +16,24 @@ NATIVE = {"__imp__XamInputGetState", "__imp__XamInputGetCapabilities",
           "__imp__NtAllocateVirtualMemory", "__imp__NtFreeVirtualMemory"}
 
 
+# Strip C++ comments and literals before interpreting generated macro calls.
+# A commented-out PPC_FUNC_IMPL must never satisfy a private game mapping.
+# Preserve line breaks to avoid joining tokens across removed regions.
+CPP_NONCODE = re.compile(
+    r'R"(?P<raw_delimiter>[^ ()\\\t\r\n]{0,16})\([\s\S]*?\)(?P=raw_delimiter)"'
+    r'|"(?:\\[\s\S]|[^"\\])*"'
+    r"|'(?:\\[\s\S]|[^'\\])*'"
+    r'|//[^\n]*'
+    r'|/\*[\s\S]*?\*/'
+)
+
+
+def cpp_code_only(source: str) -> str:
+    return CPP_NONCODE.sub(
+        lambda match: re.sub(r'[^\r\n]', ' ', match.group(0)), source
+    )
+
+
 def generate(directory: Path, minimum_units: int = 696) -> tuple[str, int, int]:
     header = directory / "ppc_recomp_shared.h"
     mapping = directory / "ppc_func_mapping.cpp"
@@ -34,12 +52,12 @@ def generate(directory: Path, minimum_units: int = 696) -> tuple[str, int, int]:
         indices.append(int(match.group(1)))
     if sorted(indices) != list(range(len(units))):
         raise ValueError("Private PPC translation unit indices must be contiguous from 0")
-    declarations = set(DECL.findall(header.read_text(encoding="utf-8")))
+    declarations = set(DECL.findall(cpp_code_only(header.read_text(encoding="utf-8"))))
     if not declarations:
         raise ValueError("No PPC_EXTERN_FUNC declarations found in private header")
     definitions = set()
     for path in [mapping, *units]:
-        definitions.update(DEF.findall(path.read_text(encoding="utf-8")))
+        definitions.update(DEF.findall(cpp_code_only(path.read_text(encoding="utf-8"))))
     if "__imp__XamInputGetState" not in declarations:
         raise ValueError("Private game header lacks expected XamInputGetState import")
     # Fail closed: abort-on-call stubs may stand in for unimplemented Xbox
@@ -47,7 +65,7 @@ def generate(directory: Path, minimum_units: int = 696) -> tuple[str, int, int]:
     # Otherwise a truncated XenonRecomp output can falsely "link" successfully.
     mapping_entries = [
         (int(address, 16), name)
-        for address, name in MAPPING.findall(mapping.read_text(encoding="utf-8"))
+        for address, name in MAPPING.findall(cpp_code_only(mapping.read_text(encoding="utf-8")))
     ]
     if not mapping_entries:
         raise ValueError("No original PPC function mappings found")

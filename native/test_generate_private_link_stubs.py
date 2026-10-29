@@ -88,6 +88,59 @@ class PrivateLinkStubsTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Invalid original PPC mapping address"):
                     generate(root, 1)
 
+    def test_commented_out_game_definition_cannot_satisfy_mapping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "/* PPC_FUNC_IMPL(_xstart) {} */\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
+                generate(root, 1)
+
+    def test_commented_out_mapping_is_not_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "// {0x8277F670, _xstart},\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "No original PPC function mappings"):
+                generate(root, 1)
+
+    def test_string_literal_cannot_create_fake_import(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                'PPC_EXTERN_FUNC(__imp__XamInputGetState);\n'
+                'const char* sample = "PPC_EXTERN_FUNC(__imp__KeWaitForSingleObject);";\n',
+                encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+            source, count, unresolved = generate(root, 1)
+            self.assertEqual((count, unresolved), (1, 0))
+            self.assertNotIn("PPC_FUNC(__imp__KeWaitForSingleObject)", source)
+
+    def test_raw_string_mapping_does_not_create_invalid_address(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                '{0x8277F670, _xstart},\n'
+                'const char* sample = R"TAG({0x824FFFFC, _xstart})TAG";\n',
+                encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+            _, count, unresolved = generate(root, 1)
+            self.assertEqual((count, unresolved), (1, 0))
+
     def test_default_requires_all_696_private_units(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
