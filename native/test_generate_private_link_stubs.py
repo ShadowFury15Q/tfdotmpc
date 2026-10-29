@@ -58,6 +58,61 @@ class PrivateLinkStubsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Missing recompiled game functions"):
                 generate(root, 1)
 
+    def test_prototype_only_entry_cannot_satisfy_xstart_mapping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "PPC_FUNC_IMPL(_xstart);\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
+                generate(root, 1)
+
+    def test_prototype_only_game_function_cannot_satisfy_mapping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\n"
+                "{0x82500000, sub_82500000},\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "PPC_FUNC_IMPL(_xstart) {}\n"
+                "PPC_FUNC(sub_82500000);\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Missing recompiled game functions"):
+                generate(root, 1)
+
+    def test_duplicate_game_function_bodies_are_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\n", encoding="utf-8")
+            for index in range(2):
+                (root / f"ppc_recomp.{index}.cpp").write_text(
+                    "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Duplicate recompiled PPC function definitions"):
+                generate(root, 2)
+
+    def test_platform_import_prototype_still_requires_stub(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n"
+                "PPC_EXTERN_FUNC(__imp__KeWaitForSingleObject);\n",
+                encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "PPC_FUNC_IMPL(_xstart) {}\n"
+                "PPC_FUNC(__imp__KeWaitForSingleObject);\n", encoding="utf-8")
+            source, count, unresolved = generate(root, 1)
+            self.assertEqual((count, unresolved), (1, 1))
+            self.assertIn("PPC_FUNC(__imp__KeWaitForSingleObject)", source)
+
     def test_duplicate_guest_addresses_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

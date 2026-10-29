@@ -5,11 +5,13 @@ This tool never copies original game code to the public repository. The generate
 source is written to the local CMake build directory and is not game runtime.
 """
 import argparse
+from collections import Counter
 from pathlib import Path
 import re
 
 DECL = re.compile(r"\bPPC_EXTERN_FUNC\s*\(\s*([A-Za-z_]\w*)\s*\)\s*;")
-DEF = re.compile(r"\bPPC_FUNC(?:_IMPL)?\s*\(\s*([A-Za-z_]\w*)\s*\)")
+# Only a macro followed by a function body is a definition; prototypes do not link.
+DEF = re.compile(r"\bPPC_FUNC(?:_IMPL)?\s*\(\s*([A-Za-z_]\w*)\s*\)\s*\{")
 MAPPING = re.compile(r"\{\s*(0x[0-9A-Fa-f]+)\s*,\s*([A-Za-z_]\w*)\s*\}")
 HELPER = re.compile(r"__?(?:save|rest)(?:gprlr|fpr|vmx)_\d+")
 NATIVE = {"__imp__XamInputGetState", "__imp__XamInputGetCapabilities",
@@ -55,9 +57,16 @@ def generate(directory: Path, minimum_units: int = 696) -> tuple[str, int, int]:
     declarations = set(DECL.findall(cpp_code_only(header.read_text(encoding="utf-8"))))
     if not declarations:
         raise ValueError("No PPC_EXTERN_FUNC declarations found in private header")
-    definitions = set()
+    definition_counts = Counter()
     for path in [mapping, *units]:
-        definitions.update(DEF.findall(cpp_code_only(path.read_text(encoding="utf-8"))))
+        definition_counts.update(DEF.findall(cpp_code_only(path.read_text(encoding="utf-8"))))
+    duplicates = sorted(name for name, count in definition_counts.items() if count > 1)
+    if duplicates:
+        raise ValueError(
+            "Duplicate recompiled PPC function definitions: "
+            + ", ".join(duplicates[:8])
+        )
+    definitions = set(definition_counts)
     if "__imp__XamInputGetState" not in declarations:
         raise ValueError("Private game header lacks expected XamInputGetState import")
     # Fail closed: abort-on-call stubs may stand in for unimplemented Xbox
