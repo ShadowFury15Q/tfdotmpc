@@ -541,5 +541,54 @@ class PrivateLinkStubsTests(unittest.TestCase):
                 generate(root, 1)
 
 
+    def test_integer_suffix_and_nondecimal_if_conditions(self):
+        # An inactive #if 0U/0x0 must not fabricate a PPC implementation.
+        for condition, active in (
+            ("0U", False), ("0x0UL", False), ("000", False),
+            ("((0b0))", False), ("1U", True), ("0x1LL", True),
+        ):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(condition=condition, newline=repr(newline)), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    (root / "ppc_recomp_shared.h").write_text(
+                        "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+                    (root / "ppc_func_mapping.cpp").write_text(
+                        "{0x8277F670, _xstart},\n", encoding="utf-8")
+                    (root / "ppc_recomp.0.cpp").write_text(
+                        "#if " + condition + newline +
+                        "PPC_FUNC_IMPL(_xstart) {}" + newline +
+                        "#endif" + newline, encoding="utf-8", newline="")
+                    if active:
+                        _, units, unresolved = generate(root, 1)
+                        self.assertEqual((units, unresolved), (1, 0))
+                    else:
+                        with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
+                            generate(root, 1)
+
+    def test_zero_integer_guards_cannot_fabricate_mapping_or_import(self):
+        for condition in ("0U", "(0x0UL)", "000"):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(condition=condition, newline=repr(newline)), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    (root / "ppc_recomp_shared.h").write_text(
+                        "#if " + condition + newline +
+                        "PPC_EXTERN_FUNC(__imp__KeWaitForSingleObject);" + newline +
+                        "#endif" + newline +
+                        "PPC_EXTERN_FUNC(__imp__XamInputGetState);" + newline,
+                        encoding="utf-8", newline="")
+                    (root / "ppc_func_mapping.cpp").write_text(
+                        "#if " + condition + newline +
+                        "{0x82500000, sub_82500000}," + newline +
+                        "#endif" + newline +
+                        "{0x8277F670, _xstart}," + newline,
+                        encoding="utf-8", newline="")
+                    (root / "ppc_recomp.0.cpp").write_text(
+                        "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+                    source, units, unresolved = generate(root, 1)
+                    self.assertEqual((units, unresolved), (1, 0))
+                    self.assertNotIn("KeWaitForSingleObject", source)
+
+
+
 if __name__ == "__main__":
     unittest.main()

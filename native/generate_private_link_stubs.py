@@ -40,12 +40,40 @@ def strip_inactive_preprocessor(code: str) -> str:
         return re.sub(r'[^\r\n]', ' ', line)
 
     def literal_bool(expr: str):
+        # Integer constant expressions are common in generated C++ guards.
+        # Recognize only self-contained integer literals: never guess the
+        # value of a macro, operator expression, or platform-specific #if.
         expr = expr.strip()
-        if re.fullmatch(r'0|\(\s*0\s*\)', expr):
-            return False
-        if re.fullmatch(r'1|\(\s*1\s*\)', expr):
-            return True
-        return None
+        while expr.startswith('(') and expr.endswith(')'):
+            depth = 0
+            wrapped = True
+            for index, char in enumerate(expr):
+                if char == '(':
+                    depth += 1
+                elif char == ')':
+                    depth -= 1
+                    if depth < 0 or (depth == 0 and index != len(expr) - 1):
+                        wrapped = False
+                        break
+            if not wrapped or depth != 0:
+                break
+            expr = expr[1:-1].strip()
+        match = re.fullmatch(
+            r'(0[xX][0-9a-fA-F]+|0[bB][01]+|0[0-7]*|[1-9][0-9]*)[uUlL]*',
+            expr,
+        )
+        if match is None:
+            return None
+        number = match.group(1)
+        if number.lower().startswith('0x'):
+            value = int(number[2:], 16)
+        elif number.lower().startswith('0b'):
+            value = int(number[2:], 2)
+        elif len(number) > 1 and number.startswith('0'):
+            value = int(number, 8)
+        else:
+            value = int(number, 10)
+        return bool(value)
 
     stack = []
     inactive = False
