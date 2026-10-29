@@ -507,5 +507,39 @@ class PrivateLinkStubsTests(unittest.TestCase):
                 generate(root, 1)
 
 
+    def test_nonconditional_preprocessor_directives_do_not_create_ppc_symbols(self):
+        for newline in ("\\n", "\\r\\n"):
+            with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "ppc_recomp_shared.h").write_text(
+                    "PPC_EXTERN_FUNC(__imp__XamInputGetState);" + newline +
+                    "#pragma vendor PPC_EXTERN_FUNC(__imp__KeWaitForSingleObject);" + newline,
+                    encoding="utf-8", newline="")
+                (root / "ppc_func_mapping.cpp").write_text(
+                    "#pragma vendor {0x82500000, sub_82500000}," + newline +
+                    "{0x8277F670, _xstart}," + newline,
+                    encoding="utf-8", newline="")
+                (root / "ppc_recomp.0.cpp").write_text(
+                    "#pragma vendor " + chr(92) + newline +
+                    "PPC_FUNC_IMPL(sub_82500000) {}" + newline +
+                    "PPC_FUNC_IMPL(_xstart) {}" + newline,
+                    encoding="utf-8", newline="")
+                source, units, unresolved = generate(root, 1)
+                self.assertEqual((units, unresolved), (1, 0))
+                self.assertNotIn("KeWaitForSingleObject", source)
+
+    def test_pragma_body_cannot_satisfy_xstart_mapping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "#pragma vendor PPC_FUNC_IMPL(_xstart) {}\\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
+                generate(root, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -54,7 +54,9 @@ def strip_inactive_preprocessor(code: str) -> str:
     index = 0
     while index < len(lines):
         line = lines[index]
-        match = re.match(r'^\s*#\s*(if|ifdef|ifndef|elif|else|endif|define)\b(.*)', line)
+        # Mask every directive, including #pragma/#undef and continuations:
+        # nonconditional directives are not C++ function definitions.
+        match = re.match(r'^\s*#\s*([A-Za-z_]\w*)\b(.*)', line)
         if match:
             # C/C++ phase 2 splices backslash-newline before parsing #if.
             # A continued literal 0 must not expose disabled PPC definitions.
@@ -65,7 +67,7 @@ def strip_inactive_preprocessor(code: str) -> str:
                 directive_lines.append(lines[index])
             directive_code = re.sub(r'\\\r?\n', ' ', ''.join(directive_lines))
             match = re.match(
-                r'^\s*#\s*(if|ifdef|ifndef|elif|else|endif|define)\b(.*)',
+                r'^\s*#\s*([A-Za-z_]\w*)\b(.*)',
                 directive_code
             )
             directive, expr = match.groups()
