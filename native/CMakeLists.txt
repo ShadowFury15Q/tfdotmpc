@@ -139,3 +139,36 @@ if(DOTM_PRIVATE_PPC_DIR)
     target_compile_options(dotm_private_link_probe PRIVATE /bigobj)
   endif()
 endif()
+
+# PUBLIC multi-object link smoke test. This uses a tiny synthetic PPC mapping
+# and runs the SAME private-link stub generator as the actual private build.
+# Unlike syntax-only checks, it must resolve symbols at the Windows linker.
+# It never links or runs proprietary DOTM code.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(DOTM_SYNTHETIC_PPC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures/private_link")
+set(DOTM_SYNTHETIC_STUBS "${CMAKE_CURRENT_BINARY_DIR}/synthetic_private_link_stubs.cpp")
+add_custom_command(
+  OUTPUT "${DOTM_SYNTHETIC_STUBS}"
+  COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_SOURCE_DIR}/generate_private_link_stubs.py"
+          "${DOTM_SYNTHETIC_PPC_DIR}" "${DOTM_SYNTHETIC_STUBS}"
+          --minimum-units 1
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/generate_private_link_stubs.py"
+          "${DOTM_SYNTHETIC_PPC_DIR}/ppc_recomp_shared.h"
+          "${DOTM_SYNTHETIC_PPC_DIR}/ppc_func_mapping.cpp"
+          "${DOTM_SYNTHETIC_PPC_DIR}/ppc_recomp.0.cpp"
+  VERBATIM)
+add_executable(dotm_synthetic_private_link_test
+  test_synthetic_private_link.cpp
+  compiled_ppc_adapter.cpp
+  xam_ppc_import.cpp
+  "${DOTM_SYNTHETIC_PPC_DIR}/ppc_func_mapping.cpp"
+  "${DOTM_SYNTHETIC_PPC_DIR}/ppc_recomp.0.cpp"
+  "${DOTM_SYNTHETIC_STUBS}")
+target_include_directories(dotm_synthetic_private_link_test PRIVATE
+  "${DOTM_SYNTHETIC_PPC_DIR}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures")
+target_link_libraries(dotm_synthetic_private_link_test
+  PRIVATE dotm_recomp_bridge dotm_xam_input)
+add_test(NAME synthetic_full_ppc_link_and_xam_import
+  COMMAND dotm_synthetic_private_link_test)
