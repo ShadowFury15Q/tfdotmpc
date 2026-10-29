@@ -6,6 +6,13 @@ add_library(dotm_guest_memory STATIC guest_memory.cpp)
 target_include_directories(dotm_guest_memory PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(dotm_memory_test test_guest_memory.cpp)
 target_link_libraries(dotm_memory_test PRIVATE dotm_guest_memory)
+# Page-rounded guest allocations for future Xbox kernel memory services.
+# Public test exercises only synthetic guest addresses, not game assets.
+add_library(dotm_guest_virtual_allocator STATIC guest_virtual_allocator.cpp)
+target_link_libraries(dotm_guest_virtual_allocator PUBLIC dotm_guest_memory)
+add_executable(dotm_guest_virtual_allocator_test test_guest_virtual_allocator.cpp)
+target_link_libraries(dotm_guest_virtual_allocator_test PRIVATE dotm_guest_virtual_allocator)
+
 add_library(dotm_recomp_bridge STATIC recomp_bridge.cpp)
 target_link_libraries(dotm_recomp_bridge PUBLIC dotm_guest_memory)
 add_executable(dotm_recomp_bridge_test test_recomp_bridge.cpp)
@@ -20,6 +27,7 @@ target_link_libraries(dotm_compiled_adapter_test PRIVATE dotm_recomp_bridge)
 add_test(NAME xenonrecomp_real_mapping_abi_smoke COMMAND dotm_compiled_adapter_test)
 
 add_test(NAME guest_memory_and_native_dispatch COMMAND dotm_memory_test)
+add_test(NAME guest_virtual_allocation_reuse_and_bounds COMMAND dotm_guest_virtual_allocator_test)
 
 add_executable(dotm_pe_probe boot_probe.cpp)
 target_link_libraries(dotm_pe_probe PRIVATE dotm_guest_memory)
