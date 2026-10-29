@@ -1,6 +1,7 @@
 #include "compiled_ppc_adapter.hpp"
 #include "guest_memory.hpp"
 #include "guest_virtual_allocator.hpp"
+#include "kernel_guest_memory.hpp"
 #include "native_input.hpp"
 #include "xam_guest_input.hpp"
 #include "ppc_recomp_shared.h"
@@ -52,6 +53,40 @@ int main() {
         memory.find_function(0x82500000U)(context, memory.base());
         fail_if(context.r3.u64 != dotm::kXamBadArguments,
                 "Linked PPC XAM import must reject a freed output buffer");
+        // The same multi-object native link must resolve the kernel PPC
+        // imports as well as XAM and the synthetic recompiled _xstart.
+        constexpr std::uint32_t nt_args = 0x82030000U;
+        memory.commit(nt_args, 4096);
+        auto put_be = [&](std::uint32_t addr, std::uint32_t value) {
+            auto* p = memory.address(addr);
+            for (int i = 0; i < 4; ++i)
+                p[i] = static_cast<std::uint8_t>(value >> (24 - 8 * i));
+        };
+        dotm::bind_kernel_guest_memory(&memory, &heap);
+        put_be(nt_args, 0);
+        put_be(nt_args + 4, 4096);
+        context.r3.u64 = nt_args;
+        context.r4.u64 = nt_args + 4;
+        context.r5.u64 = 0x3000;
+        context.r6.u64 = 4;
+        context.r7.u64 = 0;
+        __imp__NtAllocateVirtualMemory(context, memory.base());
+        fail_if(context.r3.u64 != dotm::kNtSuccess,
+                "Linked native NT allocate import failed");
+        const auto nt_base = (std::uint32_t(memory.address(nt_args)[0]) << 24) |
+                             (std::uint32_t(memory.address(nt_args)[1]) << 16) |
+                             (std::uint32_t(memory.address(nt_args)[2]) << 8) |
+                             std::uint32_t(memory.address(nt_args)[3]);
+        put_be(nt_args + 4, 0);
+        context.r3.u64 = nt_args;
+        context.r4.u64 = nt_args + 4;
+        context.r5.u64 = 0x8000;
+        context.r6.u64 = 0;
+        __imp__NtFreeVirtualMemory(context, memory.base());
+        fail_if(context.r3.u64 != dotm::kNtSuccess ||
+                memory.committed_range(nt_base, 1),
+                "Linked native NT free import failed to revoke pages");
+        dotm::bind_kernel_guest_memory(nullptr, nullptr);
         dotm::bind_xam_guest_input(nullptr, nullptr);
         std::puts("Synthetic multi-unit PPC + XAM + fail-fast import linked and ran");
         return 0;
