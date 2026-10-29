@@ -12,6 +12,15 @@ add_library(dotm_guest_virtual_allocator STATIC guest_virtual_allocator.cpp)
 target_link_libraries(dotm_guest_virtual_allocator PUBLIC dotm_guest_memory)
 add_executable(dotm_guest_virtual_allocator_test test_guest_virtual_allocator.cpp)
 target_link_libraries(dotm_guest_virtual_allocator_test PRIVATE dotm_guest_virtual_allocator)
+# Restricted Xbox 360 NT virtual memory ABI: PPC r3-r7, big-endian pointers.
+add_library(dotm_kernel_guest_memory STATIC kernel_guest_memory.cpp)
+target_link_libraries(dotm_kernel_guest_memory PUBLIC dotm_guest_virtual_allocator)
+add_executable(dotm_kernel_ppc_import_test
+  test_kernel_ppc_import.cpp kernel_ppc_import.cpp)
+target_include_directories(dotm_kernel_ppc_import_test
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures)
+target_link_libraries(dotm_kernel_ppc_import_test PRIVATE dotm_kernel_guest_memory)
+add_test(NAME xbox360_nt_virtual_memory_ppc_abi COMMAND dotm_kernel_ppc_import_test)
 
 add_library(dotm_recomp_bridge STATIC recomp_bridge.cpp)
 target_link_libraries(dotm_recomp_bridge PUBLIC dotm_guest_memory)
@@ -136,13 +145,13 @@ if(DOTM_PRIVATE_PPC_DIR)
             ${DOTM_PRIVATE_PPC_UNITS}
     VERBATIM)
   add_executable(dotm_private_link_probe EXCLUDE_FROM_ALL
-    private_link_probe_main.cpp compiled_ppc_adapter.cpp xam_ppc_import.cpp
+    private_link_probe_main.cpp compiled_ppc_adapter.cpp xam_ppc_import.cpp kernel_ppc_import.cpp
     "${DOTM_PRIVATE_PPC_DIR}/ppc_func_mapping.cpp"
     ${DOTM_PRIVATE_PPC_UNITS} "${DOTM_PRIVATE_STUBS}")
   target_include_directories(dotm_private_link_probe
     PRIVATE "${DOTM_PRIVATE_PPC_DIR}")
   target_link_libraries(dotm_private_link_probe
-    PRIVATE dotm_recomp_bridge dotm_xam_input)
+    PRIVATE dotm_recomp_bridge dotm_xam_input dotm_kernel_guest_memory)
   if(MSVC)
     target_compile_options(dotm_private_link_probe PRIVATE /bigobj)
   endif()
@@ -169,7 +178,7 @@ add_custom_command(
 add_executable(dotm_synthetic_private_link_test
   test_synthetic_private_link.cpp
   compiled_ppc_adapter.cpp
-  xam_ppc_import.cpp
+  xam_ppc_import.cpp kernel_ppc_import.cpp
   "${DOTM_SYNTHETIC_PPC_DIR}/ppc_func_mapping.cpp"
   "${DOTM_SYNTHETIC_PPC_DIR}/ppc_recomp.0.cpp"
   "${DOTM_SYNTHETIC_STUBS}")
@@ -177,6 +186,6 @@ target_include_directories(dotm_synthetic_private_link_test PRIVATE
   "${DOTM_SYNTHETIC_PPC_DIR}"
   "${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures")
 target_link_libraries(dotm_synthetic_private_link_test
-  PRIVATE dotm_recomp_bridge dotm_xam_input dotm_guest_virtual_allocator)
+  PRIVATE dotm_recomp_bridge dotm_xam_input dotm_guest_virtual_allocator dotm_kernel_guest_memory)
 add_test(NAME synthetic_full_ppc_link_and_xam_import
   COMMAND dotm_synthetic_private_link_test)
