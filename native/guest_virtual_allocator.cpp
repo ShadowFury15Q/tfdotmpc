@@ -47,12 +47,20 @@ std::optional<std::uint32_t> GuestVirtualAllocator::find_available_in_gap(
     std::uint64_t begin, std::uint64_t end,
     std::uint64_t bytes, std::uint64_t alignment) const {
     if (begin >= end || bytes > end - begin) return std::nullopt;
+    // Walk guest pages once, rather than rescanning an entire candidate
+    // allocation for every aligned start. A committed page invalidates all
+    // candidate windows that would include it.
     std::uint64_t candidate = align_up(begin, alignment);
+    std::uint64_t scan = candidate;
     while (candidate < end && bytes <= end - candidate) {
-        if (!memory_.any_committed_range(candidate, static_cast<std::size_t>(bytes)))
-            return static_cast<std::uint32_t>(candidate);
-        if (alignment > end - candidate) break;
-        candidate += alignment;
+        if (memory_.any_committed_range(scan, static_cast<std::size_t>(kPageSize))) {
+            candidate = align_up(scan + kPageSize, alignment);
+            scan = candidate;
+        } else {
+            scan += kPageSize;
+            if (scan - candidate >= bytes)
+                return static_cast<std::uint32_t>(candidate);
+        }
     }
     return std::nullopt;
 }
