@@ -21,7 +21,11 @@ class PrivateLinkStubsTests(unittest.TestCase):
                 "PPC_EXTERN_FUNC(__imp__KeWaitForSingleObject);\n"
                 "PPC_EXTERN_FUNC(__savegprlr_14);\n"
                 "PPC_EXTERN_FUNC(_xstart);\n", encoding="utf-8")
-            (root / "ppc_func_mapping.cpp").write_text("// synthetic mapping\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\
+{0x82500000, __imp__KeWaitForSingleObject},\
+",
+                encoding="utf-8")
             (root / "ppc_recomp.0.cpp").write_text(
                 "PPC_FUNC_IMPL(_xstart) { /* synthetic */ }\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "Incomplete private"):
@@ -35,6 +39,46 @@ class PrivateLinkStubsTests(unittest.TestCase):
             self.assertNotIn("PPC_FUNC(__imp__XamInputGetCapabilities)", source)
             self.assertIn("std::abort()", source)
             self.assertNotIn("synthetic mapping", source)
+
+    def test_missing_recompiled_game_function_is_not_stubbed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n"
+                "PPC_EXTERN_FUNC(_xstart);\n"
+                "PPC_EXTERN_FUNC(sub_82500000);\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\n{0x82500000, sub_82500000},\n",
+                encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Missing recompiled game functions"):
+                generate(root, 1)
+
+    def test_duplicate_guest_addresses_are_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\n{0x8277F670, _xstart},\n",
+                encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Duplicate guest addresses"):
+                generate(root, 1)
+
+    def test_missing_original_entry_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x82500000, sub_82500000},\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "PPC_FUNC_IMPL(sub_82500000) {}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "_xstart mapping"):
+                generate(root, 1)
 
     def test_missing_expected_xam_import_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
