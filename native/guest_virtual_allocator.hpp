@@ -34,6 +34,9 @@ public:
 private:
     static std::uint64_t rounded_size(std::uint64_t bytes);
     bool free_range(std::uint64_t address, std::uint64_t bytes) const;
+    std::optional<std::uint32_t> find_available_in_gap(
+        std::uint64_t begin, std::uint64_t end,
+        std::uint64_t bytes, std::uint64_t alignment) const;
     void commit_and_track(std::uint32_t address, std::uint64_t bytes);
     GuestMemory& memory_;
     std::uint32_t first_, limit_;

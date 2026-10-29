@@ -41,7 +41,20 @@ bool GuestVirtualAllocator::free_range(
         if (std::uint64_t(previous->first) + previous->second > address)
             return false;
     }
-    return true;
+    return !memory_.any_committed_range(address, static_cast<std::size_t>(bytes));
+}
+std::optional<std::uint32_t> GuestVirtualAllocator::find_available_in_gap(
+    std::uint64_t begin, std::uint64_t end,
+    std::uint64_t bytes, std::uint64_t alignment) const {
+    if (begin >= end || bytes > end - begin) return std::nullopt;
+    std::uint64_t candidate = align_up(begin, alignment);
+    while (candidate < end && bytes <= end - candidate) {
+        if (!memory_.any_committed_range(candidate, static_cast<std::size_t>(bytes)))
+            return static_cast<std::uint32_t>(candidate);
+        if (alignment > end - candidate) break;
+        candidate += alignment;
+    }
+    return std::nullopt;
 }
 void GuestVirtualAllocator::commit_and_track(
     std::uint32_t address, std::uint64_t bytes) {
@@ -56,21 +69,23 @@ std::optional<std::uint32_t> GuestVirtualAllocator::allocate(
     const auto length = rounded_size(bytes);
     if (alignment < kPageSize || !power_of_two(alignment))
         throw std::invalid_argument("Guest alignment must be a page-sized power of two");
-    if (length > std::uint64_t(limit_) - first_) return std::nullopt;
+    if (length > std::uint64_t(limit_) - first_ || alignment > limit_)
+        return std::nullopt;
     std::uint64_t cursor = first_;
     for (const auto& [base, occupied] : blocks_) {
-        const auto candidate = align_up(cursor, alignment);
-        if (candidate <= base && length <= std::uint64_t(base) - candidate) {
-            commit_and_track(static_cast<std::uint32_t>(candidate), length);
-            return static_cast<std::uint32_t>(candidate);
+        if (const auto candidate = find_available_in_gap(
+                cursor, base, length, alignment)) {
+            commit_and_track(*candidate, length);
+            return candidate;
         }
         cursor = std::uint64_t(base) + occupied;
     }
-    const auto candidate = align_up(cursor, alignment);
-    if (candidate >= limit_ || length > std::uint64_t(limit_) - candidate)
-        return std::nullopt;
-    commit_and_track(static_cast<std::uint32_t>(candidate), length);
-    return static_cast<std::uint32_t>(candidate);
+    if (const auto candidate = find_available_in_gap(
+            cursor, limit_, length, alignment)) {
+        commit_and_track(*candidate, length);
+        return candidate;
+    }
+    return std::nullopt;
 }
 bool GuestVirtualAllocator::allocate_at(
     std::uint32_t address, std::uint64_t bytes) {

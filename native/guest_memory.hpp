@@ -22,6 +22,9 @@ public:
  void decommit(std::uint64_t addr,std::size_t length);
  // Query only pages actually committed by this GuestMemory instance.
  bool committed_range(std::uint64_t addr,std::size_t length) const noexcept;
+ // True when ANY page in the range is already committed. Invalid nonempty
+ // ranges fail closed so allocators cannot overwrite unrelated guest memory.
+ bool any_committed_range(std::uint64_t addr,std::size_t length) const noexcept;
  void copy_to_guest(std::uint32_t addr,std::span<const std::uint8_t> bytes);
  void load_pe(const std::filesystem::path& path);
  void initialize_function_table(NativeFunction fallback);

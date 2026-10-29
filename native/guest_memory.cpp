@@ -92,6 +92,14 @@ bool GuestMemory::committed_range(std::uint64_t a,std::size_t length) const noex
   if(!(committed_pages_[p/64]&(std::uint64_t{1}<<(p%64))))return false;
  return true;
 }
+bool GuestMemory::any_committed_range(std::uint64_t a,std::size_t length) const noexcept{
+ if(!length)return false;
+ if(a>=kAddressSpaceSize||length>kAddressSpaceSize-a)return true;
+ const auto begin=down(a),end=up(a+length);
+ for(std::uint64_t p=begin/page;p<end/page;++p)
+  if(committed_pages_[p/64]&(std::uint64_t{1}<<(p%64)))return true;
+ return false;
+}
 void GuestMemory::copy_to_guest(std::uint32_t a,std::span<const std::uint8_t> b){
  if(b.empty())return;commit(a,b.size());std::memcpy(address(a),b.data(),b.size());
 }

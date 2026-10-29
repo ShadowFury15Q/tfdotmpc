@@ -17,8 +17,18 @@ int main(int argc,char** argv){
   check(!m.committed_range(0x82001000,4),"Initially uncommitted guest page");
   check(!m.committed_range(0xFFFFFFFFULL,4),"Reject address-space overflow");
   check(!m.committed_range(0x82001000,0),"Reject empty committed-range query");
+  check(!m.any_committed_range(0x82001000,4096),
+        "Initially no committed guest pages");
+  check(m.any_committed_range(0xFFFFFFFFULL,4),
+        "Invalid nonempty overlap queries fail closed");
+  check(!m.any_committed_range(0x82001000,0),
+        "Empty overlap query has no committed pages");
   m.copy_to_guest(0x82001000,data);
   check(m.committed_range(0x82001000,4),"Copy commits guest page");
+  check(m.any_committed_range(0x82000FFF,2),
+        "Partial committed-page overlap detected");
+  check(!m.any_committed_range(0x82000000,4096),
+        "Adjacent uncommitted page remains available");
   check(!m.committed_range(0x82001FFF,2),"Cross-page query requires both pages");
   check(std::memcmp(m.address(0x82001000),data.data(),4)==0,"guest memory copy");
   m.commit(0x82002003,8192);

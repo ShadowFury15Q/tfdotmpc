@@ -65,6 +65,39 @@ int main() {
         reject([&]{ Alloc bad(memory, 0, limit); }, "Reject null-guard overlap");
         reject([&]{ Alloc bad(memory, first, dotm::GuestMemory::kImageBase + 4096); },
                "Reject guest PE image overlap");
+        // An independently committed page is not owned by this allocator.
+        // Neither automatic nor fixed allocations may zero its contents.
+        dotm::GuestMemory shared;
+        constexpr std::uint32_t shared_first = 0x30000000U;
+        Alloc guarded(shared, shared_first, shared_first + 8 * 4096);
+        shared.commit(shared_first, 4096);
+        shared.commit(shared_first + 3 * 4096, 4096);
+        shared.commit(shared_first + 6 * 4096, 4096);
+        shared.address(shared_first)[0] = 0xA1;
+        shared.address(shared_first + 3 * 4096)[0] = 0xB2;
+        shared.address(shared_first + 6 * 4096)[0] = 0xC3;
+        require(!guarded.allocate_at(shared_first, 4096),
+                "Fixed allocation must not overwrite an external page");
+        require(!guarded.allocate_at(shared_first + 2 * 4096, 8192),
+                "Fixed allocation must detect partial committed overlap");
+        const auto guarded_a = guarded.allocate(8192);
+        const auto guarded_b = guarded.allocate(8192);
+        require(guarded_a == shared_first + 4096 &&
+                guarded_b == shared_first + 4 * 4096,
+                "First-fit must skip externally committed pages");
+        require(shared.address(shared_first)[0] == 0xA1 &&
+                shared.address(shared_first + 3 * 4096)[0] == 0xB2 &&
+                shared.address(shared_first + 6 * 4096)[0] == 0xC3,
+                "External guest bytes must survive allocator operations");
+        require(!guarded.allocate(2 * 4096),
+                "External pages count as unavailable on exhaustion");
+        require(guarded.release(*guarded_a), "Guarded allocation release");
+        require(shared.committed_range(shared_first, 1) &&
+                shared.committed_range(shared_first + 3 * 4096, 1),
+                "Allocator release must not revoke external pages");
+        shared.decommit(shared_first + 3 * 4096, 4096);
+        require(guarded.allocate_at(shared_first + 3 * 4096, 4096),
+                "Explicitly decommitted external page becomes available");
         std::cout << "DOTM guest virtual allocator synthetic tests PASS\n";
         return 0;
     } catch (const std::exception& e) {
