@@ -10,6 +10,7 @@ import re
 
 DECL = re.compile(r"\bPPC_EXTERN_FUNC\s*\(\s*([A-Za-z_]\w*)\s*\)\s*;")
 DEF = re.compile(r"\bPPC_FUNC(?:_IMPL)?\s*\(\s*([A-Za-z_]\w*)\s*\)")
+MAPPING = re.compile(r"\{\s*(0x[0-9A-Fa-f]+)\s*,\s*([A-Za-z_]\w*)\s*\}")
 NATIVE = {"__imp__XamInputGetState", "__imp__XamInputGetCapabilities"}
 
 
@@ -29,6 +30,29 @@ def generate(directory: Path, minimum_units: int = 600) -> tuple[str, int, int]:
         definitions.update(DEF.findall(path.read_text(encoding="utf-8")))
     if "__imp__XamInputGetState" not in declarations:
         raise ValueError("Private game header lacks expected XamInputGetState import")
+    # Fail closed: abort-on-call stubs may stand in for unimplemented Xbox
+    # imports and PPC save/restore helpers, NEVER for missing game functions.
+    # Otherwise a truncated XenonRecomp output can falsely "link" successfully.
+    mapping_entries = [
+        (int(address, 16), name)
+        for address, name in MAPPING.findall(mapping.read_text(encoding="utf-8"))
+    ]
+    if not mapping_entries:
+        raise ValueError("No original PPC function mappings found")
+    addresses = [address for address, _ in mapping_entries]
+    if len(addresses) != len(set(addresses)):
+        raise ValueError("Duplicate guest addresses in original PPC mapping")
+    if dict(mapping_entries).get(0x8277F670) != "_xstart" or "_xstart" not in definitions:
+        raise ValueError("Original DOTM _xstart mapping or implementation missing")
+    missing_game = sorted({
+        name for _, name in mapping_entries
+        if not name.startswith("__imp__") and name not in definitions
+    })
+    if missing_game:
+        raise ValueError(
+            "Missing recompiled game functions (cannot stub): "
+            + ", ".join(missing_game[:8])
+        )
     unresolved = sorted(declarations - definitions - NATIVE)
     lines = [
         '#include "ppc_recomp_shared.h"',
