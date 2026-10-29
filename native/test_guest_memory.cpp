@@ -14,9 +14,17 @@ int main(int argc,char** argv){
  try {
   dotm::GuestMemory m;
   std::array<std::uint8_t,4> data{1,2,3,4};
+  check(!m.committed_range(0x82001000,4),"Initially uncommitted guest page");
+  check(!m.committed_range(0xFFFFFFFFULL,4),"Reject address-space overflow");
+  check(!m.committed_range(0x82001000,0),"Reject empty committed-range query");
   m.copy_to_guest(0x82001000,data);
+  check(m.committed_range(0x82001000,4),"Copy commits guest page");
+  check(!m.committed_range(0x82001FFF,2),"Cross-page query requires both pages");
   check(std::memcmp(m.address(0x82001000),data.data(),4)==0,"guest memory copy");
   m.commit(0x82002003,8192);
+  check(m.committed_range(0x82002003,8192),"Commit tracks all touched pages");
+  check(m.committed_range(0x82004000,1),"Unaligned commit covers final page");
+  check(!m.committed_range(0x82005000,1),"Next page remains uncommitted");
   m.initialize_function_table(fallback);
   check(m.find_function(0x82500000)==fallback,"fallback dispatch");
   const auto reject_mapping=[&](std::span<const dotm::FunctionEntry> entries,
@@ -92,6 +100,9 @@ int main(int argc,char** argv){
   m.address(0x820001f0)[0]=0x72;
   m.address(0x82002000)[0]=0x73;
   save(pe);m.load_pe(file);
+  check(m.committed_range(dotm::GuestMemory::kImageBase,
+                          dotm::GuestMemory::kImageSize),
+        "PE load commits complete image for guest pointers");
   check(m.address(0x82001000)[0]==0xab,"Synthetic Xbox PE section mapped");
   check(m.address(0x82001001)[0]==0,"PE virtual zero-fill");
   check(m.address(0x82001080)[0]==0,"PE initialized raw bytes replace stale data");

@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -16,11 +17,14 @@ public:
  std::uint8_t* base() const noexcept{return base_;}
  std::uint8_t* address(std::uint32_t addr) const noexcept{return base_+addr;}
  void commit(std::uint64_t addr,std::size_t length);
+ // Query only pages actually committed by this GuestMemory instance.
+ bool committed_range(std::uint64_t addr,std::size_t length) const noexcept;
  void copy_to_guest(std::uint32_t addr,std::span<const std::uint8_t> bytes);
  void load_pe(const std::filesystem::path& path);
  void initialize_function_table(NativeFunction fallback);
  void install_functions(std::span<const FunctionEntry> entries);
  NativeFunction find_function(std::uint32_t addr) const;
 private:std::uint8_t* base_=nullptr;bool table_initialized_=false;
+ std::array<std::uint64_t,16384> committed_pages_{};
 };
 }

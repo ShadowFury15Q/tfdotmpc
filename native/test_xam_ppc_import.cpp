@@ -18,6 +18,8 @@ int main(){
     dotm::NativeInput host;
     dotm::XamInputHost service;
     dotm::GuestMemory memory;
+    memory.commit(0x82032000U,dotm::kXboxInputStateBytes);
+    memory.commit(0x82033000U,dotm::kXboxInputCapabilitiesBytes);
     dotm::bind_xam_guest_input(&service,&memory);
 
     constexpr std::uint32_t guest_ptr=0x82032000u;
@@ -51,6 +53,11 @@ int main(){
     require(ctx.r3.u64==dotm::kXamBadArguments,
             "Disallow Xbox input writes into native PPC dispatch table");
 
+    ctx.r3.u64=0;
+    ctx.r5.u64=0x21000000U; // not committed by guest runtime
+    __imp__XamInputGetState(ctx,memory.base());
+    require(ctx.r3.u64==dotm::kXamBadArguments,
+            "Reject XAM write into uncommitted guest page");
     constexpr std::uint32_t caps_ptr=0x82033000u;
     ctx.r3.u64=0;
     ctx.r4.u64=1;
