@@ -20,9 +20,8 @@ public:
         std::uint64_t bytes, std::uint64_t alignment = kPageSize);
     // Reserve a specific page-aligned guest address. False if unavailable.
     bool allocate_at(std::uint32_t address, std::uint64_t bytes);
-    // Exact-base release. Freed pages are zeroed before reuse, but currently
-    // remain committed in host memory (no OS-level decommit/protection yet).
-    bool release(std::uint32_t address) noexcept;
+    // Exact-base release revokes host access; failure preserves tracking.
+    bool release(std::uint32_t address);
     std::size_t allocation_count() const noexcept { return blocks_.size(); }
     std::uint64_t allocated_bytes() const noexcept { return allocated_bytes_; }
 

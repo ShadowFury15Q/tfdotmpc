@@ -67,6 +67,12 @@ int main(){
     const auto* caps=memory.address(caps_ptr);
     require(caps[0]==1&&caps[1]==1&&caps[4]==0xF3&&caps[5]==0xFF,
             "PPC XamInputGetCapabilities wrote big endian 20-byte guest struct");
+    memory.decommit(caps_ptr,dotm::kXboxInputCapabilitiesBytes);
+    ctx.r3.u64=0;
+    ctx.r5.u64=caps_ptr;
+    __imp__XamInputGetCapabilities(ctx,memory.base());
+    require(ctx.r3.u64==dotm::kXamBadArguments,
+            "PPC capabilities import rejects a decommitted output page");
     ctx.r3.u64=0;
     ctx.r5.u64=0;
     __imp__XamInputGetCapabilities(ctx,memory.base());

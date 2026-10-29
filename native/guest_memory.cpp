@@ -67,6 +67,24 @@ void GuestMemory::commit(std::uint64_t a,std::size_t length){
  for(std::uint64_t p=begin/page;p<end/page;++p)
   committed_pages_[p/64]|=(std::uint64_t{1}<<(p%64));
 }
+void GuestMemory::decommit(std::uint64_t a,std::size_t length){
+ if(!length)return;
+ if(a>=kAddressSpaceSize||length>kAddressSpaceSize-a)throw std::out_of_range("Guest memory bounds");
+ const auto begin=down(a),end=up(a+length);
+#ifdef _WIN32
+ if(!VirtualFree(base_+begin,static_cast<SIZE_T>(end-begin),MEM_DECOMMIT))
+  throw std::runtime_error("Guest decommit failed");
+#else
+ // Discard old bytes before revoking access. Never update page tracking
+ // unless both host operations have succeeded.
+ if(madvise(base_+begin,end-begin,MADV_DONTNEED)!=0)
+  throw std::runtime_error("Guest discard failed");
+ if(mprotect(base_+begin,end-begin,PROT_NONE)!=0)
+  throw std::runtime_error("Guest decommit failed");
+#endif
+ for(std::uint64_t p=begin/page;p<end/page;++p)
+  committed_pages_[p/64]&=~(std::uint64_t{1}<<(p%64));
+}
 bool GuestMemory::committed_range(std::uint64_t a,std::size_t length) const noexcept{
  if(!length||a>=kAddressSpaceSize||length>kAddressSpaceSize-a)return false;
  const auto begin=down(a),end=up(a+length);

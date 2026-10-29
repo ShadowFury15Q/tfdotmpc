@@ -38,12 +38,18 @@ int main() {
         require(!heap.allocate(3 * 4096), "Exhaustion returns nullopt");
         require(heap.allocation_count() == 4, "Failed allocation is atomic");
         require(heap.release(*a), "Release allocation base");
+        require(!memory.committed_range(*a, 1),
+                "Released allocation must revoke committed guest pages");
+        require(memory.committed_range(*b, 1),
+                "Releasing one allocation preserves its neighbor");
         require(!heap.release(*a), "Double free rejected");
         require(!heap.release(*b + 4096), "Interior-pointer free rejected");
         const auto reused = heap.allocate(4096);
         require(reused == first && memory.address(*reused)[0] == 0,
                 "Freed guest pages reused with zero initialization");
         require(heap.release(*b), "Release two-page allocation");
+        require(!memory.committed_range(*b, 8192),
+                "All pages of a multi-page allocation are decommitted");
         const auto merged = heap.allocate(3 * 4096);
         require(merged == first + 4096,
                 "Adjacent free pages coalesce for first-fit search");

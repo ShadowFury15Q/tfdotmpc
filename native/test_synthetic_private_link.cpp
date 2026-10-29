@@ -45,6 +45,14 @@ int main() {
         fail_if(memory.address(output)[4] != 0x80, "Guest XAM output not written");
         dotm::bind_xam_guest_input(nullptr, nullptr);
         fail_if(!heap.release(output), "Guest XAM allocation was not released");
+        fail_if(memory.committed_range(output, dotm::kXboxInputStateBytes),
+                "Released XAM output must no longer be committed");
+        context.r3.u64 = 0;
+        context.r4.u64 = 1;
+        context.r5.u64 = output;
+        memory.find_function(0x82500000U)(context, memory.base());
+        fail_if(context.r3.u64 != dotm::kXamBadArguments,
+                "Linked PPC XAM import must reject a freed output buffer");
         std::puts("Synthetic multi-unit PPC + XAM + fail-fast import linked and ran");
         return 0;
     } catch (const std::exception& e) {

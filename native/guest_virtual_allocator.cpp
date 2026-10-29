@@ -79,9 +79,11 @@ bool GuestVirtualAllocator::allocate_at(
     commit_and_track(address, length);
     return true;
 }
-bool GuestVirtualAllocator::release(std::uint32_t address) noexcept {
+bool GuestVirtualAllocator::release(std::uint32_t address) {
     const auto it = blocks_.find(address);
     if (it == blocks_.end()) return false;
+    // Do not make the address reusable until host decommit succeeds.
+    memory_.decommit(address, static_cast<std::size_t>(it->second));
     allocated_bytes_ -= it->second;
     blocks_.erase(it);
     return true;

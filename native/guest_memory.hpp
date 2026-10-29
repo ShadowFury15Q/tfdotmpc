@@ -17,6 +17,9 @@ public:
  std::uint8_t* base() const noexcept{return base_;}
  std::uint8_t* address(std::uint32_t addr) const noexcept{return base_+addr;}
  void commit(std::uint64_t addr,std::size_t length);
+ // Revoke host access and discard bytes; recommitted pages start zeroed.
+ // Caller must own all pages in the requested range.
+ void decommit(std::uint64_t addr,std::size_t length);
  // Query only pages actually committed by this GuestMemory instance.
  bool committed_range(std::uint64_t addr,std::size_t length) const noexcept;
  void copy_to_guest(std::uint32_t addr,std::span<const std::uint8_t> bytes);

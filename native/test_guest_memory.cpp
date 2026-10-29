@@ -25,6 +25,16 @@ int main(int argc,char** argv){
   check(m.committed_range(0x82002003,8192),"Commit tracks all touched pages");
   check(m.committed_range(0x82004000,1),"Unaligned commit covers final page");
   check(!m.committed_range(0x82005000,1),"Next page remains uncommitted");
+  m.commit(0x82006000,2*4096);
+  m.address(0x82006000)[0]=0xcd;
+  m.address(0x82007000)[0]=0xef;
+  m.decommit(0x82006000,4096);
+  check(!m.committed_range(0x82006000,1),"Decommit revokes guest page");
+  check(m.committed_range(0x82007000,1),"Decommit preserves neighboring page");
+  m.commit(0x82006000,4096);
+  check(m.address(0x82006000)[0]==0,"Recommitted guest page is zeroed");
+  check(m.address(0x82007000)[0]==0xef,"Adjacent guest bytes survive decommit");
+  m.decommit(0x82006000,4096);
   m.initialize_function_table(fallback);
   check(m.find_function(0x82500000)==fallback,"fallback dispatch");
   const auto reject_mapping=[&](std::span<const dotm::FunctionEntry> entries,
