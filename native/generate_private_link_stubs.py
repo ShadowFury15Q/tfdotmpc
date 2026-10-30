@@ -35,6 +35,8 @@ NATIVE = {"__imp__XGetAVPack", "__imp__KeGetCurrentProcessType",
           "__imp__XamLoaderGetLaunchData",
           "__imp__NtAllocateVirtualMemory", "__imp__NtFreeVirtualMemory",
           "__imp__NtQueryVirtualMemory",
+          "__imp__NtCreateMutant", "__imp__NtReleaseMutant",
+          "__imp__NtWaitForSingleObjectEx", "__imp__NtClose",
           "__imp__XexLoadImage", "__imp__XexGetModuleHandle",
           "__imp__XexGetProcedureAddress", "__imp__XexUnloadImage", "__imp__RtlNtStatusToDosError"} | {
               f"__{action}gprlr_{reg}"
