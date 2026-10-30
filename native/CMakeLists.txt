@@ -163,7 +163,7 @@ if(DOTM_PRIVATE_PPC_DIR)
     VERBATIM)
   add_executable(dotm_private_link_probe EXCLUDE_FROM_ALL
     private_link_probe_main.cpp compiled_ppc_adapter.cpp xam_ppc_import.cpp kernel_ppc_import.cpp
-    private_ppc_gpr_import.cpp
+    private_ppc_gpr_import.cpp private_ppc_fpr_import.cpp
     "${DOTM_PRIVATE_PPC_DIR}/ppc_func_mapping.cpp"
     ${DOTM_PRIVATE_PPC_UNITS} "${DOTM_PRIVATE_STUBS}")
   target_include_directories(dotm_private_link_probe
@@ -214,6 +214,10 @@ target_include_directories(dotm_synthetic_private_link_test PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures")
 target_link_libraries(dotm_synthetic_private_link_test
   PRIVATE dotm_recomp_bridge dotm_xam_input dotm_guest_virtual_allocator dotm_kernel_guest_memory)
+# Run endian-precise Xbox 360 FPR ABI tests without proprietary PPC units.
+add_executable(dotm_ppc_nonvolatile_fpr_test test_ppc_nonvolatile_fpr.cpp)
+add_test(NAME xbox360_original_ppc_fpr_save_restore COMMAND dotm_ppc_nonvolatile_fpr_test)
+
 add_test(NAME synthetic_full_ppc_link_and_xam_import
   COMMAND dotm_synthetic_private_link_test)
 
