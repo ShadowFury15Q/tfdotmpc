@@ -160,6 +160,7 @@ if(DOTM_PRIVATE_PPC_DIR)
     VERBATIM)
   add_executable(dotm_private_link_probe EXCLUDE_FROM_ALL
     private_link_probe_main.cpp compiled_ppc_adapter.cpp xam_ppc_import.cpp kernel_ppc_import.cpp
+    ppc_nonvolatile_gpr.cpp
     "${DOTM_PRIVATE_PPC_DIR}/ppc_func_mapping.cpp"
     ${DOTM_PRIVATE_PPC_UNITS} "${DOTM_PRIVATE_STUBS}")
   target_include_directories(dotm_private_link_probe
