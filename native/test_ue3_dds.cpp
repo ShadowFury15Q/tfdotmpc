@@ -31,7 +31,54 @@ int main(){
   try{(void)dotm::convert_xbox_tiled_bc_to_dds(128,128,false,{tiled.data(),16});}
   catch(const std::runtime_error&){threw=true;}
   check(threw,"Reject truncated Xbox tile");
-  std::cout<<"DOTM Xbox360 BC1/BC3 detile and DDS header tests PASS\n";
+  // Stage 41: DDS mip chain headers and contiguous BC1/BC3 payload layout.
+  const std::vector<dotm::XboxTiledBcMip> bc1_chain{
+      {32,32,tiled},{16,16,tiled5}};
+  const auto bc1_mips=dotm::convert_xbox_tiled_bc_mips_to_dds(bc1_chain,false);
+  check(bc1_mips.size()==128+512+128,"BC1 mip chain byte count");
+  check(readle(bc1_mips,8)==0xa1007u&&readle(bc1_mips,28)==2,
+        "DDSD_MIPMAPCOUNT and mip count");
+  check(readle(bc1_mips,20)==512&&readle(bc1_mips,108)==0x401008u,
+        "DDS top mip size and mipmap caps");
+  check(bc1_mips[128]==1&&bc1_mips[128+512]==0xb2&&
+        bc1_mips[128+513]==0xa1,"BC1 second mip offset and byte swap");
+  const std::vector<dotm::XboxTiledBcMip> bc3_chain{
+      {32,32,tiled5},{16,16,tiled}};
+  const auto bc3_mips=dotm::convert_xbox_tiled_bc_mips_to_dds(bc3_chain,true);
+  check(bc3_mips.size()==128+1024+256&&bc3_mips[87]=='5',
+        "BC3 mip chain size and FourCC");
+  check(bc3_mips[128+1024]==1&&bc3_mips[128+1025]==0,
+        "BC3 second mip offset and byte swap");
+  const std::vector<dotm::XboxTiledBcMip> one{{32,32,tiled}};
+  check(dotm::convert_xbox_tiled_bc_mips_to_dds(one,false)==dds,
+        "Single-mip API must remain byte-identical");
+  const std::vector<dotm::XboxTiledBcMip> odd{
+      {7,5,tiled},{3,2,tiled5},{1,1,tiled}};
+  check(dotm::convert_xbox_tiled_bc_mips_to_dds(odd,false).size()==128+32+8+8,
+        "Non-power-of-two mip dimensions");
+  threw=false;
+  try{(void)dotm::convert_xbox_tiled_bc_mips_to_dds(
+      std::span<const dotm::XboxTiledBcMip>{},false);}
+  catch(const std::invalid_argument&){threw=true;}
+  check(threw,"Reject empty mip chain");
+  const std::vector<dotm::XboxTiledBcMip> gap{{32,32,tiled},{7,7,tiled5}};
+  threw=false;
+  try{(void)dotm::convert_xbox_tiled_bc_mips_to_dds(gap,false);}
+  catch(const std::invalid_argument&){threw=true;}
+  check(threw,"Reject noncontiguous mip dimensions");
+  const std::vector<dotm::XboxTiledBcMip> repeated_tail{
+      {1,1,tiled},{1,1,tiled5}};
+  threw=false;
+  try{(void)dotm::convert_xbox_tiled_bc_mips_to_dds(repeated_tail,false);}
+  catch(const std::invalid_argument&){threw=true;}
+  check(threw,"Reject duplicate 1x1 mip");
+  const std::vector<dotm::XboxTiledBcMip> truncated_chain{
+      {32,32,tiled},{16,16,std::span<const std::uint8_t>(tiled.data(),1)}};
+  threw=false;
+  try{(void)dotm::convert_xbox_tiled_bc_mips_to_dds(truncated_chain,false);}
+  catch(const std::runtime_error&){threw=true;}
+  check(threw,"Reject truncated second mip");
+  std::cout<<"DOTM Xbox360 BC1/BC3 detile and DDS mip chain/header tests PASS\n";
   return 0;
  }catch(const std::exception&e){std::cerr<<"FAIL: "<<e.what()<<"\n";return 1;}
 }

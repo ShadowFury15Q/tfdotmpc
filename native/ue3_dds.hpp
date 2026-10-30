@@ -7,8 +7,18 @@
 #include <vector>
 
 namespace dotm {
-// Reads GPU-tiled Xbox 360 BC1/BC3 mip data and converts to a standard
-// single-mip DDS file. Does not implement rendering or UE3 material graph logic.
+// A non-owning view of one GPU-tiled Xbox 360 BC1/BC3 mip level.
+struct XboxTiledBcMip {
+    std::uint32_t width=0;
+    std::uint32_t height=0;
+    std::span<const std::uint8_t> payload;
+};
+// Converts a contiguous top-to-bottom mip chain to a standard DDS, including
+// DDSD_MIPMAPCOUNT and DDSCAPS_COMPLEX/MIPMAP when more than one mip is present.
+// All mip payloads must remain alive until the conversion returns.
+std::vector<std::uint8_t> convert_xbox_tiled_bc_mips_to_dds(
+    std::span<const XboxTiledBcMip> mips, bool bc3);
+// Legacy single-mip conversion; retained for existing texture exports.
 std::vector<std::uint8_t> convert_xbox_tiled_bc_to_dds(
     std::uint32_t width, std::uint32_t height, bool bc3,
     std::span<const std::uint8_t> xenos_payload);
