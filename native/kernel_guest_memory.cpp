@@ -111,24 +111,30 @@ std::uint32_t nt_free_virtual_memory_guest(
     std::uint32_t free_type, std::uint32_t debug_memory) {
     if (!valid_words(memory, base_pointer, size_pointer) || debug_memory)
         return kNtInvalidParameter;
-    if (free_type == kMemDecommit) return kNtNotSupported;
-    if (free_type != kMemRelease) return kNtInvalidParameter;
+    if (free_type != kMemRelease && free_type != kMemDecommit)
+        return kNtInvalidParameter;
     const auto base = read_be32(memory, base_pointer);
     const auto size = read_be32(memory, size_pointer);
-    // MEM_RELEASE requires a zero RegionSize and exact allocation base.
-    if (size != 0) return kNtInvalidParameter;
     const auto existing = allocator.allocation_size(base);
     if (!existing) return kNtMemoryNotAllocated;
-    // RegionSize is an output parameter. Releasing pages containing that
-    // word would make the required post-release write access revoked memory.
-    // Validate this before changing the allocation or its page protections.
+    // MEM_RELEASE requires zero size. For now, MEM_DECOMMIT supports only
+    // an exact-base, full-region operation; partial ranges fail closed.
+    if (free_type == kMemRelease && size != 0) return kNtInvalidParameter;
+    if (free_type == kMemDecommit && (size == 0 || size != *existing))
+        return kNtNotSupported;
+    // RegionSize is an output parameter; never revoke its backing page.
     const std::uint64_t release_begin = base;
     const std::uint64_t release_end = release_begin + *existing;
     const std::uint64_t output_begin = size_pointer;
     if (output_begin < release_end && output_begin + 4 > release_begin)
         return kNtInvalidParameter;
     try {
-        if (!allocator.release(base)) return kNtMemoryNotAllocated;
+        if (free_type == kMemRelease) {
+            if (!allocator.release(base)) return kNtMemoryNotAllocated;
+        } else {
+            if (!allocator.decommit_reserved(base, *existing))
+                return kNtNotSupported;
+        }
     } catch (const std::exception&) {
         return kNtNoMemory;
     }
