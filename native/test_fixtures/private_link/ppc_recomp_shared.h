@@ -10,3 +10,8 @@ PPC_EXTERN_FUNC(__imp__XamInputGetCapabilities);
 PPC_EXTERN_FUNC(__imp__NtAllocateVirtualMemory);
 PPC_EXTERN_FUNC(__imp__NtFreeVirtualMemory);
 PPC_EXTERN_FUNC(__imp__KeWaitForSingleObject);
+// Link the actual native PPC nonvolatile helper objects in public CI.
+PPC_EXTERN_FUNC(__savegprlr_28);
+PPC_EXTERN_FUNC(__restgprlr_28);
+PPC_EXTERN_FUNC(__savefpr_28);
+PPC_EXTERN_FUNC(__restfpr_28);

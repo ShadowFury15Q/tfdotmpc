@@ -210,6 +210,7 @@ add_executable(dotm_synthetic_private_link_test
   test_synthetic_private_link.cpp
   compiled_ppc_adapter.cpp
   xam_ppc_import.cpp kernel_ppc_import.cpp
+  private_ppc_gpr_import.cpp private_ppc_fpr_import.cpp
   "${DOTM_SYNTHETIC_PPC_DIR}/ppc_func_mapping.cpp"
   "${DOTM_SYNTHETIC_PPC_DIR}/ppc_recomp.0.cpp"
   "${DOTM_SYNTHETIC_STUBS}")
@@ -231,6 +232,7 @@ add_executable(dotm_synthetic_private_boot_probe
   private_link_probe_main.cpp
   compiled_ppc_adapter.cpp
   xam_ppc_import.cpp kernel_ppc_import.cpp
+  private_ppc_gpr_import.cpp private_ppc_fpr_import.cpp
   "${DOTM_SYNTHETIC_PPC_DIR}/ppc_func_mapping.cpp"
   "${DOTM_SYNTHETIC_PPC_DIR}/ppc_recomp.0.cpp"
   "${DOTM_SYNTHETIC_STUBS}")

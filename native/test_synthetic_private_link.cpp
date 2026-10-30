@@ -67,6 +67,39 @@ int main() {
         memory.find_function(0x82500000U)(context, memory.base());
         fail_if(context.r3.u64 != dotm::kXamBadArguments,
                 "Linked PPC XAM import must reject a freed output buffer");
+        // Verify the real native helper object files are linked into the
+        // synthetic PPC executable, not silently replaced with throw-stubs.
+        // These are synthetic register values, not proprietary game code.
+        constexpr std::uint32_t helper_page = 0x82040000U;
+        constexpr std::uint32_t helper_sp = helper_page + 0x800U;
+        memory.commit(helper_page, 4096);
+        context.r1.u32 = helper_sp;
+        context.r12.u64 = 0x0102030405060708ULL;
+        context.r28.u64 = 0x1122334455667788ULL;
+        context.r31.u64 = 0xAABBCCDDEEFF0011ULL;
+        __savegprlr_28(context, memory.base());
+        fail_if(memory.address(helper_sp - 0x98U + 14U * 8U)[0] != 0x11,
+                "Linked GPR save did not write big-endian guest bytes");
+        context.r28.u64 = 0;
+        context.r31.u64 = 0;
+        context.lr = 0;
+        __restgprlr_28(context, memory.base());
+        fail_if(context.r28.u64 != 0x1122334455667788ULL ||
+                context.r31.u64 != 0xAABBCCDDEEFF0011ULL ||
+                context.lr != 0x0102030405060708ULL,
+                "Linked GPR/LR restore did not preserve guest registers");
+        context.r12.u32 = helper_sp;
+        context.f28.u64 = 0x7FF8000000000028ULL;
+        context.f31.u64 = 0x3FF0000000000031ULL;
+        __savefpr_28(context, memory.base());
+        fail_if(memory.address(helper_sp - 0x90U + 14U * 8U)[0] != 0x7F,
+                "Linked FPR save did not write big-endian guest bytes");
+        context.f28.u64 = 0;
+        context.f31.u64 = 0;
+        __restfpr_28(context, memory.base());
+        fail_if(context.f28.u64 != 0x7FF8000000000028ULL ||
+                context.f31.u64 != 0x3FF0000000000031ULL,
+                "Linked FPR restore did not preserve IEEE-754 register bits");
         // The same multi-object native link must resolve the kernel PPC
         // imports as well as XAM and the synthetic recompiled _xstart.
         constexpr std::uint32_t nt_args = 0x82030000U;
