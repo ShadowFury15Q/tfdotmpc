@@ -51,8 +51,8 @@ std::uint32_t nt_allocate_virtual_memory_guest(
     std::uint32_t debug_memory) {
     if (!valid_words(memory, base_pointer, size_pointer) || debug_memory)
         return kNtInvalidParameter;
-    // Reservation-only and full-region commit are supported. Partial commits,
-    // reset, protection changes, large pages and devkit memory fail closed.
+    // Page-aligned subrange commits are supported. Reset, protection changes,
+    // large pages and devkit memory still fail closed.
     if (allocation_type != (kMemCommit | kMemReserve) &&
         allocation_type != kMemReserve && allocation_type != kMemCommit)
         return kNtNotSupported;
@@ -73,10 +73,8 @@ std::uint32_t nt_allocate_virtual_memory_guest(
     try {
         std::optional<std::uint32_t> allocated;
         if (allocation_type == kMemCommit && requested_base) {
-            const auto existing = allocator.allocation_size(
-                static_cast<std::uint32_t>(aligned_base));
-            if (!existing) return kNtMemoryNotAllocated;
-            if (*existing != rounded) return kNtNotSupported;
+            if (!allocator.reserved_range(static_cast<std::uint32_t>(aligned_base), rounded))
+                return kNtMemoryNotAllocated;
             if (allocator.commit_reserved(static_cast<std::uint32_t>(aligned_base), rounded))
                 allocated = static_cast<std::uint32_t>(aligned_base);
             else
@@ -115,16 +113,23 @@ std::uint32_t nt_free_virtual_memory_guest(
         return kNtInvalidParameter;
     const auto base = read_be32(memory, base_pointer);
     const auto size = read_be32(memory, size_pointer);
-    const auto existing = allocator.allocation_size(base);
-    if (!existing) return kNtMemoryNotAllocated;
-    // MEM_RELEASE requires zero size. For now, MEM_DECOMMIT supports only
-    // an exact-base, full-region operation; partial ranges fail closed.
-    if (free_type == kMemRelease && size != 0) return kNtInvalidParameter;
-    if (free_type == kMemDecommit && (size == 0 || size != *existing))
-        return kNtNotSupported;
+    std::uint64_t affected_size = 0;
+    if (free_type == kMemRelease) {
+        const auto existing = allocator.allocation_size(base);
+        if (!existing) return kNtMemoryNotAllocated;
+        if (size != 0) return kNtInvalidParameter;
+        affected_size = *existing;
+    } else {
+        if (!size) return kNtNotSupported;
+        if ((base & (GuestVirtualAllocator::kPageSize - 1)) ||
+            (size & (GuestVirtualAllocator::kPageSize - 1)))
+            return kNtInvalidParameter;
+        if (!allocator.reserved_range(base, size)) return kNtMemoryNotAllocated;
+        affected_size = size;
+    }
     // RegionSize is an output parameter; never revoke its backing page.
     const std::uint64_t release_begin = base;
-    const std::uint64_t release_end = release_begin + *existing;
+    const std::uint64_t release_end = release_begin + affected_size;
     const std::uint64_t output_begin = size_pointer;
     if (output_begin < release_end && output_begin + 4 > release_begin)
         return kNtInvalidParameter;
@@ -132,13 +137,13 @@ std::uint32_t nt_free_virtual_memory_guest(
         if (free_type == kMemRelease) {
             if (!allocator.release(base)) return kNtMemoryNotAllocated;
         } else {
-            if (!allocator.decommit_reserved(base, *existing))
+            if (!allocator.decommit_reserved(base, affected_size))
                 return kNtNotSupported;
         }
     } catch (const std::exception&) {
         return kNtNoMemory;
     }
-    write_be32(memory, size_pointer, static_cast<std::uint32_t>(*existing));
+    write_be32(memory, size_pointer, static_cast<std::uint32_t>(affected_size));
     return kNtSuccess;
 }
 void bind_kernel_guest_memory(GuestMemory* memory,
