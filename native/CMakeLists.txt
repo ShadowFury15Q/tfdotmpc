@@ -249,7 +249,12 @@ if(DOTM_PRIVATE_PPC_DIR)
   endif()
   # The original shared header declares ~178K functions. Reparse it once per
   # private build instead of 697 times; no proprietary data enters public CI.
+  # The generated PPC header uses SIMDe vector types. With Clang 17 and
+  # libstdc++ 14, parsing C++ standard headers after this PCH breaks the
+  # builtin va_list ABI (std::vsnprintf / __builtin_va_start). Precompile
+  # the host-side standard headers first, then the private PPC declarations.
   target_precompile_headers(dotm_private_link_probe PRIVATE
+    <filesystem> <stdexcept> <string> <vector> <cstdio> <cstring>
     "${DOTM_PRIVATE_PPC_DIR}/ppc_recomp_shared.h")
   target_link_libraries(dotm_private_link_probe
     PRIVATE dotm_recomp_bridge dotm_xam_input dotm_xam_launch_data dotm_kernel_guest_memory dotm_kernel_tls dotm_kernel_critical_sections dotm_kernel_rtl_memory dotm_xex_optional_header dotm_xex_privilege dotm_xex_title_boot)
