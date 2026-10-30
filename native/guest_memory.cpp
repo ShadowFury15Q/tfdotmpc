@@ -114,6 +114,9 @@ void GuestMemory::load_pe(const std::filesystem::path& path){
  const auto count=std::size_t(u16(b,nt+6));
  if(optional_size<64||opt>v.size()||optional_size>v.size()-opt)
   throw std::runtime_error("Truncated Xbox PE optional header");
+ const auto entry_rva=u32(b,opt+16);
+ if(entry_rva>=kImageSize||(entry_rva&3U))
+  throw std::runtime_error("Invalid Xbox PPC PE entry RVA");
  const auto sections=opt+optional_size;
  if(count>(v.size()-sections)/40)
   throw std::runtime_error("Truncated Xbox PE section table");
@@ -160,6 +163,12 @@ void GuestMemory::load_pe(const std::filesystem::path& path){
   if(section.raw)std::memcpy(address(kImageBase+section.rva),
                              v.data()+section.file_off,section.raw);
  }
+ pe_entry_=kImageBase+entry_rva;
+ pe_loaded_=true;
+}
+std::uint32_t GuestMemory::loaded_pe_entry() const{
+ if(!pe_loaded_)throw std::logic_error("No Xbox PPC PE loaded");
+ return pe_entry_;
 }
 void GuestMemory::initialize_function_table(NativeFunction fallback){
  if(!fallback)throw std::invalid_argument("Null fallback");
