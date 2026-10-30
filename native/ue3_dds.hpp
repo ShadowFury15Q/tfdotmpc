@@ -18,6 +18,10 @@ struct XboxTiledBcMip {
 // All mip payloads must remain alive until the conversion returns.
 std::vector<std::uint8_t> convert_xbox_tiled_bc_mips_to_dds(
     std::span<const XboxTiledBcMip> mips, bool bc3);
+// Minimum Xenos-tiled payload size covering every referenced BC block.
+// Use this to reject corrupt resident mip metadata before LZO decompression.
+std::size_t required_xbox_tiled_bc_payload_bytes(
+    std::uint32_t width, std::uint32_t height, bool bc3);
 // Legacy single-mip conversion; retained for existing texture exports.
 std::vector<std::uint8_t> convert_xbox_tiled_bc_to_dds(
     std::uint32_t width, std::uint32_t height, bool bc3,
