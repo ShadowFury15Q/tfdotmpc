@@ -102,6 +102,22 @@ int main() {
         check(memory.committed_range(reserved, 8192) &&
               heap.allocated_bytes() == 16384,
               "Committed reservation has real writable guest memory");
+        memory.address(reserved)[0] = 0xAB;
+        check(release(reserved, 4096, 0x4000U) == dotm::kNtNotSupported,
+              "Partial MEM_DECOMMIT fails without altering reservation");
+        check(memory.committed_range(reserved, 8192),
+              "Partial decommit preserves committed pages");
+        check(release(reserved, 8192, 0x4000U) == dotm::kNtSuccess,
+              "Full MEM_DECOMMIT succeeds");
+        check(!memory.committed_range(reserved, 8192) &&
+              heap.allocation_size(reserved) == 8192 &&
+              heap.allocated_bytes() == 8192,
+              "MEM_DECOMMIT retains reservation but revokes physical pages");
+        check(allocate(reserved, 8192, 0x1000U) == dotm::kNtSuccess,
+              "MEM_COMMIT restores decommitted reservation");
+        check(memory.address(reserved)[0] == 0 &&
+              heap.allocated_bytes() == 16384,
+              "Recommitted guest memory is zero-filled");
         check(release(reserved, 0) == dotm::kNtSuccess,
               "MEM_RELEASE frees committed reservation");
         check(!memory.committed_range(reserved, 1),
