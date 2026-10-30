@@ -1,4 +1,5 @@
 #include "guest_virtual_allocator.hpp"
+#include <algorithm>
 #include <cstring>
 #include <iterator>
 #include <limits>
@@ -66,10 +67,18 @@ std::optional<std::uint32_t> GuestVirtualAllocator::find_available_in_gap(
 }
 void GuestVirtualAllocator::commit_and_track(
     std::uint32_t address, std::uint64_t bytes) {
-    // A failed host commit must not consume a guest address range.
-    memory_.commit(address, static_cast<std::size_t>(bytes));
-    std::memset(memory_.address(address), 0, static_cast<std::size_t>(bytes));
-    blocks_.emplace(address, Block{bytes, true});
+    // Reserve metadata first: allocation failure must not leave orphaned
+    // host-committed pages outside the guest allocator's accounting.
+    auto [it, inserted] = blocks_.emplace(
+        address, Block{bytes, std::vector<std::uint8_t>(bytes / kPageSize, 1)});
+    if (!inserted) throw std::logic_error("Duplicate guest allocation");
+    try {
+        memory_.commit(address, static_cast<std::size_t>(bytes));
+        std::memset(memory_.address(address), 0, static_cast<std::size_t>(bytes));
+    } catch (...) {
+        blocks_.erase(it);
+        throw;
+    }
     allocated_bytes_ += bytes;
 }
 std::optional<std::uint32_t> GuestVirtualAllocator::allocate(
@@ -104,7 +113,8 @@ bool GuestVirtualAllocator::allocate_at(
 }
 void GuestVirtualAllocator::reserve_and_track(
     std::uint32_t address, std::uint64_t bytes) {
-    blocks_.emplace(address, Block{bytes, false});
+    blocks_.emplace(
+        address, Block{bytes, std::vector<std::uint8_t>(bytes / kPageSize, 0)});
 }
 std::optional<std::uint32_t> GuestVirtualAllocator::reserve(
     std::uint64_t bytes, std::uint64_t alignment) {
@@ -133,36 +143,68 @@ bool GuestVirtualAllocator::reserve_at(std::uint32_t address, std::uint64_t byte
     reserve_and_track(address, length);
     return true;
 }
+bool GuestVirtualAllocator::reserved_range(
+    std::uint32_t address, std::uint64_t bytes) const noexcept {
+    if (!bytes || !page_aligned(address) || !page_aligned(bytes))
+        return false;
+    auto it = blocks_.upper_bound(address);
+    if (it == blocks_.begin()) return false;
+    --it;
+    return address >= it->first &&
+        std::uint64_t(address) + bytes <= std::uint64_t(it->first) + it->second.size;
+}
 bool GuestVirtualAllocator::commit_reserved(std::uint32_t address, std::uint64_t bytes) {
     const auto length = rounded_size(bytes);
-    const auto it = blocks_.find(address);
-    if (it == blocks_.end() || it->second.size != length ||
-        it->second.committed || memory_.any_committed_range(address, length))
+    if (!reserved_range(address, length) ||
+        memory_.any_committed_range(address, static_cast<std::size_t>(length)))
         return false;
+    auto it = std::prev(blocks_.upper_bound(address));
+    const auto first = (std::uint64_t(address) - it->first) / kPageSize;
+    const auto count = length / kPageSize;
+    for (std::uint64_t page = first; page < first + count; ++page)
+        if (it->second.pages[page]) return false;
     memory_.commit(address, static_cast<std::size_t>(length));
     std::memset(memory_.address(address), 0, static_cast<std::size_t>(length));
-    it->second.committed = true;
+    std::fill(it->second.pages.begin() + first,
+              it->second.pages.begin() + first + count, 1);
     allocated_bytes_ += length;
     return true;
 }
 bool GuestVirtualAllocator::decommit_reserved(std::uint32_t address, std::uint64_t bytes) {
     const auto length = rounded_size(bytes);
-    const auto it = blocks_.find(address);
-    if (it == blocks_.end() || it->second.size != length ||
-        !it->second.committed) return false;
-    // Preserve reservation/accounting when host decommit fails.
+    if (!reserved_range(address, length)) return false;
+    auto it = std::prev(blocks_.upper_bound(address));
+    const auto first = (std::uint64_t(address) - it->first) / kPageSize;
+    const auto count = length / kPageSize;
+    for (std::uint64_t page = first; page < first + count; ++page)
+        if (!it->second.pages[page]) return false;
+    // Update accounting only after host pages have actually been revoked.
     memory_.decommit(address, static_cast<std::size_t>(length));
-    it->second.committed = false;
+    std::fill(it->second.pages.begin() + first,
+              it->second.pages.begin() + first + count, 0);
     allocated_bytes_ -= length;
     return true;
 }
 bool GuestVirtualAllocator::release(std::uint32_t address) {
     const auto it = blocks_.find(address);
     if (it == blocks_.end()) return false;
-    // Do not make the address reusable until host decommit succeeds.
-    if (it->second.committed) {
-        memory_.decommit(address, static_cast<std::size_t>(it->second.size));
-        allocated_bytes_ -= it->second.size;
+    // A partially committed reservation may contain several separate runs.
+    // If any host decommit fails, keep the reservation and the remaining
+    // page accounting intact so the caller can safely retry.
+    auto& pages = it->second.pages;
+    for (std::size_t first = 0; first < pages.size();) {
+        if (!pages[first]) {
+            ++first;
+            continue;
+        }
+        auto end = first + 1;
+        while (end < pages.size() && pages[end]) ++end;
+        const auto length = (end - first) * kPageSize;
+        memory_.decommit(std::uint64_t(address) + first * kPageSize,
+                         static_cast<std::size_t>(length));
+        std::fill(pages.begin() + first, pages.begin() + end, 0);
+        allocated_bytes_ -= length;
+        first = end;
     }
     blocks_.erase(it);
     return true;
