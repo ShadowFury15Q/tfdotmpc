@@ -51,10 +51,12 @@ std::uint32_t nt_allocate_virtual_memory_guest(
     std::uint32_t debug_memory) {
     if (!valid_words(memory, base_pointer, size_pointer) || debug_memory)
         return kNtInvalidParameter;
-    // Reservation-only, commit-only, reset, large pages, protection changes
-    // and devkit memory are not implemented; never pretend they succeeded.
-    if (allocation_type != (kMemCommit | kMemReserve) ||
-        protect != kPageReadWrite)
+    // Reservation-only and full-region commit are supported. Partial commits,
+    // reset, protection changes, large pages and devkit memory fail closed.
+    if (allocation_type != (kMemCommit | kMemReserve) &&
+        allocation_type != kMemReserve && allocation_type != kMemCommit)
+        return kNtNotSupported;
+    if (protect != kPageReadWrite)
         return kNtNotSupported;
     const auto requested_base = read_be32(memory, base_pointer);
     const auto requested_size = read_be32(memory, size_pointer);
@@ -70,11 +72,27 @@ std::uint32_t nt_allocate_virtual_memory_guest(
         return kNtInvalidParameter;
     try {
         std::optional<std::uint32_t> allocated;
-        if (requested_base) {
-            if (allocator.allocate_at(static_cast<std::uint32_t>(aligned_base),
-                                      rounded))
+        if (allocation_type == kMemCommit && requested_base) {
+            const auto existing = allocator.allocation_size(
+                static_cast<std::uint32_t>(aligned_base));
+            if (!existing) return kNtMemoryNotAllocated;
+            if (*existing != rounded) return kNtNotSupported;
+            if (allocator.commit_reserved(static_cast<std::uint32_t>(aligned_base), rounded))
+                allocated = static_cast<std::uint32_t>(aligned_base);
+            else
+                return kNtNotSupported;
+        } else if (allocation_type == kMemReserve) {
+            if (requested_base) {
+                if (allocator.reserve_at(static_cast<std::uint32_t>(aligned_base), rounded))
+                    allocated = static_cast<std::uint32_t>(aligned_base);
+            } else {
+                allocated = allocator.reserve(rounded);
+            }
+        } else if (requested_base) {
+            if (allocator.allocate_at(static_cast<std::uint32_t>(aligned_base), rounded))
                 allocated = static_cast<std::uint32_t>(aligned_base);
         } else {
+            // Null-base MEM_COMMIT implicitly reserves and commits.
             allocated = allocator.allocate(rounded);
         }
         if (!allocated) return kNtNoMemory;

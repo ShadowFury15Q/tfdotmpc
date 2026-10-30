@@ -86,8 +86,40 @@ int main() {
               "Failed allocation leaves guest arguments unchanged");
         check(allocate(0, 0) == dotm::kNtInvalidParameter,
               "Zero region rejected");
-        check(allocate(0, 4096, 0x2000) == dotm::kNtNotSupported,
-              "Reservation-only must fail closed");
+        check(allocate(0, 4096, 0x2000) == dotm::kNtSuccess,
+              "Reservation-only must reserve guest address space");
+        const auto reserved = read32(memory, ptr);
+        check(!memory.committed_range(reserved, 1) &&
+              heap.allocation_size(reserved) == 4096 &&
+              heap.allocated_bytes() == 8192,
+              "MEM_RESERVE does not commit physical guest pages");
+        check(allocate(reserved, 2048, 0x1000) == dotm::kNtNotSupported,
+              "Partial MEM_COMMIT is rejected without changing reservation");
+        check(!memory.committed_range(reserved, 1),
+              "Unsupported partial commit must not touch guest pages");
+        check(allocate(reserved, 4096, 0x1000) == dotm::kNtSuccess,
+              "MEM_COMMIT activates a full reserved region");
+        check(memory.committed_range(reserved, 4096) &&
+              heap.allocated_bytes() == 12288,
+              "Committed reservation has real writable guest memory");
+        check(release(reserved, 0) == dotm::kNtSuccess,
+              "MEM_RELEASE frees committed reservation");
+        check(!memory.committed_range(reserved, 1),
+              "Released reservation revokes guest pages");
+        check(allocate(0, 4096, 0x2000) == dotm::kNtSuccess,
+              "Reservation-only can be repeated");
+        const auto uncommitted_reservation = read32(memory, ptr);
+        check(release(uncommitted_reservation, 0) == dotm::kNtSuccess,
+              "MEM_RELEASE frees never-committed reservation");
+        check(allocate(0, 4096, 0x1000) == dotm::kNtSuccess,
+              "Null-base MEM_COMMIT implicitly reserves pages");
+        const auto implicit_reservation = read32(memory, ptr);
+        check(memory.committed_range(implicit_reservation, 4096),
+              "Implicit reservation is committed");
+        check(release(implicit_reservation, 0) == dotm::kNtSuccess,
+              "Implicit reservation can be released");
+        check(allocate(0x40005000U, 4096, 0x1000) == dotm::kNtMemoryNotAllocated,
+              "MEM_COMMIT cannot invent an existing fixed reservation");
         check(allocate(0, 4096, 0x3000, 0x20) == dotm::kNtNotSupported,
               "Execute-only protection must fail closed");
         check(allocate(0, 4096, 0x3000, 4, 1) == dotm::kNtInvalidParameter,

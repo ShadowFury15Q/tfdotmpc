@@ -18,15 +18,21 @@ public:
     // returns nullopt without changing allocations.
     std::optional<std::uint32_t> allocate(
         std::uint64_t bytes, std::uint64_t alignment = kPageSize);
-    // Reserve a specific page-aligned guest address. False if unavailable.
+    // Reserve and commit pages at a specific address.
     bool allocate_at(std::uint32_t address, std::uint64_t bytes);
+    // NT MEM_RESERVE tracks guest address space without committing host pages.
+    std::optional<std::uint32_t> reserve(
+        std::uint64_t bytes, std::uint64_t alignment = kPageSize);
+    bool reserve_at(std::uint32_t address, std::uint64_t bytes);
+    // Only full-region commits are supported; partial commits fail closed.
+    bool commit_reserved(std::uint32_t address, std::uint64_t bytes);
     // Exact-base release revokes host access; failure preserves tracking.
     bool release(std::uint32_t address);
     // Exact-base query used by the NT MEM_RELEASE ABI; interior pointers fail.
     std::optional<std::uint64_t> allocation_size(std::uint32_t address) const noexcept {
         const auto it = blocks_.find(address);
         if (it == blocks_.end()) return std::nullopt;
-        return it->second;
+        return it->second.size;
     }
     std::size_t allocation_count() const noexcept { return blocks_.size(); }
     std::uint64_t allocated_bytes() const noexcept { return allocated_bytes_; }
@@ -38,9 +44,11 @@ private:
         std::uint64_t begin, std::uint64_t end,
         std::uint64_t bytes, std::uint64_t alignment) const;
     void commit_and_track(std::uint32_t address, std::uint64_t bytes);
+    void reserve_and_track(std::uint32_t address, std::uint64_t bytes);
     GuestMemory& memory_;
     std::uint32_t first_, limit_;
-    std::map<std::uint32_t, std::uint64_t> blocks_;
+    struct Block { std::uint64_t size; bool committed; };
+    std::map<std::uint32_t, Block> blocks_;
     std::uint64_t allocated_bytes_ = 0;
 };
 }

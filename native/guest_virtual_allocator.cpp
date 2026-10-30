@@ -38,7 +38,7 @@ bool GuestVirtualAllocator::free_range(
         return false;
     if (next != blocks_.begin()) {
         const auto previous = std::prev(next);
-        if (std::uint64_t(previous->first) + previous->second > address)
+        if (std::uint64_t(previous->first) + previous->second.size > address)
             return false;
     }
     return !memory_.any_committed_range(address, static_cast<std::size_t>(bytes));
@@ -69,7 +69,7 @@ void GuestVirtualAllocator::commit_and_track(
     // A failed host commit must not consume a guest address range.
     memory_.commit(address, static_cast<std::size_t>(bytes));
     std::memset(memory_.address(address), 0, static_cast<std::size_t>(bytes));
-    blocks_.emplace(address, bytes);
+    blocks_.emplace(address, Block{bytes, true});
     allocated_bytes_ += bytes;
 }
 std::optional<std::uint32_t> GuestVirtualAllocator::allocate(
@@ -86,7 +86,7 @@ std::optional<std::uint32_t> GuestVirtualAllocator::allocate(
             commit_and_track(*candidate, length);
             return candidate;
         }
-        cursor = std::uint64_t(base) + occupied;
+        cursor = std::uint64_t(base) + occupied.size;
     }
     if (const auto candidate = find_available_in_gap(
             cursor, limit_, length, alignment)) {
@@ -102,12 +102,57 @@ bool GuestVirtualAllocator::allocate_at(
     commit_and_track(address, length);
     return true;
 }
+void GuestVirtualAllocator::reserve_and_track(
+    std::uint32_t address, std::uint64_t bytes) {
+    blocks_.emplace(address, Block{bytes, false});
+}
+std::optional<std::uint32_t> GuestVirtualAllocator::reserve(
+    std::uint64_t bytes, std::uint64_t alignment) {
+    const auto length = rounded_size(bytes);
+    if (alignment < kPageSize || !power_of_two(alignment))
+        throw std::invalid_argument("Guest alignment must be a page-sized power of two");
+    if (length > std::uint64_t(limit_) - first_ || alignment > limit_)
+        return std::nullopt;
+    std::uint64_t cursor = first_;
+    for (const auto& [base, occupied] : blocks_) {
+        if (const auto candidate = find_available_in_gap(cursor, base, length, alignment)) {
+            reserve_and_track(*candidate, length);
+            return candidate;
+        }
+        cursor = std::uint64_t(base) + occupied.size;
+    }
+    if (const auto candidate = find_available_in_gap(cursor, limit_, length, alignment)) {
+        reserve_and_track(*candidate, length);
+        return candidate;
+    }
+    return std::nullopt;
+}
+bool GuestVirtualAllocator::reserve_at(std::uint32_t address, std::uint64_t bytes) {
+    const auto length = rounded_size(bytes);
+    if (!page_aligned(address) || !free_range(address, length)) return false;
+    reserve_and_track(address, length);
+    return true;
+}
+bool GuestVirtualAllocator::commit_reserved(std::uint32_t address, std::uint64_t bytes) {
+    const auto length = rounded_size(bytes);
+    const auto it = blocks_.find(address);
+    if (it == blocks_.end() || it->second.size != length ||
+        it->second.committed || memory_.any_committed_range(address, length))
+        return false;
+    memory_.commit(address, static_cast<std::size_t>(length));
+    std::memset(memory_.address(address), 0, static_cast<std::size_t>(length));
+    it->second.committed = true;
+    allocated_bytes_ += length;
+    return true;
+}
 bool GuestVirtualAllocator::release(std::uint32_t address) {
     const auto it = blocks_.find(address);
     if (it == blocks_.end()) return false;
     // Do not make the address reusable until host decommit succeeds.
-    memory_.decommit(address, static_cast<std::size_t>(it->second));
-    allocated_bytes_ -= it->second;
+    if (it->second.committed) {
+        memory_.decommit(address, static_cast<std::size_t>(it->second.size));
+        allocated_bytes_ -= it->second.size;
+    }
     blocks_.erase(it);
     return true;
 }
