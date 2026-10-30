@@ -14,6 +14,8 @@ constexpr std::uint32_t kMaximumHeaderSize = 8U * 1024U * 1024U;
 constexpr std::uint32_t kModuleHandleAddress = 0x81900000U;
 constexpr std::uint32_t kModuleAddress = 0x81901000U;
 // XboxHardwareInfo and KeDebugMonitorData are kernel-exported data imports.
+constexpr std::uint32_t kTimeStampBundleImport = 0x8200085CU;
+constexpr std::uint32_t kTimeStampBundleAddress = 0x81904000U;
 constexpr std::uint32_t kHardwareInfoImport = 0x82000978U;
 constexpr std::uint32_t kHardwareInfoAddress = 0x81902000U;
 constexpr std::uint32_t kDebugMonitorImport = 0x820009A0U;
@@ -64,10 +66,14 @@ std::uint32_t install_original_xex_title_header(
     input.seekg(0);
     if (!input.read(reinterpret_cast<char*>(bytes.data()), bytes.size()))
         throw std::runtime_error("Failed to read complete private XEX2 header");
-    if (!memory.committed_range(kOriginalModuleImport, 4) ||
+    if (!memory.committed_range(kTimeStampBundleImport, 4) ||
+        !memory.committed_range(kOriginalModuleImport, 4) ||
         !memory.committed_range(kHardwareInfoImport, 4) ||
         !memory.committed_range(kDebugMonitorImport, 4))
         throw std::runtime_error("Load original decrypted PE before XEX2 module wiring");
+    const auto timestamp_import_tag = be32(memory.address(kTimeStampBundleImport));
+    if (timestamp_import_tag != 0 && timestamp_import_tag != 0x000100ADU)
+        throw std::runtime_error("Unexpected KeTimeStampBundle import ordinal");
     const auto hardware_import_tag = be32(memory.address(kHardwareInfoImport));
     if (hardware_import_tag != 0 && hardware_import_tag != 0x00010156U)
         throw std::runtime_error("Unexpected XboxHardwareInfo import ordinal");
@@ -77,6 +83,7 @@ std::uint32_t install_original_xex_title_header(
     if (memory.any_committed_range(kHeaderAddress, kMaximumHeaderSize) ||
         memory.any_committed_range(kModuleHandleAddress, 4096) ||
         memory.any_committed_range(kModuleAddress, 4096) ||
+        memory.any_committed_range(kTimeStampBundleAddress, 4096) ||
         memory.any_committed_range(kHardwareInfoAddress, 4096) ||
         memory.any_committed_range(kDebugMonitorAddress, 4096))
         throw std::runtime_error("XEX2 module boot memory overlaps existing guest state");
@@ -106,8 +113,13 @@ std::uint32_t install_original_xex_title_header(
     memory.copy_to_guest(kHeaderAddress, bytes);
     memory.commit(kModuleHandleAddress, 4096);
     memory.commit(kModuleAddress, 4096);
+    memory.commit(kTimeStampBundleAddress, 4096);
     memory.commit(kHardwareInfoAddress, 4096);
     memory.commit(kDebugMonitorAddress, 4096);
+    // Xbox 360 kernel KeTimeStampBundle is a 24-byte data export.
+    // The 32-bit millisecond uptime at +16 is updated during title execution.
+    std::memset(memory.address(kTimeStampBundleAddress), 0, 4096);
+    put32(memory, kTimeStampBundleImport, kTimeStampBundleAddress);
     // Retail hardware flags and six logical processors; no active debug
     // monitor callback. These are real guest-visible global data imports.
     std::memset(memory.address(kHardwareInfoAddress), 0, 4096);

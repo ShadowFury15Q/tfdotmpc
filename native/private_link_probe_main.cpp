@@ -15,6 +15,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <atomic>
+#include <thread>
+#include <chrono>
 #include <stdexcept>
 #ifdef DOTM_SYNTHETIC_PRIVATE_BOOT
 #include <chrono>
@@ -127,6 +130,30 @@ void execute_guest_entry(dotm::GuestMemory& memory, std::uint32_t entry) {
     xam_input.publish(native_input.next_frame());
     dotm::XamLaunchDataHost launch_data;
     ScopedHostBindings bindings(memory, allocator, xam_input, launch_data);
+#ifndef DOTM_SYNTHETIC_PRIVATE_BOOT
+    // KeTimeStampBundle is a kernel data import. Its millisecond tick must
+    // advance while the original PPC code runs, even without host calls.
+    constexpr std::uint32_t kTimestampTickAddress = 0x81904010U;
+    if (!memory.committed_range(kTimestampTickAddress, sizeof(std::uint32_t)))
+        throw std::runtime_error("Original KeTimeStampBundle was not initialized");
+    std::jthread kernel_timestamp([&memory](std::stop_token stop) {
+        const auto start = std::chrono::steady_clock::now();
+        auto& raw = *reinterpret_cast<std::uint32_t*>(
+            memory.address(kTimestampTickAddress));
+        while (!stop.stop_requested()) {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start).count();
+            const auto ticks = static_cast<std::uint32_t>(elapsed);
+            const auto big_endian = ((ticks & 0x000000FFU) << 24) |
+                ((ticks & 0x0000FF00U) << 8) |
+                ((ticks & 0x00FF0000U) >> 8) |
+                ((ticks & 0xFF000000U) >> 24);
+            std::atomic_ref<std::uint32_t>(raw).store(
+                big_endian, std::memory_order_relaxed);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+#endif
 
 #ifndef DOTM_SYNTHETIC_PRIVATE_BOOT
     // The PPC r13 ABI points to KPCR. KPCR+0x100 is current KTHREAD;
