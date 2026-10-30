@@ -127,10 +127,11 @@ if(DOTM_PRIVATE_PPC_DIR)
       message(FATAL_ERROR "Private XenonRecomp file missing: ${required_file}")
     endif()
   endforeach()
+  # The supplied original output contains 697 units (indices 0..696).
   # Compile the exact contiguous XenonRecomp set. A wildcard count can
   # accidentally accept duplicate, stale or missing numbered units.
   set(DOTM_PRIVATE_PPC_UNITS "")
-  foreach(unit_index RANGE 0 695)
+  foreach(unit_index RANGE 0 696)
     set(unit_path "${DOTM_PRIVATE_PPC_DIR}/ppc_recomp.${unit_index}.cpp")
     if(NOT EXISTS "${unit_path}")
       message(FATAL_ERROR "Private PPC translation unit missing: ppc_recomp.${unit_index}.cpp")
