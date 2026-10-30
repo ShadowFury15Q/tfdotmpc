@@ -181,14 +181,16 @@ def run(root: Path):
                 print("  Build: cmake --build private-build --target dotm_private_link_probe --config Release")
     if not found_units:
         print("BLOCKED: no generated PPC units in this project tree")
+    valid_xex = False
     for path in found_xex:
         try:
             match = sha256(path) == EXPECTED_XEX_SHA256
+            valid_xex |= match
             print(f"Original XEX: {path} (SHA256 {'MATCH' if match else 'MISMATCH'})")
         except OSError as error:
             print(f"Original XEX: {path} (unreadable: {error})")
-    if not found_xex:
-        print("Original default.xex: not found in this project tree")
+    if not valid_xex:
+        print("BLOCKED: original default.xex with the verified DOTM SHA256 is missing")
     valid_pe = False
     for path, (image, entry) in found_pe:
         match = image == EXPECTED_IMAGE_BASE and entry == EXPECTED_ENTRY
@@ -199,8 +201,8 @@ def run(root: Path):
         if found_xex:
             print("  Extract locally with xex2ool basefile <default.xex> -o <private-game.pe>")
             print("  Alternative: XexTool -b <private-game.pe> <default.xex>")
-    if ready and valid_pe:
-        print("Private inputs found. Compile and run the probe with --run-entry <private-game.pe>.")
+    if ready and valid_pe and valid_xex:
+        print("Private inputs found. Compile and run the probe with --run-entry <private-game.pe> --xex-header <original default.xex>.")
         return 0
     return 1
 
