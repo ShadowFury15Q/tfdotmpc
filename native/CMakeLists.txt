@@ -127,12 +127,16 @@ if(DOTM_PRIVATE_PPC_DIR)
       message(FATAL_ERROR "Private XenonRecomp file missing: ${required_file}")
     endif()
   endforeach()
-  file(GLOB DOTM_PRIVATE_PPC_UNITS CONFIGURE_DEPENDS
-       "${DOTM_PRIVATE_PPC_DIR}/ppc_recomp.*.cpp")
-  list(LENGTH DOTM_PRIVATE_PPC_UNITS DOTM_PRIVATE_PPC_UNIT_COUNT)
-  if(DOTM_PRIVATE_PPC_UNIT_COUNT LESS 696)
-    message(FATAL_ERROR "Expected at least 696 private PPC translation units; got ${DOTM_PRIVATE_PPC_UNIT_COUNT}")
-  endif()
+  # Compile the exact contiguous XenonRecomp set. A wildcard count can
+  # accidentally accept duplicate, stale or missing numbered units.
+  set(DOTM_PRIVATE_PPC_UNITS "")
+  foreach(unit_index RANGE 0 695)
+    set(unit_path "${DOTM_PRIVATE_PPC_DIR}/ppc_recomp.${unit_index}.cpp")
+    if(NOT EXISTS "${unit_path}")
+      message(FATAL_ERROR "Private PPC translation unit missing: ppc_recomp.${unit_index}.cpp")
+    endif()
+    list(APPEND DOTM_PRIVATE_PPC_UNITS "${unit_path}")
+  endforeach()
   set(DOTM_PRIVATE_STUBS "${CMAKE_CURRENT_BINARY_DIR}/private_link_stubs.cpp")
   add_custom_command(
     OUTPUT "${DOTM_PRIVATE_STUBS}"
