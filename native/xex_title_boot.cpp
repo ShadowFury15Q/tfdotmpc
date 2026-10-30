@@ -17,6 +17,8 @@ constexpr std::uint32_t kModuleAddress = 0x81901000U;
 // then reads +0x58 for the XEX header supplied to RtlImageXexHeaderField.
 constexpr std::uint32_t kOriginalModuleImport = 0x82000998U;
 constexpr std::uint32_t kXexEntryKey = 0x00010100U;
+constexpr std::uint32_t kExecutionIdKey = 0x00040006U;
+constexpr std::uint32_t kDotmTitleId = 0x415608A4U;
 std::uint32_t be32(const std::uint8_t* ptr) {
     return (std::uint32_t(ptr[0]) << 24) |
            (std::uint32_t(ptr[1]) << 16) |
@@ -63,17 +65,27 @@ std::uint32_t install_original_xex_title_header(
         throw std::runtime_error("XEX2 module boot memory overlaps existing guest state");
     // Validate the executable entry BEFORE touching any guest memory.
     bool matched_entry = false;
+    bool matched_title = false;
     for (std::uint32_t i = 0; i < header_count; ++i) {
-        const auto* entry = bytes.data() + 24 + i * 8;
-        if (be32(entry) == kXexEntryKey) {
-            if (be32(entry + 4) != expected_entry)
+        const auto* field = bytes.data() + 24 + i * 8;
+        const auto key = be32(field);
+        const auto value = be32(field + 4);
+        if (key == kXexEntryKey) {
+            if (matched_entry || value != expected_entry)
                 throw std::runtime_error("Original XEX2 entry does not match linked _xstart");
             matched_entry = true;
-            break;
+        } else if (key == kExecutionIdKey) {
+            // XEX execution ID contains the title ID at byte offset 12.
+            // Validate all bytes before committing any private header to guest RAM.
+            if (matched_title || value > header_size ||
+                header_size - value < 24 ||
+                be32(bytes.data() + value + 12) != kDotmTitleId)
+                throw std::runtime_error("XEX2 execution ID is invalid or not DOTM");
+            matched_title = true;
         }
     }
-    if (!matched_entry)
-        throw std::runtime_error("Original XEX2 entry-point optional header missing");
+    if (!matched_entry || !matched_title)
+        throw std::runtime_error("Original DOTM XEX2 entry or execution ID missing");
     memory.copy_to_guest(kHeaderAddress, bytes);
     memory.commit(kModuleHandleAddress, 4096);
     memory.commit(kModuleAddress, 4096);
