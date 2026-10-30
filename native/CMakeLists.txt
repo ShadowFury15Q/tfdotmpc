@@ -22,6 +22,15 @@ target_include_directories(dotm_kernel_ppc_import_test
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures)
 target_link_libraries(dotm_kernel_ppc_import_test PRIVATE dotm_kernel_guest_memory)
 add_test(NAME xbox360_nt_virtual_memory_ppc_abi COMMAND dotm_kernel_ppc_import_test)
+# Real Xbox kernel thread-local slots, including per-thread value isolation.
+find_package(Threads REQUIRED)
+add_library(dotm_kernel_tls STATIC kernel_tls.cpp)
+add_executable(dotm_kernel_tls_ppc_test test_kernel_tls.cpp kernel_tls_ppc_import.cpp)
+target_include_directories(dotm_kernel_tls_ppc_test PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures/private_link
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures)
+target_link_libraries(dotm_kernel_tls_ppc_test PRIVATE dotm_kernel_tls Threads::Threads)
+add_test(NAME xbox360_kernel_tls_ppc_abi COMMAND dotm_kernel_tls_ppc_test)
 
 add_library(dotm_recomp_bridge STATIC recomp_bridge.cpp)
 target_link_libraries(dotm_recomp_bridge PUBLIC dotm_guest_memory)
@@ -162,7 +171,7 @@ if(DOTM_PRIVATE_PPC_DIR)
             ${DOTM_PRIVATE_PPC_UNITS}
     VERBATIM)
   add_executable(dotm_private_link_probe EXCLUDE_FROM_ALL
-    private_link_probe_main.cpp compiled_ppc_adapter.cpp xam_ppc_import.cpp kernel_ppc_import.cpp
+    private_link_probe_main.cpp compiled_ppc_adapter.cpp xam_ppc_import.cpp kernel_ppc_import.cpp kernel_tls_ppc_import.cpp
     private_ppc_gpr_import.cpp private_ppc_fpr_import.cpp
     "${DOTM_PRIVATE_PPC_DIR}/ppc_func_mapping.cpp"
     ${DOTM_PRIVATE_PPC_UNITS} "${DOTM_PRIVATE_STUBS}")
@@ -182,7 +191,7 @@ if(DOTM_PRIVATE_PPC_DIR)
   target_precompile_headers(dotm_private_link_probe PRIVATE
     "${DOTM_PRIVATE_PPC_DIR}/ppc_recomp_shared.h")
   target_link_libraries(dotm_private_link_probe
-    PRIVATE dotm_recomp_bridge dotm_xam_input dotm_kernel_guest_memory)
+    PRIVATE dotm_recomp_bridge dotm_xam_input dotm_kernel_guest_memory dotm_kernel_tls)
   if(MSVC)
     target_compile_options(dotm_private_link_probe PRIVATE /bigobj)
   endif()
@@ -209,7 +218,7 @@ add_custom_command(
 add_executable(dotm_synthetic_private_link_test
   test_synthetic_private_link.cpp
   compiled_ppc_adapter.cpp
-  xam_ppc_import.cpp kernel_ppc_import.cpp
+  xam_ppc_import.cpp kernel_ppc_import.cpp kernel_tls_ppc_import.cpp
   private_ppc_gpr_import.cpp private_ppc_fpr_import.cpp
   "${DOTM_SYNTHETIC_PPC_DIR}/ppc_func_mapping.cpp"
   "${DOTM_SYNTHETIC_PPC_DIR}/ppc_recomp.0.cpp"
@@ -218,7 +227,7 @@ target_include_directories(dotm_synthetic_private_link_test PRIVATE
   "${DOTM_SYNTHETIC_PPC_DIR}"
   "${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures")
 target_link_libraries(dotm_synthetic_private_link_test
-  PRIVATE dotm_recomp_bridge dotm_xam_input dotm_guest_virtual_allocator dotm_kernel_guest_memory)
+  PRIVATE dotm_recomp_bridge dotm_xam_input dotm_guest_virtual_allocator dotm_kernel_guest_memory dotm_kernel_tls)
 # Run endian-precise Xbox 360 FPR ABI tests without proprietary PPC units.
 add_executable(dotm_ppc_nonvolatile_fpr_test test_ppc_nonvolatile_fpr.cpp)
 add_test(NAME xbox360_original_ppc_fpr_save_restore COMMAND dotm_ppc_nonvolatile_fpr_test)
@@ -231,7 +240,7 @@ add_test(NAME synthetic_full_ppc_link_and_xam_import
 add_executable(dotm_synthetic_private_boot_probe
   private_link_probe_main.cpp
   compiled_ppc_adapter.cpp
-  xam_ppc_import.cpp kernel_ppc_import.cpp
+  xam_ppc_import.cpp kernel_ppc_import.cpp kernel_tls_ppc_import.cpp
   private_ppc_gpr_import.cpp private_ppc_fpr_import.cpp
   "${DOTM_SYNTHETIC_PPC_DIR}/ppc_func_mapping.cpp"
   "${DOTM_SYNTHETIC_PPC_DIR}/ppc_recomp.0.cpp"
@@ -243,7 +252,7 @@ target_include_directories(dotm_synthetic_private_boot_probe PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures")
 target_link_libraries(dotm_synthetic_private_boot_probe PRIVATE
   dotm_recomp_bridge dotm_xam_input dotm_guest_virtual_allocator
-  dotm_kernel_guest_memory)
+  dotm_kernel_guest_memory dotm_kernel_tls)
 add_test(NAME synthetic_private_boot_link_probe
   COMMAND dotm_synthetic_private_boot_probe)
 add_test(NAME synthetic_private_boot_executes_entry
