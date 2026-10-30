@@ -26,6 +26,8 @@ public:
     bool reserve_at(std::uint32_t address, std::uint64_t bytes);
     // Only full-region commits are supported; partial commits fail closed.
     bool commit_reserved(std::uint32_t address, std::uint64_t bytes);
+    // Full-region decommit retains the reservation for a later recommit.
+    bool decommit_reserved(std::uint32_t address, std::uint64_t bytes);
     // Exact-base release revokes host access; failure preserves tracking.
     bool release(std::uint32_t address);
     // Exact-base query used by the NT MEM_RELEASE ABI; interior pointers fail.
