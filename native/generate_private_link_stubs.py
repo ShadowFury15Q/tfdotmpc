@@ -21,9 +21,6 @@ MAPPING = re.compile(r"\{\s*(0x[0-9A-Fa-f]+)\s*,\s*([A-Za-z_]\w*)\s*\}")
 HELPER = re.compile(r"__?(?:save|rest)(?:gprlr|fpr|vmx)_\d+")
 NATIVE = {"__imp__XamInputGetState", "__imp__XamInputGetCapabilities",
           "__imp__NtAllocateVirtualMemory", "__imp__NtFreeVirtualMemory"}
-# Real Xbox 360 GPR/LR ABI implementations live in ppc_nonvolatile_gpr.cpp.
-NATIVE.update(f"__{operation}gprlr_{index}"
-              for operation in ("save", "rest") for index in range(14, 32))
 
 
 # Strip C++ comments and literals before interpreting generated macro calls.
