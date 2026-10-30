@@ -11,6 +11,13 @@ constexpr std::uint32_t kMemReserve = 0x2000U;
 constexpr std::uint32_t kMemDecommit = 0x4000U;
 constexpr std::uint32_t kMemRelease = 0x8000U;
 constexpr std::uint32_t kPageReadWrite = 0x04U;
+// Xbox 360 flags: large 64 KiB pages, heap allocation, and NOZERO.
+constexpr std::uint32_t kXboxLargePages = 0x20000000U;
+constexpr std::uint32_t kXboxHeap = 0x40000000U;
+constexpr std::uint32_t kXboxNoZero = 0x00800000U;
+constexpr std::uint32_t kXboxKnownFlags =
+    kXboxLargePages | kXboxHeap | kXboxNoZero;
+constexpr std::uint64_t kXboxLargePageSize = 0x10000ULL;
 std::mutex binding_mutex;
 GuestMemory* bound_memory = nullptr;
 GuestVirtualAllocator* bound_allocator = nullptr;
@@ -51,8 +58,13 @@ std::uint32_t nt_allocate_virtual_memory_guest(
     std::uint32_t debug_memory) {
     if (!valid_words(memory, base_pointer, size_pointer) || debug_memory)
         return kNtInvalidParameter;
-    // Page-aligned subrange commits are supported. Reset, protection changes,
-    // large pages and devkit memory still fail closed.
+    // DOTM CRT requests HEAP|LARGE_PAGES (0x60000000) and later
+    // LARGE_PAGES|NOZERO (0x20800000). Unknown flags fail closed.
+    const auto extra_flags = allocation_type & ~(kMemCommit | kMemReserve);
+    if (extra_flags & ~kXboxKnownFlags) return kNtNotSupported;
+    const bool large_pages = (extra_flags & kXboxLargePages) != 0;
+    if ((extra_flags & kXboxHeap) && !large_pages) return kNtNotSupported;
+    allocation_type &= ~kXboxKnownFlags;
     if (allocation_type != (kMemCommit | kMemReserve) &&
         allocation_type != kMemReserve && allocation_type != kMemCommit)
         return kNtNotSupported;
@@ -61,7 +73,10 @@ std::uint32_t nt_allocate_virtual_memory_guest(
     const auto requested_base = read_be32(memory, base_pointer);
     const auto requested_size = read_be32(memory, size_pointer);
     if (!requested_size) return kNtInvalidParameter;
-    constexpr std::uint64_t page = GuestVirtualAllocator::kPageSize;
+    const std::uint64_t page = large_pages ? kXboxLargePageSize :
+        GuestVirtualAllocator::kPageSize;
+    if (large_pages && requested_base && (requested_base & (page - 1)))
+        return kNtInvalidParameter;
     const std::uint64_t aligned_base = std::uint64_t(requested_base) & ~(page - 1);
     const std::uint64_t offset = std::uint64_t(requested_base) - aligned_base;
     const std::uint64_t needed = std::uint64_t(requested_size) + offset;
@@ -84,14 +99,14 @@ std::uint32_t nt_allocate_virtual_memory_guest(
                 if (allocator.reserve_at(static_cast<std::uint32_t>(aligned_base), rounded))
                     allocated = static_cast<std::uint32_t>(aligned_base);
             } else {
-                allocated = allocator.reserve(rounded);
+                allocated = allocator.reserve(rounded, page);
             }
         } else if (requested_base) {
             if (allocator.allocate_at(static_cast<std::uint32_t>(aligned_base), rounded))
                 allocated = static_cast<std::uint32_t>(aligned_base);
         } else {
             // Null-base MEM_COMMIT implicitly reserves and commits.
-            allocated = allocator.allocate(rounded);
+            allocated = allocator.allocate(rounded, page);
         }
         if (!allocated) return kNtNoMemory;
         write_be32(memory, base_pointer, *allocated);

@@ -13,6 +13,13 @@ constexpr std::uint32_t kHeaderAddress = 0x81000000U;
 constexpr std::uint32_t kMaximumHeaderSize = 8U * 1024U * 1024U;
 constexpr std::uint32_t kModuleHandleAddress = 0x81900000U;
 constexpr std::uint32_t kModuleAddress = 0x81901000U;
+// XboxHardwareInfo and KeDebugMonitorData are kernel-exported data imports.
+constexpr std::uint32_t kHardwareInfoImport = 0x82000978U;
+constexpr std::uint32_t kHardwareInfoAddress = 0x81902000U;
+constexpr std::uint32_t kDebugMonitorImport = 0x820009A0U;
+constexpr std::uint32_t kDebugMonitorAddress = 0x81903000U;
+constexpr std::uint32_t kRetailHardwareFlags = 0x20U;
+constexpr std::uint8_t kHardwareCpuCount = 6U;
 // The original DOTM sub_827813F8 dereferences [0x82000998] then its handle,
 // then reads +0x58 for the XEX header supplied to RtlImageXexHeaderField.
 constexpr std::uint32_t kOriginalModuleImport = 0x82000998U;
@@ -57,11 +64,21 @@ std::uint32_t install_original_xex_title_header(
     input.seekg(0);
     if (!input.read(reinterpret_cast<char*>(bytes.data()), bytes.size()))
         throw std::runtime_error("Failed to read complete private XEX2 header");
-    if (!memory.committed_range(kOriginalModuleImport, 4))
+    if (!memory.committed_range(kOriginalModuleImport, 4) ||
+        !memory.committed_range(kHardwareInfoImport, 4) ||
+        !memory.committed_range(kDebugMonitorImport, 4))
         throw std::runtime_error("Load original decrypted PE before XEX2 module wiring");
+    const auto hardware_import_tag = be32(memory.address(kHardwareInfoImport));
+    if (hardware_import_tag != 0 && hardware_import_tag != 0x00010156U)
+        throw std::runtime_error("Unexpected XboxHardwareInfo import ordinal");
+    const auto debug_import_tag = be32(memory.address(kDebugMonitorImport));
+    if (debug_import_tag != 0 && debug_import_tag != 0x00010059U)
+        throw std::runtime_error("Unexpected KeDebugMonitorData import ordinal");
     if (memory.any_committed_range(kHeaderAddress, kMaximumHeaderSize) ||
         memory.any_committed_range(kModuleHandleAddress, 4096) ||
-        memory.any_committed_range(kModuleAddress, 4096))
+        memory.any_committed_range(kModuleAddress, 4096) ||
+        memory.any_committed_range(kHardwareInfoAddress, 4096) ||
+        memory.any_committed_range(kDebugMonitorAddress, 4096))
         throw std::runtime_error("XEX2 module boot memory overlaps existing guest state");
     // Validate the executable entry BEFORE touching any guest memory.
     bool matched_entry = false;
@@ -89,6 +106,16 @@ std::uint32_t install_original_xex_title_header(
     memory.copy_to_guest(kHeaderAddress, bytes);
     memory.commit(kModuleHandleAddress, 4096);
     memory.commit(kModuleAddress, 4096);
+    memory.commit(kHardwareInfoAddress, 4096);
+    memory.commit(kDebugMonitorAddress, 4096);
+    // Retail hardware flags and six logical processors; no active debug
+    // monitor callback. These are real guest-visible global data imports.
+    std::memset(memory.address(kHardwareInfoAddress), 0, 4096);
+    put32(memory, kHardwareInfoAddress, kRetailHardwareFlags);
+    memory.address(kHardwareInfoAddress + 4)[0] = kHardwareCpuCount;
+    put32(memory, kHardwareInfoImport, kHardwareInfoAddress);
+    std::memset(memory.address(kDebugMonitorAddress), 0, 4096);
+    put32(memory, kDebugMonitorImport, kDebugMonitorAddress);
     put32(memory, kModuleHandleAddress, kModuleAddress);
     put32(memory, kModuleAddress + 0x58, kHeaderAddress);
     put32(memory, kOriginalModuleImport, kModuleHandleAddress);

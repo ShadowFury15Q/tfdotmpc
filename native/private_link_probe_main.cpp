@@ -120,14 +120,37 @@ void execute_guest_entry(dotm::GuestMemory& memory, std::uint32_t entry) {
     memory.commit(kStackBase, kStackBytes);
     std::memset(memory.address(kStackBase), 0, kStackBytes);
 
-    dotm::GuestVirtualAllocator allocator(memory);
+    // Retail Xbox CRT heap occupies the 64 KiB virtual-page region.
+    dotm::GuestVirtualAllocator allocator(memory, 0x40000000U, 0x70000000U);
     dotm::NativeInput native_input;
     dotm::XamInputHost xam_input;
     xam_input.publish(native_input.next_frame());
     dotm::XamLaunchDataHost launch_data;
     ScopedHostBindings bindings(memory, allocator, xam_input, launch_data);
 
+    // The PPC r13 ABI points to KPCR. KPCR+0x100 is current KTHREAD;
+    // KTHREAD+0x14C holds the main thread ID.
+    constexpr std::uint32_t kPcr = 0x71000000U;
+    constexpr std::uint32_t kKthread = 0x71001000U;
+    constexpr std::uint32_t kTls = 0x71002000U;
+    if (memory.any_committed_range(kPcr, 0x3000))
+        throw std::runtime_error("Main title thread KPCR overlaps guest state");
+    memory.commit(kPcr, 0x3000);
+    const auto write_guest32 = [&](std::uint32_t address, std::uint32_t value) {
+        auto* p = memory.address(address);
+        for (int i=0;i<4;++i) p[i] = std::uint8_t(value >> (24-8*i));
+    };
+    write_guest32(kPcr, kTls);
+    write_guest32(kPcr + 0x30U, kPcr);
+    write_guest32(kPcr + 0x70U, kStackBase + kStackBytes);
+    write_guest32(kPcr + 0x74U, kStackBase);
+    write_guest32(kPcr + 0x100U, kKthread);
+    write_guest32(kKthread + 0x5CU, kStackBase + kStackBytes);
+    write_guest32(kKthread + 0x60U, kStackBase);
+    write_guest32(kKthread + 0x68U, kTls);
+    write_guest32(kKthread + 0x14CU, 1U);
     PPCContext context{};
+    context.r13.u64 = kPcr;
     context.r1.u64 = kInitialStackPointer;
     std::printf("Executing original PPC entry 0x%08X, guest SP 0x%08X\n",
                 entry, kInitialStackPointer);

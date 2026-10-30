@@ -6,6 +6,7 @@
 
 PPC_EXTERN_FUNC(__imp__NtAllocateVirtualMemory);
 PPC_EXTERN_FUNC(__imp__NtFreeVirtualMemory);
+PPC_EXTERN_FUNC(__imp__KeGetCurrentProcessType);
 
 namespace {
 void check(bool ok, const char* message) {
@@ -31,6 +32,9 @@ int main() {
         memory.commit(ptr, 4096);
         dotm::bind_kernel_guest_memory(&memory, &heap);
         PPCContext ctx{};
+        ctx.r3.u64 = 0xFFFFFFFFU;
+        __imp__KeGetCurrentProcessType(ctx, memory.base());
+        check(ctx.r3.u64 == 1U, "Retail user process type ABI");
         auto allocate = [&](std::uint32_t base, std::uint32_t size,
                             std::uint32_t type = 0x3000U,
                             std::uint32_t protect = 4U,
@@ -198,6 +202,56 @@ int main() {
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
         check(dotm::nt_bound_allocate_virtual_memory(ptr, size_ptr, 0x3000, 4, 0)
               == dotm::kNtNotSupported, "Unbound kernel does not claim success");
+        // Real Xbox 360 retail heap: 64 KiB reserve and partial commit.
+        dotm::GuestMemory large_memory;
+        dotm::GuestVirtualAllocator large_heap(
+            large_memory, 0x50000000U, 0x51000000U);
+        large_memory.commit(ptr, 4096);
+        dotm::bind_kernel_guest_memory(&large_memory, &large_heap);
+        auto call_large = [&](std::uint32_t base, std::uint32_t size,
+                              std::uint32_t type) {
+            write32(large_memory, ptr, base);
+            write32(large_memory, size_ptr, size);
+            ctx.r3.u64 = ptr;
+            ctx.r4.u64 = size_ptr;
+            ctx.r5.u64 = type;
+            ctx.r6.u64 = 4;
+            ctx.r7.u64 = 0;
+            __imp__NtAllocateVirtualMemory(ctx, large_memory.base());
+            return static_cast<std::uint32_t>(ctx.r3.u64);
+        };
+        check(call_large(0, 0x100000U, 0x60002000U) == dotm::kNtSuccess &&
+              read32(large_memory, ptr) == 0x50000000U &&
+              read32(large_memory, size_ptr) == 0x100000U &&
+              !large_memory.committed_range(0x50000000U, 1),
+              "Xbox 64 KiB page reserve must allocate real guest VA");
+        check(call_large(0x50000000U, 0x10000U, 0x60001000U) == dotm::kNtSuccess &&
+              large_memory.committed_range(0x50000000U, 0x10000U) &&
+              !large_memory.committed_range(0x50010000U, 1),
+              "Xbox 64 KiB partial commit preserves reservation");
+        check(call_large(0, 0x1800U, 0x20801000U) == dotm::kNtSuccess &&
+              read32(large_memory, ptr) == 0x50100000U &&
+              read32(large_memory, size_ptr) == 0x10000U &&
+              large_memory.committed_range(0x50100000U, 0x10000U),
+              "Xbox LARGE_PAGES|NOZERO commits guest pages");
+        check(call_large(0x50001000U, 0x10000U, 0x60001000U) ==
+                  dotm::kNtInvalidParameter &&
+              read32(large_memory, ptr) == 0x50001000U,
+              "Misaligned Xbox 64 KiB commit rejected without mutation");
+        check(call_large(0, 0x10000U, 0x40002000U) == dotm::kNtNotSupported &&
+              read32(large_memory, ptr) == 0,
+              "Unknown page-class combination fails closed");
+        write32(large_memory, ptr, 0x50100000U);
+        write32(large_memory, size_ptr, 0);
+        ctx.r3.u64 = ptr;
+        ctx.r4.u64 = size_ptr;
+        ctx.r5.u64 = 0x8000U;
+        ctx.r6.u64 = 0;
+        __imp__NtFreeVirtualMemory(ctx, large_memory.base());
+        check(ctx.r3.u64 == dotm::kNtSuccess &&
+              !large_memory.committed_range(0x50100000U, 1),
+              "Xbox NOZERO allocation can be released");
+        dotm::bind_kernel_guest_memory(nullptr, nullptr);
         std::cout << "DOTM synthetic Xbox 360 NT memory PPC ABI PASS\n";
         return 0;
     } catch (const std::exception& e) {

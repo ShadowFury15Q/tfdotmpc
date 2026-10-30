@@ -64,6 +64,9 @@ int main() {
     catch (const std::runtime_error&) { bad_title = true; }
     check(bad_title && !memory.committed_range(0x81000000U, 24));
     check(get32(memory, 0x82000998U) == 0);
+    check(get32(memory, 0x82000978U) == 0);
+    check(!memory.committed_range(0x81902000U, 4096));
+    check(!memory.committed_range(0x81903000U, 4096));
     put32(header, 256 + 12, 0x415608A4U);
     put32(header, 36, 500);
     {
@@ -84,6 +87,13 @@ int main() {
     check(dotm::install_original_xex_title_header(memory, file.path, entry)
           == 0x81000000U);
     check(get32(memory, 0x82000998U) == 0x81900000U);
+    check(get32(memory, 0x82000978U) == 0x81902000U);
+    check(get32(memory, 0x81902000U) == 0x20U);
+    check(memory.address(0x81902004U)[0] == 6U);
+    check(memory.address(0x81902005U)[0] == 0U);
+    check(get32(memory, 0x820009A0U) == 0x81903000U);
+    check(get32(memory, 0x81903000U) == 0U);
+    check(get32(memory, 0x81903018U) == 0U);
     check(get32(memory, 0x81900000U) == 0x81901000U);
     check(get32(memory, 0x81901000U + 0x58) == 0x81000000U);
     check(dotm::xex_optional_header_field(memory, 0x81000000U, 0x00010100U) == entry);

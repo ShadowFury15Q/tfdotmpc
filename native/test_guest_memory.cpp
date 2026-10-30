@@ -1,5 +1,6 @@
 #include "guest_memory.hpp"
 #include <array>
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <filesystem>
@@ -150,6 +151,29 @@ int main(int argc,char** argv){
   check(m.address(0x82002000)[0]==0,"Repeated PE load clears unmapped image pages");
   check(m.find_function(0x82500004)==target,
         "Repeated PE load must preserve native PPC dispatch mappings");
+  // Expanded XenonRecomp memory images store section data at guest RVAs.
+  // A truncated .reloc discriminates the format from an on-disk PE.
+  auto expanded=std::vector<std::uint8_t>(dotm::GuestMemory::kImageSize,0);
+  std::copy(pe.begin(),pe.end(),expanded.begin());
+  put16(expanded,0x86,2);
+  put32(expanded,0x98+56,dotm::GuestMemory::kImageSize+0x1000U);
+  std::memcpy(expanded.data()+0x1a0,".reloc",6);
+  put32(expanded,0x1a0+8,0x300000);
+  put32(expanded,0x1a0+12,0x01aa0200U);
+  put32(expanded,0x1a0+16,0x300000);
+  put32(expanded,0x1a0+20,0x018ca600U);
+  expanded[0x1000]=0xbc;
+  expanded[0x200]=0xad;
+  save(expanded);m.load_pe(file);
+  check(m.address(0x82001000)[0]==0xbc,
+        "Expanded PPC image must copy RVA bytes, not stale raw offsets");
+  check(m.address(0x82001001)[0]==0,
+        "Expanded image BSS remains zero-filled");
+  check(m.find_function(0x82500000)==target,
+        "Expanded PE must preserve native dispatch table");
+  save(pe);m.load_pe(file);
+  check(m.address(0x82001000)[0]==0xab,
+        "Disk PE raw-offset mapping remains intact after expanded image");
   auto reject=[&](std::vector<std::uint8_t> invalid,const char* reason){
    save(invalid);
    bool failed=false;

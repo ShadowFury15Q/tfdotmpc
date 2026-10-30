@@ -129,6 +129,7 @@ void GuestMemory::load_pe(const std::filesystem::path& path){
  struct Section {std::uint32_t rva,raw,file_off;std::uint64_t length;};
  std::vector<Section> checked;
  checked.reserve(count);
+ bool truncated_reloc=false,shifted_raw_sections=false;
  // Validate every section before changing guest memory: malformed private
  // images must never partially overwrite guest code or the native call table.
  for(std::size_t i=0;i<count;++i){
@@ -143,7 +144,11 @@ void GuestMemory::load_pe(const std::filesystem::path& path){
   // This is valid for our fixed-base guest: relocations are not loaded at all.
   // Skip them BEFORE checking file offsets or image bounds; all other
   // sections still receive strict raw/virtual range and overlap validation.
-  if(name==".reloc")continue;
+  if(name==".reloc"){
+   truncated_reloc=raw&&(file_off>v.size()||raw>v.size()-file_off);
+   continue;
+  }
+  if(raw&&file_off!=rva)shifted_raw_sections=true;
   if(raw&&(file_off>v.size()||raw>v.size()-file_off))
    throw std::runtime_error("Invalid PE section raw size");
   if(rva>=kImageSize||len>kImageSize-rva)
@@ -155,6 +160,11 @@ void GuestMemory::load_pe(const std::filesystem::path& path){
     throw std::runtime_error("Overlapping PE virtual sections");
   checked.push_back({rva,raw,file_off,len});
  }
+ // XenonRecomp original_title.pe is a truncated expanded memory image:
+ // bytes are stored at guest RVAs, while section raw offsets remain stale.
+ // Its exact recomp span and truncated .reloc distinguish this from disk PE.
+ const bool expanded_image=v.size()==kImageSize&&truncated_reloc&&
+    shifted_raw_sections&&u32(b,opt+56)>=kImageSize;
  // A PE load replaces the entire fixed-base image, not just its sections.
  // Section gaps, skipped .reloc bytes and the tail of shorter headers must
  // never inherit data from a previous load. The native dispatch table starts
@@ -164,7 +174,7 @@ void GuestMemory::load_pe(const std::filesystem::path& path){
  std::memcpy(address(kImageBase),v.data(),header);
  for(const auto& section:checked){
   if(section.raw)std::memcpy(address(kImageBase+section.rva),
-                             v.data()+section.file_off,section.raw);
+      v.data()+(expanded_image?section.rva:section.file_off),section.raw);
  }
  pe_entry_=kImageBase+entry_rva;
  pe_loaded_=true;

@@ -19,3 +19,8 @@ PPC_FUNC(__imp__NtFreeVirtualMemory) {
         static_cast<std::uint32_t>(ctx.r5.u64),
         static_cast<std::uint32_t>(ctx.r6.u64));
 }
+
+// The original title runs in Xbox 360 user process type 1.
+PPC_FUNC(__imp__KeGetCurrentProcessType) {
+    ctx.r3.u64 = 1U;
+}

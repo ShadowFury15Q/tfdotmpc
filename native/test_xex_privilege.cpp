@@ -4,6 +4,7 @@
 #include "xex_privilege.hpp"
 #include <cstdint>
 #include <stdexcept>
+PPC_EXTERN_FUNC(__imp__XGetAVPack);
 namespace {
 void check(bool ok) {
     if (!ok) throw std::runtime_error("Original Xbox XEX privilege PPC ABI failure");
@@ -27,6 +28,9 @@ int main() {
     put_be32(memory, header + 28, 0x00000600U);
     dotm::bind_xex_optional_header(&memory);
     PPCContext c{};
+    c.r3.u64 = 0xFFFFFFFFU;
+    __imp__XGetAVPack(c, memory.base());
+    check(c.r3.u64 == 8U);
     c.r3.u64 = 9;
     __imp__XexCheckExecutablePrivilege(c, memory.base());
     check(c.r3.u64 == 1);
