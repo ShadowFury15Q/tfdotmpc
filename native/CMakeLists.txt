@@ -35,7 +35,7 @@ add_test(NAME xbox360_kernel_tls_ppc_abi COMMAND dotm_kernel_tls_ppc_test)
 add_library(dotm_kernel_critical_sections STATIC kernel_critical_sections.cpp)
 target_link_libraries(dotm_kernel_critical_sections PUBLIC dotm_guest_memory Threads::Threads)
 add_executable(dotm_kernel_critical_sections_ppc_test
-  test_kernel_critical_sections.cpp kernel_critical_sections_ppc.cpp xex_optional_header_ppc.cpp)
+  test_kernel_critical_sections.cpp kernel_critical_sections_ppc.cpp)
 target_include_directories(dotm_kernel_critical_sections_ppc_test PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures/private_link
   ${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures)
