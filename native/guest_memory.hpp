@@ -27,10 +27,14 @@ public:
  bool any_committed_range(std::uint64_t addr,std::size_t length) const noexcept;
  void copy_to_guest(std::uint32_t addr,std::span<const std::uint8_t> bytes);
  void load_pe(const std::filesystem::path& path);
+ // PE AddressOfEntryPoint from the last successfully loaded guest image.
+ // Never infer it from a hardcoded DOTM symbol without checking the PE.
+ std::uint32_t loaded_pe_entry() const;
  void initialize_function_table(NativeFunction fallback);
  void install_functions(std::span<const FunctionEntry> entries);
  NativeFunction find_function(std::uint32_t addr) const;
 private:std::uint8_t* base_=nullptr;bool table_initialized_=false;
+ std::uint32_t pe_entry_=0;bool pe_loaded_=false;
  std::array<std::uint64_t,16384> committed_pages_{};
 };
 }
