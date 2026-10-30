@@ -16,14 +16,14 @@ std::uint32_t tiled_offset(std::uint32_t x,std::uint32_t y,
     return (((off&~511u)<<3)+((y&16u)<<7)+((off&448u)<<2)+
             (((((y&8u)>>2)+(x>>3))&3u)<<6)+(off&63u))>>log_bpb;
 }
-// Validate all referenced Xbox tiled blocks before allocating the DDS output.
-// Small mips can use a sparse subset of a 128x128 GPU tile, so requiring the
-// entire tile would reject valid data; check actual block addresses instead.
 void little32(std::vector<std::uint8_t>&v,std::size_t at,std::uint32_t value){
     if(at>v.size()||v.size()-at<4)throw std::logic_error("DDS output header bounds");
     for(int b=0;b<4;++b)v[at+b]=std::uint8_t(value>>(8*b));
 }
 }
+// Validate all referenced Xbox tiled blocks before allocating the DDS output.
+// Small mips can use a sparse subset of a 128x128 GPU tile, so requiring the
+// entire tile would reject valid data; check actual block addresses instead.
 std::size_t required_xbox_tiled_bc_payload_bytes(
     std::uint32_t width, std::uint32_t height, bool bc3) {
     if(!width||!height||width>16384||height>16384)
