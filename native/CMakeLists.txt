@@ -28,6 +28,9 @@ target_link_libraries(dotm_recomp_bridge PUBLIC dotm_guest_memory)
 add_executable(dotm_recomp_bridge_test test_recomp_bridge.cpp)
 target_link_libraries(dotm_recomp_bridge_test PRIVATE dotm_recomp_bridge)
 add_test(NAME recompiled_ppc_dispatch_and_guest_store COMMAND dotm_recomp_bridge_test)
+# Real Xbox 360 nonvolatile register/LR ABI, exercised without proprietary PPC.
+add_executable(dotm_nonvolatile_gpr_test test_ppc_nonvolatile_gpr.cpp)
+add_test(NAME xbox360_nonvolatile_gprlr_abi COMMAND dotm_nonvolatile_gpr_test)
 add_executable(dotm_compiled_adapter_test
   test_compiled_ppc_adapter.cpp compiled_ppc_adapter.cpp)
 target_include_directories(dotm_compiled_adapter_test
@@ -160,6 +163,7 @@ if(DOTM_PRIVATE_PPC_DIR)
     VERBATIM)
   add_executable(dotm_private_link_probe EXCLUDE_FROM_ALL
     private_link_probe_main.cpp compiled_ppc_adapter.cpp xam_ppc_import.cpp kernel_ppc_import.cpp
+    private_ppc_gpr_import.cpp
     "${DOTM_PRIVATE_PPC_DIR}/ppc_func_mapping.cpp"
     ${DOTM_PRIVATE_PPC_UNITS} "${DOTM_PRIVATE_STUBS}")
   target_include_directories(dotm_private_link_probe
