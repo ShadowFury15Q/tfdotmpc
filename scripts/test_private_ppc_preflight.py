@@ -6,7 +6,8 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
-from private_ppc_preflight import (EXPECTED_UNITS, inspect_units, pe_entry, run)
+import zipfile
+from private_ppc_preflight import (EXPECTED_UNITS, inspect_archive, inspect_units, pe_entry, run)
 
 
 class PrivatePreflightTests(unittest.TestCase):
@@ -48,6 +49,50 @@ class PrivatePreflightTests(unittest.TestCase):
             path.write_bytes(data)
             self.assertIsNone(pe_entry(path))
 
+
+    def test_original_ppc_zip_layout_without_extraction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ppc.zip"
+            with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("ppc/ppc_config.h", "#define PPC_IMAGE_BASE 0x82000000")
+                archive.writestr("ppc/ppc_context.h", "struct PPCContext {};")
+                archive.writestr("ppc/ppc_recomp_shared.h", "PPC_EXTERN_FUNC(_xstart);")
+                archive.writestr("ppc/ppc_func_mapping.cpp",
+                                 "PPCFuncMapping m[] = {{ 0x8277F670, _xstart }};")
+                for index in range(EXPECTED_UNITS):
+                    archive.writestr(f"ppc/ppc_recomp.{index}.cpp", "")
+            self.assertEqual(inspect_archive(path), (EXPECTED_UNITS, [], [], []))
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(run(path), 1)
+            self.assertIn("READY: 697 contiguous units", output.getvalue())
+            self.assertIn("no decrypted Xbox PPC PE", output.getvalue())
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(run(Path(tmp)), 1)
+            self.assertIn("PPC archive:", output.getvalue())
+
+    def test_zip_missing_unit_and_invalid_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ppc.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("ppc/ppc_config.h", "")
+                archive.writestr("ppc/ppc_context.h", "")
+                archive.writestr("ppc/ppc_recomp_shared.h", "PPC_EXTERN_FUNC(_xstart);")
+                archive.writestr("ppc/ppc_func_mapping.cpp", "not a mapping")
+                for index in range(EXPECTED_UNITS):
+                    if index != 400:
+                        archive.writestr(f"ppc/ppc_recomp.{index}.cpp", "")
+            count, missing, extra, headers = inspect_archive(path)
+            self.assertEqual(count, EXPECTED_UNITS - 1)
+            self.assertEqual(missing, [400])
+            self.assertFalse(extra)
+            self.assertIn("ppc_func_mapping.cpp (_xstart entry)", headers)
+
+    def test_zip_duplicate_or_traversal_member_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ppc.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("../ppc/ppc_recomp.0.cpp", "")
+            self.assertIsNone(inspect_archive(path))
 
 if __name__ == "__main__":
     unittest.main()
