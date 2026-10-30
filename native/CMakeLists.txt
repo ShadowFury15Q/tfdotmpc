@@ -177,6 +177,10 @@ if(DOTM_PRIVATE_PPC_DIR)
     target_compile_options(dotm_private_link_probe PRIVATE
       -include "${CMAKE_CURRENT_SOURCE_DIR}/private_ppc_simde_compat.h")
   endif()
+  # The original shared header declares ~178K functions. Reparse it once per
+  # private build instead of 697 times; no proprietary data enters public CI.
+  target_precompile_headers(dotm_private_link_probe PRIVATE
+    "${DOTM_PRIVATE_PPC_DIR}/ppc_recomp_shared.h")
   target_link_libraries(dotm_private_link_probe
     PRIVATE dotm_recomp_bridge dotm_xam_input dotm_kernel_guest_memory)
   if(MSVC)
