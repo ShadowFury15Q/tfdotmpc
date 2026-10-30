@@ -104,10 +104,16 @@ int main() {
         check(memory.committed_range(reserved, 8192) &&
               heap.allocated_bytes() == 16384,
               "Both partial commits account for the full reservation");
-        check(allocate(reserved, 4096, 0x1000) == dotm::kNtNotSupported,
-              "Duplicate MEM_COMMIT does not double-count committed pages");
+        check(allocate(reserved, 4096, 0x1000) == dotm::kNtSuccess &&
+              heap.allocated_bytes() == 16384,
+              "Duplicate MEM_COMMIT succeeds without double-counting committed pages");
         memory.address(reserved)[0] = 0xAB;
         memory.address(reserved + 4096)[0] = 0xCD;
+        check(allocate(reserved, 8192, 0x1000) == dotm::kNtSuccess &&
+              heap.allocated_bytes() == 16384 &&
+              memory.address(reserved)[0] == 0xAB &&
+              memory.address(reserved + 4096)[0] == 0xCD,
+              "Repeated multi-page MEM_COMMIT preserves guest data");
         check(release(reserved, 4096, 0x4000U) == dotm::kNtSuccess,
               "Partial MEM_DECOMMIT revokes first guest page");
         check(!memory.committed_range(reserved, 4096) &&

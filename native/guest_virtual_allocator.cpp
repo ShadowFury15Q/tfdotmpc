@@ -155,19 +155,50 @@ bool GuestVirtualAllocator::reserved_range(
 }
 bool GuestVirtualAllocator::commit_reserved(std::uint32_t address, std::uint64_t bytes) {
     const auto length = rounded_size(bytes);
-    if (!reserved_range(address, length) ||
-        memory_.any_committed_range(address, static_cast<std::size_t>(length)))
-        return false;
+    if (!reserved_range(address, length)) return false;
     auto it = std::prev(blocks_.upper_bound(address));
     const auto first = (std::uint64_t(address) - it->first) / kPageSize;
     const auto count = length / kPageSize;
-    for (std::uint64_t page = first; page < first + count; ++page)
-        if (it->second.pages[page]) return false;
-    memory_.commit(address, static_cast<std::size_t>(length));
-    std::memset(memory_.address(address), 0, static_cast<std::size_t>(length));
-    std::fill(it->second.pages.begin() + first,
-              it->second.pages.begin() + first + count, 1);
-    allocated_bytes_ += length;
+    // NT MEM_COMMIT is idempotent. Previously committed guest pages must
+    // retain their bytes, while newly committed pages must start at zero.
+    // Reject host pages not owned by this reservation before mutating any.
+    for (std::uint64_t page = first; page < first + count; ++page) {
+        const auto guest = std::uint64_t(it->first) + page * kPageSize;
+        const bool host_committed = memory_.committed_range(guest, kPageSize);
+        if (host_committed != static_cast<bool>(it->second.pages[page]))
+            return false;
+    }
+    struct Run { std::uint64_t first_page, count; };
+    std::vector<Run> missing;
+    for (std::uint64_t page = first; page < first + count;) {
+        if (it->second.pages[page]) { ++page; continue; }
+        const auto begin = page;
+        do { ++page; } while (page < first + count && !it->second.pages[page]);
+        missing.push_back({begin, page - begin});
+    }
+    std::size_t completed = 0;
+    try {
+        for (const auto& run : missing) {
+            const auto guest = std::uint64_t(it->first) + run.first_page * kPageSize;
+            const auto run_bytes = static_cast<std::size_t>(run.count * kPageSize);
+            memory_.commit(guest, run_bytes);
+            ++completed;
+            std::memset(memory_.address(static_cast<std::uint32_t>(guest)), 0, run_bytes);
+        }
+    } catch (...) {
+        // Preserve reservation accounting if a later host commit fails.
+        for (std::size_t i = completed; i > 0; --i) {
+            const auto& run = missing[i - 1];
+            memory_.decommit(std::uint64_t(it->first) + run.first_page * kPageSize,
+                             static_cast<std::size_t>(run.count * kPageSize));
+        }
+        throw;
+    }
+    for (const auto& run : missing)
+        std::fill(it->second.pages.begin() + run.first_page,
+                  it->second.pages.begin() + run.first_page + run.count, 1);
+    for (const auto& run : missing)
+        allocated_bytes_ += run.count * kPageSize;
     return true;
 }
 bool GuestVirtualAllocator::decommit_reserved(std::uint32_t address, std::uint64_t bytes) {

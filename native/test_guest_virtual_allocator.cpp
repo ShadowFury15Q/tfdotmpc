@@ -141,12 +141,22 @@ int main() {
         require(partial_heap.allocated_bytes() == 8192 &&
                 partial_heap.allocation_count() == 1,
                 "Only committed pages count toward backing memory");
-        require(!partial_heap.commit_reserved(partial_first, 4096),
-                "Duplicate page commit is rejected");
+        require(partial_heap.commit_reserved(partial_first, 4096) &&
+                partial_heap.allocated_bytes() == 8192,
+                "Repeated MEM_COMMIT succeeds without double-counting");
         require(!partial_heap.decommit_reserved(partial_first + 4096, 4096),
                 "Decommit of a reserved-only page is rejected");
         partial.address(partial_first)[0] = 0xA7;
         partial.address(partial_first + 2 * 4096)[0] = 0xB8;
+        require(partial_heap.commit_reserved(partial_first, 3 * 4096) &&
+                partial_heap.allocated_bytes() == 3 * 4096,
+                "Mixed MEM_COMMIT commits only missing pages");
+        require(partial.address(partial_first)[0] == 0xA7 &&
+                partial.address(partial_first + 4096)[0] == 0 &&
+                partial.address(partial_first + 2 * 4096)[0] == 0xB8,
+                "Mixed MEM_COMMIT preserves old bytes and zero-fills holes");
+        require(partial_heap.decommit_reserved(partial_first + 4096, 4096),
+                "Newly committed interior page can be decommitted");
         require(partial_heap.decommit_reserved(partial_first, 4096),
                 "Decommit one page without releasing the reservation");
         require(partial.committed_range(partial_first + 2 * 4096, 1) &&
