@@ -37,7 +37,7 @@ int main() {
     put32(header, 28, entry);
     put32(header, 32, 0x00040006U);
     put32(header, 36, 256);
-    put32(header, 256 + 12, 0x41560890U);
+    put32(header, 256 + 12, 0x415608A4U);
     TempFile file{
         std::filesystem::temp_directory_path() /
         ("dotm_xex_title_boot_" +
@@ -53,6 +53,34 @@ int main() {
     try { dotm::install_original_xex_title_header(memory, file.path, entry + 4); }
     catch (const std::runtime_error&) { bad_entry = true; }
     check(bad_entry && !memory.committed_range(0x81000000U, 24));
+    put32(header, 256 + 12, 0x41560890U);
+    {
+        std::ofstream out(file.path, std::ios::binary | std::ios::trunc);
+        check(static_cast<bool>(out.write(
+            reinterpret_cast<const char*>(header.data()), header.size())));
+    }
+    bool bad_title = false;
+    try { dotm::install_original_xex_title_header(memory, file.path, entry); }
+    catch (const std::runtime_error&) { bad_title = true; }
+    check(bad_title && !memory.committed_range(0x81000000U, 24));
+    check(get32(memory, 0x82000998U) == 0);
+    put32(header, 256 + 12, 0x415608A4U);
+    put32(header, 36, 500);
+    {
+        std::ofstream out(file.path, std::ios::binary | std::ios::trunc);
+        check(static_cast<bool>(out.write(
+            reinterpret_cast<const char*>(header.data()), header.size())));
+    }
+    bool bad_offset = false;
+    try { dotm::install_original_xex_title_header(memory, file.path, entry); }
+    catch (const std::runtime_error&) { bad_offset = true; }
+    check(bad_offset && !memory.committed_range(0x81000000U, 24));
+    put32(header, 36, 256);
+    {
+        std::ofstream out(file.path, std::ios::binary | std::ios::trunc);
+        check(static_cast<bool>(out.write(
+            reinterpret_cast<const char*>(header.data()), header.size())));
+    }
     check(dotm::install_original_xex_title_header(memory, file.path, entry)
           == 0x81000000U);
     check(get32(memory, 0x82000998U) == 0x81900000U);
