@@ -25,11 +25,11 @@ X_FORMS = {
 }
 OPCODES = D_FORMS | X_FORMS
 MISSING = re.compile(
-    r"(?m)^(?P<indent>[ \\t]*)// (?P<op>" + "|".join(OPCODES) +
-    r") (?P<args>[^\\r\\n]+)\\r?\\n(?=[ \\t]*(?:// |loc_|\\}))"
+    r"(?m)^(?P<indent>[ \t]*)// (?P<op>" + "|".join(OPCODES) +
+    r") (?P<args>[^\r\n]+)\r?\n(?=[ \t]*(?:// |loc_|\}))"
 )
-D_ARGS = re.compile(r"([rf])(\\d+),(-?\\d+)\\(r(\\d+)\\)")
-X_ARGS = re.compile(r"([rf])(\\d+),r(\\d+),r(\\d+)")
+D_ARGS = re.compile(r"([rf])(\d+),(-?\d+)\(r(\d+)\)")
+X_ARGS = re.compile(r"([rf])(\d+),r(\d+),r(\d+)")
 
 def repair(text: str, counts: Counter) -> str:
     def replace(match: re.Match) -> str:
@@ -105,7 +105,7 @@ def repair(text: str, counts: Counter) -> str:
             f"{indent}}}",
         ])
         counts[op] += 1
-        return "\\n".join(lines) + "\\n"
+        return "\n".join(lines) + "\n"
     fixed = MISSING.sub(replace, text)
     if MISSING.search(fixed):
         raise ValueError("PPC update-form instruction remains untranslated")
