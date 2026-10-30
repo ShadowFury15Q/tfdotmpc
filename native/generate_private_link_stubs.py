@@ -36,7 +36,7 @@ NATIVE = {"__imp__XGetAVPack", "__imp__KeGetCurrentProcessType",
           "__imp__NtAllocateVirtualMemory", "__imp__NtFreeVirtualMemory",
           "__imp__NtQueryVirtualMemory",
           "__imp__XexLoadImage", "__imp__XexGetModuleHandle",
-          "__imp__XexGetProcedureAddress", "__imp__XexUnloadImage"} | {
+          "__imp__XexGetProcedureAddress", "__imp__XexUnloadImage", "__imp__RtlNtStatusToDosError"} | {
               f"__{action}gprlr_{reg}"
               for action in ("save", "rest") for reg in range(14, 32)
           } | {

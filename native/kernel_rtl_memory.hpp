@@ -7,6 +7,7 @@ void bind_kernel_rtl_memory(GuestMemory* memory) noexcept;
 void rtl_bound_fill_memory_ulong(std::uint32_t destination,
                                  std::uint32_t length,
                                  std::uint32_t pattern);
+std::uint32_t rtl_ntstatus_to_dos_error(std::uint32_t status) noexcept;
 std::uint32_t rtl_bound_compare_memory_ulong(std::uint32_t source,
                                               std::uint32_t length,
                                               std::uint32_t pattern);

@@ -3,10 +3,12 @@
 #include "kernel_rtl_memory.hpp"
 #include <cstdint>
 #include <iostream>
+#include <utility>
 #include <stdexcept>
 
 PPC_EXTERN_FUNC(__imp__RtlFillMemoryUlong);
 PPC_EXTERN_FUNC(__imp__RtlCompareMemoryUlong);
+PPC_EXTERN_FUNC(__imp__RtlNtStatusToDosError);
 
 namespace {
 void check(bool condition, const char* message) {
@@ -48,6 +50,15 @@ int main() {
         __imp__RtlCompareMemoryUlong(ctx, memory.base());
         check(ctx.r3.u32 == 0, "Non-DWORD length returns zero");
 
+        for (const auto [status, expected] : {
+                std::pair<std::uint32_t, std::uint32_t>{0U, 0U},
+                {0xC000000DU, 87U}, {0xC000000FU, 2U},
+                {0xC0000262U, 182U}, {0xC0000263U, 127U},
+                {0xC00000BBU, 50U}, {0xDEADBEEFU, 317U}}) {
+            ctx.r3.u64 = status;
+            __imp__RtlNtStatusToDosError(ctx, memory.base());
+            check(ctx.r3.u32 == expected, "NTSTATUS to DOS mapping PPC ABI");
+        }
         bool rejected = false;
         try { dotm::rtl_bound_fill_memory_ulong(0x50000000U, 4, 1); }
         catch (const std::runtime_error&) { rejected = true; }

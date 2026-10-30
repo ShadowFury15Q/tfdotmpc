@@ -12,3 +12,7 @@ PPC_FUNC(__imp__RtlCompareMemoryUlong) {
     ctx.r3.u64 = dotm::rtl_bound_compare_memory_ulong(
         ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
 }
+
+PPC_FUNC(__imp__RtlNtStatusToDosError) {
+    ctx.r3.u64 = dotm::rtl_ntstatus_to_dos_error(ctx.r3.u32);
+}
