@@ -4,6 +4,7 @@
 #include "kernel_guest_memory.hpp"
 #include "kernel_critical_sections.hpp"
 #include "kernel_mutant.hpp"
+#include "kernel_file_cache.hpp"
 #include "kernel_rtl_memory.hpp"
 #include "xex_optional_header.hpp"
 #include "xex_title_boot.hpp"
@@ -49,6 +50,7 @@ struct ScopedHostBindings {
         dotm::bind_kernel_guest_memory(&memory, &allocator);
         dotm::bind_kernel_critical_sections(&memory);
         dotm::bind_kernel_mutants(&memory);
+        dotm::bind_kernel_file_cache(&file_cache_);
         dotm::bind_kernel_rtl_memory(&memory);
         dotm::bind_xex_optional_header(&memory);
         dotm::bind_xex_system_modules(&memory);
@@ -61,10 +63,12 @@ struct ScopedHostBindings {
         dotm::bind_xex_system_modules(nullptr);
         dotm::bind_xex_optional_header(nullptr);
         dotm::bind_kernel_rtl_memory(nullptr);
+        dotm::bind_kernel_file_cache(nullptr);
         dotm::bind_kernel_mutants(nullptr);
         dotm::bind_kernel_critical_sections(nullptr);
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
     }
+    dotm::KernelFileCache file_cache_;
     ScopedHostBindings(const ScopedHostBindings&) = delete;
     ScopedHostBindings& operator=(const ScopedHostBindings&) = delete;
 };
