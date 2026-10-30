@@ -2,6 +2,9 @@
 #include "guest_memory.hpp"
 #include "xex_optional_header.hpp"
 #include <array>
+#include <atomic>
+#include <mutex>
+#include <string>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -13,6 +16,15 @@ constexpr std::uint32_t kHeaderAddress = 0x81000000U;
 constexpr std::uint32_t kMaximumHeaderSize = 8U * 1024U * 1024U;
 constexpr std::uint32_t kModuleHandleAddress = 0x81900000U;
 constexpr std::uint32_t kModuleAddress = 0x81901000U;
+constexpr std::uint32_t kXamModuleAddress = 0x81905000U;
+constexpr std::uint32_t kXamModuleNameAddress = 0x81906000U;
+constexpr std::uint32_t kNtNoSuchFile = 0xC000000FU;
+constexpr std::uint32_t kNtInvalidHandle = 0xC0000008U;
+constexpr std::uint32_t kNtInvalidParameter = 0xC000000DU;
+constexpr std::uint32_t kNtNotSupported = 0xC00000BBU;
+constexpr std::uint32_t kNtDriverEntryNotFound = 0xC0000263U;
+std::atomic<GuestMemory*> bound_system_memory{nullptr};
+std::mutex module_mutex;
 // XboxHardwareInfo and KeDebugMonitorData are kernel-exported data imports.
 constexpr std::uint32_t kTimeStampBundleImport = 0x8200085CU;
 constexpr std::uint32_t kTimeStampBundleAddress = 0x81904000U;
@@ -28,6 +40,36 @@ constexpr std::uint32_t kOriginalModuleImport = 0x82000998U;
 constexpr std::uint32_t kXexEntryKey = 0x00010100U;
 constexpr std::uint32_t kExecutionIdKey = 0x00040006U;
 constexpr std::uint32_t kDotmTitleId = 0x415608A4U;
+std::uint16_t be16(const std::uint8_t* ptr) {
+    return (std::uint16_t(ptr[0]) << 8) | ptr[1];
+}
+void put16(GuestMemory& memory, std::uint32_t address, std::uint16_t value) {
+    auto* ptr = memory.address(address);
+    ptr[0] = std::uint8_t(value >> 8);
+    ptr[1] = std::uint8_t(value);
+}
+bool valid_output(const GuestMemory& memory, std::uint32_t address) {
+    const auto begin = std::uint64_t(address);
+    const auto end = begin + 4;
+    const auto table = GuestMemory::kFunctionTableOffset;
+    return begin >= 0x10000U && end <= GuestMemory::kAddressSpaceSize &&
+        !(begin < table + GuestMemory::kFunctionTableSize && end > table) &&
+        memory.committed_range(begin, 4);
+}
+std::string read_module_name(const GuestMemory& memory, std::uint32_t address) {
+    if (!address) return {};
+    std::string name;
+    for (std::uint32_t i = 0; i < 64; ++i) {
+        const auto guest = std::uint64_t(address) + i;
+        if (guest >= GuestMemory::kAddressSpaceSize ||
+            !memory.committed_range(guest, 1)) return {};
+        const auto ch = memory.address(static_cast<std::uint32_t>(guest))[0];
+        if (!ch) return name;
+        if (ch >= 0x80U) return {};
+        name.push_back(char(ch >= 'A' && ch <= 'Z' ? ch + ('a' - 'A') : ch));
+    }
+    return {};
+}
 std::uint32_t be32(const std::uint8_t* ptr) {
     return (std::uint32_t(ptr[0]) << 24) |
            (std::uint32_t(ptr[1]) << 16) |
@@ -41,6 +83,75 @@ void put32(GuestMemory& memory, std::uint32_t address, std::uint32_t value) {
     ptr[2] = std::uint8_t(value >> 8);
     ptr[3] = std::uint8_t(value);
 }
+}
+void bind_xex_system_modules(GuestMemory* memory) noexcept {
+    bound_system_memory.store(memory, std::memory_order_release);
+}
+std::uint32_t bound_xex_load_image(
+    std::uint32_t name_pointer, std::uint32_t flags,
+    std::uint32_t minimum_version, std::uint32_t output_pointer) {
+    std::lock_guard lock(module_mutex);
+    auto* memory = bound_system_memory.load(std::memory_order_acquire);
+    if (!memory) return kNtNotSupported;
+    if (!valid_output(*memory, output_pointer)) return kNtInvalidParameter;
+    const auto name = read_module_name(*memory, name_pointer);
+    if (name != "xam.xex") {
+        put32(*memory, output_pointer, 0U);
+        return name.empty() ? kNtInvalidParameter : kNtNoSuchFile;
+    }
+    if (minimum_version != 0U || (flags != 0U && flags != 9U))
+        return kNtNotSupported;
+    if (!memory->committed_range(kXamModuleAddress, 0x64U))
+        return kNtNotSupported;
+    const auto count = be16(memory->address(kXamModuleAddress + 0x40U));
+    if (count == 0xFFFFU) return kNtNotSupported;
+    put16(*memory, kXamModuleAddress + 0x40U, std::uint16_t(count + 1));
+    put32(*memory, output_pointer, kXamModuleAddress);
+    return 0U;
+}
+std::uint32_t bound_xex_get_module_handle(
+    std::uint32_t name_pointer, std::uint32_t output_pointer) {
+    std::lock_guard lock(module_mutex);
+    auto* memory = bound_system_memory.load(std::memory_order_acquire);
+    if (!memory) return kNtNotSupported;
+    if (!valid_output(*memory, output_pointer)) return kNtInvalidParameter;
+    if (!name_pointer) {
+        put32(*memory, output_pointer, kModuleAddress);
+        return 0U;
+    }
+    if (read_module_name(*memory, name_pointer) == "xam.xex") {
+        put32(*memory, output_pointer, kXamModuleAddress);
+        return 0U;
+    }
+    put32(*memory, output_pointer, 0U);
+    return 1168U; // Xbox ERROR_NOT_FOUND.
+}
+std::uint32_t bound_xex_get_procedure_address(
+    std::uint32_t module_handle, std::uint32_t ordinal,
+    std::uint32_t output_pointer) {
+    std::lock_guard lock(module_mutex);
+    auto* memory = bound_system_memory.load(std::memory_order_acquire);
+    if (!memory) return kNtNotSupported;
+    if (!valid_output(*memory, output_pointer)) return kNtInvalidParameter;
+    if (module_handle != kXamModuleAddress && module_handle != kModuleAddress)
+        return kNtInvalidHandle;
+    // The original title queries XAM Party ordinals 2815, 2816, 2827,
+    // 2832, 773 and 779. No native Party implementation is available yet:
+    // report missing exports, never invent callable guest PPC addresses.
+    (void)ordinal;
+    put32(*memory, output_pointer, 0U);
+    return kNtDriverEntryNotFound;
+}
+std::uint32_t bound_xex_unload_image(std::uint32_t module_handle) {
+    std::lock_guard lock(module_mutex);
+    auto* memory = bound_system_memory.load(std::memory_order_acquire);
+    if (!memory) return kNtNotSupported;
+    if (module_handle != kXamModuleAddress) return kNtInvalidHandle;
+    if (!memory->committed_range(kXamModuleAddress + 0x40U, 2U))
+        return kNtInvalidHandle;
+    const auto count = be16(memory->address(kXamModuleAddress + 0x40U));
+    if (count) put16(*memory, kXamModuleAddress + 0x40U, std::uint16_t(count - 1));
+    return 0U; // Kernel XAM module stays loaded even at reference count zero.
 }
 std::uint32_t install_original_xex_title_header(
     GuestMemory& memory, const std::filesystem::path& original_xex,
@@ -83,6 +194,8 @@ std::uint32_t install_original_xex_title_header(
     if (memory.any_committed_range(kHeaderAddress, kMaximumHeaderSize) ||
         memory.any_committed_range(kModuleHandleAddress, 4096) ||
         memory.any_committed_range(kModuleAddress, 4096) ||
+        memory.any_committed_range(kXamModuleAddress, 4096) ||
+        memory.any_committed_range(kXamModuleNameAddress, 4096) ||
         memory.any_committed_range(kTimeStampBundleAddress, 4096) ||
         memory.any_committed_range(kHardwareInfoAddress, 4096) ||
         memory.any_committed_range(kDebugMonitorAddress, 4096))
@@ -113,9 +226,25 @@ std::uint32_t install_original_xex_title_header(
     memory.copy_to_guest(kHeaderAddress, bytes);
     memory.commit(kModuleHandleAddress, 4096);
     memory.commit(kModuleAddress, 4096);
+    memory.commit(kXamModuleAddress, 4096);
+    memory.commit(kXamModuleNameAddress, 4096);
     memory.commit(kTimeStampBundleAddress, 4096);
     memory.commit(kHardwareInfoAddress, 4096);
     memory.commit(kDebugMonitorAddress, 4096);
+    // System XAM module uses an Xbox 360 LDR_DATA_TABLE_ENTRY as HMODULE.
+    // No proprietary xam.xex is loaded: only the built-in native service handle.
+    std::memset(memory.address(kXamModuleAddress), 0, 4096);
+    std::memset(memory.address(kXamModuleNameAddress), 0, 4096);
+    constexpr char kXamName[] = "xam.xex";
+    for (std::uint32_t i = 0; i < sizeof(kXamName) - 1; ++i)
+        memory.address(kXamModuleNameAddress + 2 * i)[1] =
+            static_cast<std::uint8_t>(kXamName[i]);
+    put16(memory, kXamModuleAddress + 0x24U, 14U);
+    put16(memory, kXamModuleAddress + 0x26U, 16U);
+    put32(memory, kXamModuleAddress + 0x28U, kXamModuleNameAddress);
+    put16(memory, kXamModuleAddress + 0x2CU, 14U);
+    put16(memory, kXamModuleAddress + 0x2EU, 16U);
+    put32(memory, kXamModuleAddress + 0x30U, kXamModuleNameAddress);
     // Xbox 360 kernel KeTimeStampBundle is a 24-byte data export.
     // The 32-bit millisecond uptime at +16 is updated during title execution.
     std::memset(memory.address(kTimeStampBundleAddress), 0, 4096);

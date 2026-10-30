@@ -60,7 +60,7 @@ add_executable(dotm_xex_optional_header_ppc_test
 target_include_directories(dotm_xex_optional_header_ppc_test PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures/private_link
   ${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures)
-target_link_libraries(dotm_xex_optional_header_ppc_test PRIVATE dotm_xex_optional_header)
+target_link_libraries(dotm_xex_optional_header_ppc_test PRIVATE dotm_xex_optional_header dotm_xex_title_boot)
 add_test(NAME xbox360_original_xex_optional_header_ppc_abi
   COMMAND dotm_xex_optional_header_ppc_test)
 # Real original-title privilege flags, read from the verified XEX2 header.

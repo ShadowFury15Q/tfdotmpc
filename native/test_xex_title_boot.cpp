@@ -3,12 +3,13 @@
 #include "xex_title_boot.hpp"
 #include <array>
 #include <chrono>
+#include <cstring>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
 namespace {
-void check(bool b) { if (!b) throw std::runtime_error("XEX2 boot wiring failure"); }
+void check(bool b, const char* message = "XEX2 boot wiring failure") { if (!b) throw std::runtime_error(message); }
 void put32(std::array<std::uint8_t, 512>& b, std::size_t offset, std::uint32_t value) {
     b[offset] = std::uint8_t(value >> 24);
     b[offset + 1] = std::uint8_t(value >> 16);
@@ -103,5 +104,40 @@ int main() {
     check(dotm::xex_optional_header_field(memory, 0x81000000U, 0x00010100U) == entry);
     check(dotm::xex_optional_header_field(memory, 0x81000000U, 0x00040006U)
           == 0x81000100U);
+    check(memory.committed_range(0x81905000U, 0x64U) &&
+          memory.committed_range(0x81906000U, 16U));
+    check(get32(memory, 0x81905000U + 0x28U) == 0x81906000U);
+    constexpr std::uint32_t name_ptr = 0x82001000U;
+    constexpr std::uint32_t handle_ptr = 0x82001080U;
+    memory.commit(name_ptr, 4096);
+    std::memcpy(memory.address(name_ptr), "xam.xex", 8);
+    dotm::bind_xex_system_modules(&memory);
+    check(dotm::bound_xex_load_image(name_ptr, 9U, 0U, handle_ptr) == 0U &&
+          get32(memory, handle_ptr) == 0x81905000U &&
+          memory.address(0x81905040U)[1] == 1U,
+          "Built-in XAM load returns real guest HMODULE and increments count");
+    check(dotm::bound_xex_get_module_handle(name_ptr, handle_ptr) == 0U &&
+          get32(memory, handle_ptr) == 0x81905000U,
+          "XAM GetModuleHandle returns the same guest module");
+    check(dotm::bound_xex_get_module_handle(0U, handle_ptr) == 0U &&
+          get32(memory, handle_ptr) == 0x81901000U,
+          "Null module name resolves the original title module");
+    check(dotm::bound_xex_get_procedure_address(0x81905000U, 2815U,
+                                                handle_ptr) == 0xC0000263U &&
+          get32(memory, handle_ptr) == 0U,
+          "Unsupported XAM Party export cannot return a fake function pointer");
+    check(dotm::bound_xex_unload_image(0x81905000U) == 0U &&
+          memory.address(0x81905040U)[1] == 0U,
+          "Unloading a kernel module drops the reference but keeps it mapped");
+    std::memcpy(memory.address(name_ptr), "other.xex", 10);
+    check(dotm::bound_xex_load_image(name_ptr, 9U, 0U, handle_ptr) == 0xC000000FU &&
+          get32(memory, handle_ptr) == 0U,
+          "Unknown system module must fail without pretending to load it");
+    check(dotm::bound_xex_load_image(name_ptr, 9U, 0U,
+          dotm::GuestMemory::kFunctionTableOffset) == 0xC000000DU,
+          "Module output must not overwrite PPC dispatch table");
+    dotm::bind_xex_system_modules(nullptr);
+    check(dotm::bound_xex_unload_image(0x81905000U) == 0xC00000BBU,
+          "Unbound system module service must fail closed");
     return 0;
 }

@@ -49,12 +49,14 @@ struct ScopedHostBindings {
         dotm::bind_kernel_critical_sections(&memory);
         dotm::bind_kernel_rtl_memory(&memory);
         dotm::bind_xex_optional_header(&memory);
+        dotm::bind_xex_system_modules(&memory);
         dotm::bind_xam_guest_input(&input, &memory);
         dotm::bind_xam_launch_data(&launch_data, &memory);
     }
     ~ScopedHostBindings() {
         dotm::bind_xam_launch_data(nullptr, nullptr);
         dotm::bind_xam_guest_input(nullptr, nullptr);
+        dotm::bind_xex_system_modules(nullptr);
         dotm::bind_xex_optional_header(nullptr);
         dotm::bind_kernel_rtl_memory(nullptr);
         dotm::bind_kernel_critical_sections(nullptr);
