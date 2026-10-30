@@ -47,17 +47,17 @@ class PrivateLinkStubsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "ppc_recomp_shared.h").write_text(
-                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\\n"
-                "PPC_EXTERN_FUNC(_xstart);\\n"
-                "PPC_EXTERN_FUNC(sub_82500000);\\n", encoding="utf-8")
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n"
+                "PPC_EXTERN_FUNC(_xstart);\n"
+                "PPC_EXTERN_FUNC(sub_82500000);\n", encoding="utf-8")
             (root / "ppc_func_mapping.cpp").write_text(
-                "{0x8277F670, _xstart},\\n"
-                "{0x82500000, sub_82500000},\\n", encoding="utf-8")
+                "{0x8277F670, _xstart},\n"
+                "{0x82500000, sub_82500000},\n", encoding="utf-8")
             (root / "ppc_recomp.0.cpp").write_text(
-                '__attribute__((alias("__imp___xstart"))) PPC_WEAK_FUNC(_xstart);\\n'
-                "PPC_FUNC_IMPL(__imp___xstart) {}\\n"
-                '__attribute__((alias("__imp__sub_82500000"))) PPC_WEAK_FUNC(sub_82500000);\\n'
-                "PPC_FUNC_IMPL(__imp__sub_82500000) {}\\n", encoding="utf-8")
+                '__attribute__((alias("__imp___xstart"))) PPC_WEAK_FUNC(_xstart);\n'
+                "PPC_FUNC_IMPL(__imp___xstart) {}\n"
+                '__attribute__((alias("__imp__sub_82500000"))) PPC_WEAK_FUNC(sub_82500000);\n'
+                "PPC_FUNC_IMPL(__imp__sub_82500000) {}\n", encoding="utf-8")
             source, units, unresolved = generate(root, 1)
             self.assertEqual((units, unresolved), (1, 0))
             self.assertNotIn("PPC_FUNC(_xstart)", source)
@@ -67,11 +67,11 @@ class PrivateLinkStubsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "ppc_recomp_shared.h").write_text(
-                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\\n", encoding="utf-8")
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
             (root / "ppc_func_mapping.cpp").write_text(
-                "{0x8277F670, _xstart},\\n", encoding="utf-8")
+                "{0x8277F670, _xstart},\n", encoding="utf-8")
             (root / "ppc_recomp.0.cpp").write_text(
-                '__attribute__((alias("__imp___xstart"))) PPC_WEAK_FUNC(_xstart);\\n',
+                '__attribute__((alias("__imp___xstart"))) PPC_WEAK_FUNC(_xstart);\n',
                 encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "Missing XenonRecomp alias target"):
                 generate(root, 1)
@@ -80,12 +80,12 @@ class PrivateLinkStubsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "ppc_recomp_shared.h").write_text(
-                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\\n", encoding="utf-8")
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n", encoding="utf-8")
             (root / "ppc_func_mapping.cpp").write_text(
-                "{0x8277F670, _xstart},\\n", encoding="utf-8")
+                "{0x8277F670, _xstart},\n", encoding="utf-8")
             (root / "ppc_recomp.0.cpp").write_text(
-                '#if 0\\n__attribute__((alias("__imp___xstart"))) PPC_WEAK_FUNC(_xstart);\\n#endif\\n'
-                "PPC_FUNC_IMPL(__imp___xstart) {}\\n", encoding="utf-8")
+                '#if 0\n__attribute__((alias("__imp___xstart"))) PPC_WEAK_FUNC(_xstart);\n#endif\n'
+                "PPC_FUNC_IMPL(__imp___xstart) {}\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
                 generate(root, 1)
 
@@ -535,7 +535,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
                     self.assertEqual((units, unresolved), (1, 0))
                     self.assertNotIn("KeWaitForSingleObject", source)
 
-    def test_default_requires_all_696_private_units(self):
+    def test_default_requires_all_697_private_units(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "ppc_recomp_shared.h").write_text(
@@ -545,7 +545,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
                 "{0x8277F670, _xstart},\n", encoding="utf-8")
             (root / "ppc_recomp.0.cpp").write_text(
                 "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "expected >= 696"):
+            with self.assertRaisesRegex(ValueError, "expected >= 697"):
                 generate(root)
 
     def test_missing_ppc_unit_index_is_rejected(self):
