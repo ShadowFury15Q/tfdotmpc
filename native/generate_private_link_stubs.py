@@ -14,8 +14,8 @@ DECL = re.compile(r"\bPPC_EXTERN_FUNC\s*\(\s*([A-Za-z_]\w*)\s*\)\s*;")
 DEF = re.compile(r"\bPPC_FUNC(?:_IMPL)?\s*\(\s*([A-Za-z_]\w*)\s*\)\s*\{")
 # XenonRecomp emits a guest-visible alias for each __imp__ implementation.
 ALIAS = re.compile(
-    r'__attribute__\\s*\\(\\(\\s*alias\\s*\\(\\s*"([A-Za-z_]\\w*)"\\s*\\)\\s*\\)\\)'
-    r'\\s*PPC_WEAK_FUNC\\s*\\(\\s*([A-Za-z_]\\w*)\\s*\\)\\s*;'
+    r'__attribute__\s*\(\(\s*alias\s*\(\s*"([A-Za-z_]\w*)"\s*\)\s*\)\)'
+    r'\s*PPC_WEAK_FUNC\s*\(\s*([A-Za-z_]\w*)\s*\)\s*;'
 )
 MAPPING = re.compile(r"\{\s*(0x[0-9A-Fa-f]+)\s*,\s*([A-Za-z_]\w*)\s*\}")
 HELPER = re.compile(r"__?(?:save|rest)(?:gprlr|fpr|vmx)_\d+")
