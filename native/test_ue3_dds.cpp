@@ -27,7 +27,30 @@ int main(){
   const auto dds5=dotm::convert_xbox_tiled_bc_to_dds(32,32,true,tiled5);
   check(dds5.size()==128+8*8*16&&dds5[87]=='5',"DXT5 FourCC/size");
   check(dds5[128]==0xb2&&dds5[129]==0xa1,"DXT5 word swap");
+  // Stage 45: preflight must accept the last referenced Xenos tile block,
+  // reject a one-byte-short source, and avoid large DDS allocations on error.
+  const std::vector<std::uint8_t> tight_bc1(tiled.begin(),tiled.begin()+1856);
+  check(dotm::convert_xbox_tiled_bc_to_dds(32,32,false,tight_bc1)==dds,
+        "Accept exactly sufficient BC1 tiled bytes");
+  const std::vector<std::uint8_t> tight_bc3(tiled5.begin(),tiled5.begin()+5952);
+  check(dotm::convert_xbox_tiled_bc_to_dds(32,32,true,tight_bc3)==dds5,
+        "Accept exactly sufficient BC3 tiled bytes");
   bool threw=false;
+  try{(void)dotm::convert_xbox_tiled_bc_to_dds(32,32,false,
+      std::span<const std::uint8_t>(tight_bc1.data(),tight_bc1.size()-1));}
+  catch(const std::runtime_error&){threw=true;}
+  check(threw,"Reject BC1 payload one byte short of last tile");
+  threw=false;
+  try{(void)dotm::convert_xbox_tiled_bc_to_dds(32,32,true,
+      std::span<const std::uint8_t>(tight_bc3.data(),tight_bc3.size()-1));}
+  catch(const std::runtime_error&){threw=true;}
+  check(threw,"Reject BC3 payload one byte short of last tile");
+  threw=false;
+  try{(void)dotm::convert_xbox_tiled_bc_to_dds(4096,4096,false,
+      std::span<const std::uint8_t>{});}
+  catch(const std::runtime_error&){threw=true;}
+  check(threw,"Reject huge missing tiled payload before DDS allocation");
+  threw=false;
   try{(void)dotm::convert_xbox_tiled_bc_to_dds(128,128,false,{tiled.data(),16});}
   catch(const std::runtime_error&){threw=true;}
   check(threw,"Reject truncated Xbox tile");

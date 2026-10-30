@@ -16,6 +16,21 @@ std::uint32_t tiled_offset(std::uint32_t x,std::uint32_t y,
     return (((off&~511u)<<3)+((y&16u)<<7)+((off&448u)<<2)+
             (((((y&8u)>>2)+(x>>3))&3u)<<6)+(off&63u))>>log_bpb;
 }
+// Validate all referenced Xbox tiled blocks before allocating the DDS output.
+// Small mips can use a sparse subset of a 128x128 GPU tile, so requiring the
+// entire tile would reject valid data; check actual block addresses instead.
+void preflight_tiled_bc_payload(std::span<const std::uint8_t> payload,
+                               std::uint32_t block_w,std::uint32_t block_h,
+                               std::uint32_t tiled_w,unsigned log_bpb,
+                               std::size_t bytes_per_block) {
+    for(std::uint32_t y=0;y<block_h;++y){
+        for(std::uint32_t x=0;x<block_w;++x){
+            const std::uint64_t src=std::uint64_t(tiled_offset(x,y,tiled_w,log_bpb))*bytes_per_block;
+            if(src>payload.size()||bytes_per_block>payload.size()-src)
+                throw std::runtime_error("GPU-tiled BC mip references missing data");
+        }
+    }
+}
 void little32(std::vector<std::uint8_t>&v,std::size_t at,std::uint32_t value){
     if(at>v.size()||v.size()-at<4)throw std::logic_error("DDS output header bounds");
     for(int b=0;b<4;++b)v[at+b]=std::uint8_t(value>>(8*b));
@@ -43,6 +58,10 @@ std::vector<std::uint8_t> convert_xbox_tiled_bc_mips_to_dds(
         const std::size_t linear_bytes=blocks_w*blocks_h*bytes_per_block;
         if(linear_bytes>256u*1024u*1024u||linear_bytes>kMaxDdsBytes-total)
             throw std::runtime_error("Unreasonably large Xbox 360 texture mip chain");
+        const auto tiled_w=(std::max(32u,std::uint32_t(blocks_w))+31u)&~31u;
+        preflight_tiled_bc_payload(m.payload,std::uint32_t(blocks_w),
+                                   std::uint32_t(blocks_h),tiled_w,
+                                   bc3?4u:3u,bytes_per_block);
         if(!i)top_linear_bytes=linear_bytes;
         total+=linear_bytes;
     }
