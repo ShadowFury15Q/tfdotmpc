@@ -91,6 +91,7 @@ int main(int argc,char** argv){
   put16(pe,0,0x5a4d);put32(pe,0x3c,0x80);put32(pe,0x80,0x4550);
   put16(pe,0x84,0x01f2);put16(pe,0x86,1);put16(pe,0x94,0xe0);
   put16(pe,0x98,0x10b);put32(pe,0x98+28,dotm::GuestMemory::kImageBase);
+  put32(pe,0x98+16,0x0077F670U);
   put32(pe,0x98+60,0x200);
   std::memcpy(pe.data()+0x178,".text",5);
   put32(pe,0x178+8,0x200);put32(pe,0x178+12,0x1000);
@@ -119,7 +120,12 @@ int main(int argc,char** argv){
   m.address(0x82000800)[0]=0x71;
   m.address(0x820001f0)[0]=0x72;
   m.address(0x82002000)[0]=0x73;
+  bool rejected_unloaded_entry=false;
+  {dotm::GuestMemory fresh;
+   try{(void)fresh.loaded_pe_entry();}catch(const std::logic_error&){rejected_unloaded_entry=true;}}
+  check(rejected_unloaded_entry,"Unloaded guest PE has no valid entry point");
   save(pe);m.load_pe(file);
+  check(m.loaded_pe_entry()==0x8277F670U,"PE entry point must match original DOTM _xstart");
   check(m.committed_range(dotm::GuestMemory::kImageBase,
                           dotm::GuestMemory::kImageSize),
         "PE load commits complete image for guest pointers");
@@ -151,8 +157,14 @@ int main(int argc,char** argv){
    check(failed,reason);
    check(m.address(0x82001000)[0]==0xab,
          "Malformed PE must not partially replace mapped guest section");
+   check(m.loaded_pe_entry()==0x8277F670U,
+         "Rejected PE must preserve the previous verified entry point");
   };
   {auto bad=pe;put32(bad,0x3c,0xfffffff0);reject(bad,"Reject invalid NT offset");}
+  {auto bad=pe;put32(bad,0x98+16,0x01b10000);
+   reject(bad,"Reject PE entry beyond guest image");}
+  {auto bad=pe;put32(bad,0x98+16,0x0077F671);
+   reject(bad,"Reject unaligned PPC entry");}
   {auto bad=pe;put16(bad,0x94,0x500);reject(bad,"Reject truncated optional header");}
   {auto bad=pe;put32(bad,0x178+20,0x580);reject(bad,"Reject truncated raw section");}
   {auto bad=pe;put32(bad,0x178+12,0x100);reject(bad,"Reject header overlap");}
