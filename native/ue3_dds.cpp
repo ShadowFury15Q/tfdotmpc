@@ -86,18 +86,54 @@ std::vector<std::uint8_t> convert_xbox_tiled_bc_to_dds(
     const XboxTiledBcMip mip{width,height,xenos_payload};
     return convert_xbox_tiled_bc_mips_to_dds(std::span<const XboxTiledBcMip>(&mip,1),bc3);
 }
+std::vector<Ue3Mip> select_resident_ue3_mip_chain(
+    std::span<const Ue3Mip> mips) {
+    std::vector<Ue3Mip> selected;
+    selected.reserve(std::min<std::size_t>(mips.size(),15));
+    for(const auto& mip:mips){
+        const bool resident=mip.storage==Ue3MipStorage::Embedded||
+                            mip.storage==Ue3MipStorage::LzoEmbedded;
+        if(!resident){
+            if(!selected.empty())break;
+            continue;
+        }
+        if(!selected.empty()){
+            const auto& prev=selected.back();
+            if((prev.width==1&&prev.height==1)||
+               mip.width!=std::max(1u,prev.width/2)||
+               mip.height!=std::max(1u,prev.height/2))
+                break;
+        }
+        selected.push_back(mip);
+        if(selected.size()==15)break;
+    }
+    return selected;
+}
 std::optional<std::vector<std::uint8_t>> export_ue3_texture_dds(
     const Ue3Package&pkg,std::size_t idx){
     const auto texture=inspect_ue3_texture2d(pkg,idx);
     if(texture.format!="PF_DXT1"&&texture.format!="PF_DXT5")
         return std::nullopt;
     const bool bc3=(texture.format=="PF_DXT5");
-    for(const auto& mip:parse_ue3_texture_mips(pkg,idx)){
-        if(mip.storage!=Ue3MipStorage::Embedded&&
-           mip.storage!=Ue3MipStorage::LzoEmbedded)continue;
-        const auto bytes=read_ue3_texture_mip_bytes(pkg,idx,mip);
-        return convert_xbox_tiled_bc_to_dds(mip.width,mip.height,bc3,bytes);
+    const auto parsed=parse_ue3_texture_mips(pkg,idx);
+    const auto selected=select_resident_ue3_mip_chain(parsed);
+    if(selected.empty())return std::nullopt;
+    // Bound decoded source allocations before reading embedded or LZO data.
+    constexpr std::size_t kMaxResidentBytes=384u*1024u*1024u;
+    std::size_t decoded_total=0;
+    for(const auto& mip:selected){
+        if(mip.element_count>kMaxResidentBytes-decoded_total)
+            throw std::runtime_error("Resident UE3 mip chain exceeds DDS size limit");
+        decoded_total+=mip.element_count;
     }
-    return std::nullopt;
+    std::vector<std::vector<std::uint8_t>> payloads;
+    payloads.reserve(selected.size());
+    for(const auto& mip:selected)
+        payloads.push_back(read_ue3_texture_mip_bytes(pkg,idx,mip));
+    std::vector<XboxTiledBcMip> views;
+    views.reserve(selected.size());
+    for(std::size_t i=0;i<selected.size();++i)
+        views.push_back({selected[i].width,selected[i].height,payloads[i]});
+    return convert_xbox_tiled_bc_mips_to_dds(views,bc3);
 }
 }
