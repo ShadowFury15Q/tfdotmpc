@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import struct
 import sys
+import zipfile
 
 EXPECTED_XEX_SHA256 = "6fd9ae9fb94ea8e9cc91a6a0cc62b04441411bdafe2479f0d380d4a3a9957ca6"
 EXPECTED_ENTRY = 0x8277F670
@@ -49,6 +50,54 @@ def inspect_units(directory: Path):
     return len(indices), missing, extra, headers
 
 
+
+def inspect_archive(path: Path):
+    """Validate a private PPC ZIP in place; never extract or print game code."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            members = [item for item in archive.infolist() if not item.is_dir()]
+            names = [item.filename for item in members]
+            if len(names) != len(set(names)):
+                return None
+            if any(name.startswith("/") or "\\" in name or
+                   ".." in name.split("/") or
+                   (item.flag_bits & 1) for name, item in zip(names, members)):
+                return None
+            if sum(item.file_size for item in members) > 1024 * 1024 * 1024:
+                return None
+            candidates = {name.rsplit("/", 1)[0] if "/" in name else ""
+                          for name in names if UNIT_NAME.fullmatch(name.rsplit("/", 1)[-1])}
+            if len(candidates) != 1:
+                return None
+            prefix = candidates.pop()
+            def member(name):
+                return f"{prefix}/{name}" if prefix else name
+            indices = {int(match.group(1)) for name in names
+                       if name.startswith(f"{prefix}/" if prefix else "")
+                       if (match := UNIT_NAME.fullmatch(name.rsplit("/", 1)[-1]))}
+            missing = [i for i in range(EXPECTED_UNITS) if i not in indices]
+            extra = sorted(i for i in indices if i >= EXPECTED_UNITS)
+            required = (*REQUIRED, "ppc_config.h")
+            headers = [name for name in required if member(name) not in names]
+            mapping_name = member("ppc_func_mapping.cpp")
+            header_name = member("ppc_recomp_shared.h")
+            if mapping_name in names:
+                mapping_info = archive.getinfo(mapping_name)
+                if mapping_info.file_size > 8 * 1024 * 1024 or not re.search(
+                    rb"\{\s*0x8277F670\s*,\s*_xstart\s*\}",
+                    archive.read(mapping_name)):
+                    headers.append("ppc_func_mapping.cpp (_xstart entry)")
+            if header_name in names:
+                header_info = archive.getinfo(header_name)
+                if header_info.file_size > 8 * 1024 * 1024 or not re.search(
+                    rb"PPC_EXTERN_FUNC\s*\(\s*_xstart\s*\)",
+                    archive.read(header_name)):
+                    headers.append("ppc_recomp_shared.h (_xstart declaration)")
+            return len(indices), missing, extra, headers
+    except (OSError, ValueError, zipfile.BadZipFile, zipfile.LargeZipFile,
+            RuntimeError, EOFError):
+        return None
+
 def pe_entry(path: Path):
     """Inspect only fixed-size PE headers; do not expose or copy executable bytes."""
     try:
@@ -84,19 +133,23 @@ def sha256(path: Path):
 
 def run(root: Path):
     print(f"Private DOTM preflight root: {root}")
-    if not root.is_dir():
-        print("BLOCKED: local project directory is not accessible")
+    if not root.is_dir() and not (root.is_file() and root.suffix.lower() == ".zip"):
+        print("BLOCKED: local project directory or PPC ZIP is not accessible")
         return 2
     found_units = []
     found_xex = []
     found_pe = []
-    for directory in candidate_directories(root):
+    for directory in (candidate_directories(root) if root.is_dir() else ()):
         inspected = inspect_units(directory)
         if inspected is not None:
             found_units.append((directory, inspected))
         try:
             files = (p for p in directory.iterdir() if p.is_file())
             for path in files:
+                if path.suffix.lower() == ".zip" and path.name.lower().startswith("ppc"):
+                    archived = inspect_archive(path)
+                    if archived is not None:
+                        found_units.append((path, archived))
                 if path.name.lower() == "default.xex":
                     found_xex.append(path)
                 elif path.suffix.lower() in (".pe", ".exe", ".bin"):
@@ -104,9 +157,13 @@ def run(root: Path):
                         found_pe.append((path, info))
         except OSError:
             continue
+    if root.is_file():
+        archived = inspect_archive(root)
+        if archived is not None:
+            found_units.append((root, archived))
     ready = False
     for directory, (count, missing, extra, headers) in found_units:
-        print(f"PPC directory: {directory} ({count} numbered units)")
+        print(f"PPC {'archive' if directory.is_file() else 'directory'}: {directory} ({count} numbered units)")
         if missing:
             print(f"  Missing numbered units: {len(missing)}; first: {missing[:8]}")
         if extra:
@@ -116,8 +173,12 @@ def run(root: Path):
         if not (missing or extra or headers):
             ready = True
             print("  READY: 697 contiguous units and required headers present (not yet compiled)")
-            print(f'  Configure: cmake -S native -B private-build -DDOTM_PRIVATE_PPC_DIR="{directory}"')
-            print("  Build: cmake --build private-build --target dotm_private_link_probe --config Release")
+            if directory.is_file():
+                print("  Archive validated in place; extract only into a private local build directory")
+            else:
+                print(f'  Configure: cmake -S native -B private-build -DDOTM_PRIVATE_PPC_DIR="{directory}"')
+            if directory.is_dir():
+                print("  Build: cmake --build private-build --target dotm_private_link_probe --config Release")
     if not found_units:
         print("BLOCKED: no generated PPC units in this project tree")
     for path in found_xex:
