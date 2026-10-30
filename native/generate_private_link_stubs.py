@@ -19,7 +19,8 @@ ALIAS = re.compile(
 )
 MAPPING = re.compile(r"\{\s*(0x[0-9A-Fa-f]+)\s*,\s*([A-Za-z_]\w*)\s*\}")
 HELPER = re.compile(r"__?(?:save|rest)(?:gprlr|fpr|vmx)_\d+")
-NATIVE = {"__imp__XexCheckExecutablePrivilege",
+NATIVE = {"__imp__RtlFillMemoryUlong", "__imp__RtlCompareMemoryUlong",
+          "__imp__XexCheckExecutablePrivilege",
           "__imp__RtlImageXexHeaderField",
           "__imp__RtlInitializeCriticalSection",
           "__imp__RtlInitializeCriticalSectionAndSpinCount",
