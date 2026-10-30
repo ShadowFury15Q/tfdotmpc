@@ -145,6 +145,17 @@ bool GuestVirtualAllocator::commit_reserved(std::uint32_t address, std::uint64_t
     allocated_bytes_ += length;
     return true;
 }
+bool GuestVirtualAllocator::decommit_reserved(std::uint32_t address, std::uint64_t bytes) {
+    const auto length = rounded_size(bytes);
+    const auto it = blocks_.find(address);
+    if (it == blocks_.end() || it->second.size != length ||
+        !it->second.committed) return false;
+    // Preserve reservation/accounting when host decommit fails.
+    memory_.decommit(address, static_cast<std::size_t>(length));
+    it->second.committed = false;
+    allocated_bytes_ -= length;
+    return true;
+}
 bool GuestVirtualAllocator::release(std::uint32_t address) {
     const auto it = blocks_.find(address);
     if (it == blocks_.end()) return false;
