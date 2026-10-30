@@ -65,6 +65,19 @@ std::vector<std::uint8_t> example(bool corrupt=false,bool with_mips=false,bool c
  add_fname(b,0);                 // None terminal
  if(!with_mips) {
   add32(b,0x12345678u);          // Native class-specific data after properties
+ } else if(dds_variant==4 || dds_variant==5) {
+  // Malformed LZO metadata: never allocate/decompress these synthetic mips.
+  const std::uint32_t count=dds_variant==4?7u:1u;
+  add32(b,count);
+  for(std::uint32_t i=0;i<count;++i){
+   const std::uint32_t width=dds_variant==4?(64u>>i):32768u;
+   add32(b,0x10u);add32(b,64u*1024u*1024u);
+   add32(b,1u);
+   const auto ptr=b.size();add32(b,0);add32(b,0xDEADBEEFu);
+   set32(b,ptr,std::uint32_t(b.size()));
+   b.push_back(0); // Deliberately not a valid LZO stream.
+   add32(b,width);add32(b,width);
+  }
  } else if(dds_variant) {
   // Synthetic Xenos-tiled BC3 payloads, not game assets. Variant 2 has a
   // streamed gap; variant 3 has an invalid resident dimension transition.
@@ -189,6 +202,20 @@ int main(){
    (void)dotm::export_ue3_texture_dds(bad_chain,0);
   }catch(const std::invalid_argument&){invalid_chain=true;}
   check(invalid_chain,"Reject invalid resident mip dimensions");
+  bool excessive_payloads=false;
+  try {
+   const auto bomb=dotm::Ue3Package::parse(example(false,true,false,4));
+   (void)dotm::export_ue3_texture_dds(bomb,0);
+  }catch(const std::runtime_error& e){
+   excessive_payloads=std::string(e.what()).find("resident UE3 mip payload chain")!=std::string::npos;
+  }
+  check(excessive_payloads,"Reject cumulative LZO mip allocation before decompression");
+  bool oversized_dimensions=false;
+  try {
+   const auto huge=dotm::Ue3Package::parse(example(false,true,false,5));
+   (void)dotm::export_ue3_texture_dds(huge,0);
+  }catch(const std::invalid_argument&){oversized_dimensions=true;}
+  check(oversized_dimensions,"Reject oversized mip geometry before decompression");
   bool threw=false;
   try {
    const auto broken=dotm::Ue3Package::parse(example(true));

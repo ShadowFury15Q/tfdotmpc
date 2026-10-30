@@ -6,6 +6,7 @@
 
 namespace dotm {
 namespace {
+constexpr std::size_t kMaxDdsBytes=384u*1024u*1024u;
 std::uint32_t tiled_offset(std::uint32_t x,std::uint32_t y,
                            std::uint32_t width,unsigned log_bpb) {
     const std::uint32_t aligned=(width+31u)&~31u;
@@ -25,7 +26,6 @@ std::vector<std::uint8_t> convert_xbox_tiled_bc_mips_to_dds(
     if(mips.empty()||mips.size()>15)
         throw std::invalid_argument("Invalid DDS mip count");
     const std::size_t bytes_per_block=bc3?16u:8u;
-    constexpr std::size_t kMaxDdsBytes=384u*1024u*1024u;
     std::size_t total=128,top_linear_bytes=0;
     // Validate all dimensions and the allocation bound before decoding.
     for(std::size_t i=0;i<mips.size();++i){
@@ -112,6 +112,24 @@ std::optional<std::vector<std::uint8_t>> export_ue3_texture_dds(
         selected.push_back(i);
     }
     if(selected.empty())return std::nullopt;
+    // Reject oversized chains before decompressing or copying any resident mip.
+    if(selected.size()>15)
+        throw std::invalid_argument("Invalid DDS mip count");
+    std::size_t dds_bytes=128,decoded_bytes=0;
+    for(const auto i:selected){
+        const auto& mip=levels[i];
+        if(!mip.width||!mip.height||mip.width>16384||mip.height>16384)
+            throw std::invalid_argument("Invalid Xbox 360 BC texture dimensions");
+        const std::size_t blocks_w=(mip.width+3u)/4u;
+        const std::size_t blocks_h=(mip.height+3u)/4u;
+        const std::size_t linear_bytes=blocks_w*blocks_h*(bc3?16u:8u);
+        if(linear_bytes>256u*1024u*1024u||linear_bytes>kMaxDdsBytes-dds_bytes)
+            throw std::runtime_error("Unreasonably large Xbox 360 texture mip chain");
+        dds_bytes+=linear_bytes;
+        if(mip.element_count>kMaxDdsBytes-decoded_bytes)
+            throw std::runtime_error("Unreasonably large resident UE3 mip payload chain");
+        decoded_bytes+=mip.element_count;
+    }
     // Own decompressed bytes until conversion finishes: XboxTiledBcMip is a view.
     std::vector<std::vector<std::uint8_t>> payloads;
     payloads.reserve(selected.size());
