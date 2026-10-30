@@ -19,6 +19,7 @@ PPC_EXTERN_FUNC(__imp__RtlInitializeCriticalSectionAndSpinCount);
 PPC_EXTERN_FUNC(__imp__RtlEnterCriticalSection);
 PPC_EXTERN_FUNC(__imp__RtlTryEnterCriticalSection);
 PPC_EXTERN_FUNC(__imp__RtlLeaveCriticalSection);
+PPC_EXTERN_FUNC(__imp__RtlImageXexHeaderField);
 // Link the actual native PPC nonvolatile helper objects in public CI.
 PPC_EXTERN_FUNC(__savegprlr_28);
 PPC_EXTERN_FUNC(__restgprlr_28);
