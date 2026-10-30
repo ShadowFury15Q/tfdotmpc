@@ -3,7 +3,7 @@
 #include "guest_virtual_allocator.hpp"
 #include "kernel_guest_memory.hpp"
 #include "native_input.hpp"
-#include "ppc_context.h"
+#include "ppc_recomp_shared.h" // Includes the generated PPC configuration and context
 #include "xam_guest_input.hpp"
 #include <cstdint>
 #include <cstdio>
