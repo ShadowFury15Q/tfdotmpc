@@ -60,8 +60,9 @@ void execute_guest_entry(dotm::GuestMemory& memory, std::uint32_t entry) {
     std::fflush(stdout);
     memory.find_function(entry)(context, memory.base());
 #ifdef DOTM_SYNTHETIC_PRIVATE_BOOT
-    if (context.calls != 1)
-        throw std::runtime_error("Synthetic guest entry did not execute");
+    if (context.calls != 1 ||
+        memory.address(kInitialStackPointer - 16)[0] != 0x42)
+        throw std::runtime_error("Synthetic PPC entry did not execute on committed guest stack");
 #endif
 }
 }
