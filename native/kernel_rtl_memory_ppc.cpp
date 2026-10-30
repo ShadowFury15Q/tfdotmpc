@@ -16,3 +16,12 @@ PPC_FUNC(__imp__RtlCompareMemoryUlong) {
 PPC_FUNC(__imp__RtlNtStatusToDosError) {
     ctx.r3.u64 = dotm::rtl_ntstatus_to_dos_error(ctx.r3.u32);
 }
+
+PPC_FUNC(__imp__RtlMultiByteToUnicodeN) {
+    ctx.r3.u64 = dotm::rtl_bound_multi_byte_to_unicode(
+        ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r7.u32);
+}
+PPC_FUNC(__imp__RtlUnicodeToMultiByteN) {
+    ctx.r3.u64 = dotm::rtl_bound_unicode_to_multi_byte(
+        ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r7.u32);
+}
