@@ -6,6 +6,7 @@
 
 PPC_EXTERN_FUNC(__imp__NtAllocateVirtualMemory);
 PPC_EXTERN_FUNC(__imp__NtFreeVirtualMemory);
+PPC_EXTERN_FUNC(__imp__NtQueryVirtualMemory);
 PPC_EXTERN_FUNC(__imp__KeGetCurrentProcessType);
 
 namespace {
@@ -251,7 +252,46 @@ int main() {
         check(ctx.r3.u64 == dotm::kNtSuccess &&
               !large_memory.committed_range(0x50100000U, 1),
               "Xbox NOZERO allocation can be released");
+        // The original title calls NtQueryVirtualMemory when extending its CRT heap.
+        auto query = [&](std::uint32_t address, std::uint32_t output = ptr) {
+            ctx.r3.u64 = address;
+            ctx.r4.u64 = output;
+            __imp__NtQueryVirtualMemory(ctx, large_memory.base());
+            return static_cast<std::uint32_t>(ctx.r3.u64);
+        };
+        check(query(0x50000001U) == dotm::kNtSuccess &&
+              read32(large_memory, ptr) == 0x50000000U &&
+              read32(large_memory, ptr + 4) == 0x50000000U &&
+              read32(large_memory, ptr + 12) == 0x10000U &&
+              read32(large_memory, ptr + 16) == 0x1000U &&
+              read32(large_memory, ptr + 20) == 4U &&
+              read32(large_memory, ptr + 24) == 0x20000U,
+              "NtQueryVirtualMemory reports a committed 64 KiB guest run");
+        check(query(0x50010000U) == dotm::kNtSuccess &&
+              read32(large_memory, ptr) == 0x50010000U &&
+              read32(large_memory, ptr + 12) == 0xF0000U &&
+              read32(large_memory, ptr + 16) == 0x2000U &&
+              read32(large_memory, ptr + 20) == 0U,
+              "NtQueryVirtualMemory reports remaining reserved pages");
+        check(query(0x50100000U) == dotm::kNtSuccess &&
+              read32(large_memory, ptr) == 0x50100000U &&
+              read32(large_memory, ptr + 4) == 0U &&
+              read32(large_memory, ptr + 16) == 0x10000U,
+              "NtQueryVirtualMemory reports released guest pages as free");
+        write32(large_memory, ptr, 0xAABBCCDDU);
+        check(query(0x82000000U) == dotm::kNtInvalidParameter &&
+              read32(large_memory, ptr) == 0xAABBCCDDU,
+              "Unknown address must not corrupt query output");
+        check(query(0x50000000U, dotm::GuestMemory::kFunctionTableOffset) ==
+                  dotm::kNtInvalidParameter,
+              "Query output must never overwrite the native PPC dispatch table");
+        large_memory.decommit(ptr, 4096);
+        check(query(0x50000000U) == dotm::kNtInvalidParameter,
+              "Uncommitted output rejected");
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
+        check(dotm::nt_bound_query_virtual_memory(0x50000000U, ptr) ==
+                  dotm::kNtNotSupported,
+              "Unbound memory query must fail closed");
         std::cout << "DOTM synthetic Xbox 360 NT memory PPC ABI PASS\n";
         return 0;
     } catch (const std::exception& e) {

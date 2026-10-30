@@ -16,6 +16,9 @@ std::uint32_t nt_allocate_virtual_memory_guest(
     std::uint32_t base_pointer, std::uint32_t size_pointer,
     std::uint32_t allocation_type, std::uint32_t protect,
     std::uint32_t debug_memory);
+std::uint32_t nt_query_virtual_memory_guest(
+    GuestMemory& memory, const GuestVirtualAllocator& allocator,
+    std::uint32_t address, std::uint32_t output_pointer);
 std::uint32_t nt_free_virtual_memory_guest(
     GuestMemory& memory, GuestVirtualAllocator& allocator,
     std::uint32_t base_pointer, std::uint32_t size_pointer,
@@ -29,6 +32,8 @@ std::uint32_t nt_bound_allocate_virtual_memory(
     std::uint32_t base_pointer, std::uint32_t size_pointer,
     std::uint32_t allocation_type, std::uint32_t protect,
     std::uint32_t debug_memory);
+std::uint32_t nt_bound_query_virtual_memory(
+    std::uint32_t address, std::uint32_t output_pointer);
 std::uint32_t nt_bound_free_virtual_memory(
     std::uint32_t base_pointer, std::uint32_t size_pointer,
     std::uint32_t free_type, std::uint32_t debug_memory);

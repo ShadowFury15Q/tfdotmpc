@@ -118,6 +118,27 @@ std::uint32_t nt_allocate_virtual_memory_guest(
         return kNtNoMemory;
     }
 }
+std::uint32_t nt_query_virtual_memory_guest(
+    GuestMemory& memory, const GuestVirtualAllocator& allocator,
+    std::uint32_t address, std::uint32_t output_pointer) {
+    constexpr std::uint32_t kOutputSize = 28U;
+    const auto start = std::uint64_t(output_pointer);
+    const auto end = start + kOutputSize;
+    const auto table = GuestMemory::kFunctionTableOffset;
+    if (start < 0x10000U || end > GuestMemory::kAddressSpaceSize ||
+        (start < table + GuestMemory::kFunctionTableSize && end > table) ||
+        !memory.committed_range(start, kOutputSize))
+        return kNtInvalidParameter;
+    const auto region = allocator.query_region(address);
+    if (!region) return kNtInvalidParameter;
+    const std::uint32_t words[] = {
+        region->base_address, region->allocation_base,
+        region->allocation_protect, region->region_size,
+        region->state, region->protect, region->type};
+    for (std::uint32_t index = 0; index < 7; ++index)
+        write_be32(memory, output_pointer + index * 4, words[index]);
+    return kNtSuccess;
+}
 std::uint32_t nt_free_virtual_memory_guest(
     GuestMemory& memory, GuestVirtualAllocator& allocator,
     std::uint32_t base_pointer, std::uint32_t size_pointer,
@@ -175,6 +196,13 @@ std::uint32_t nt_bound_allocate_virtual_memory(
     if (!bound_memory || !bound_allocator) return kNtNotSupported;
     return nt_allocate_virtual_memory_guest(*bound_memory, *bound_allocator,
         base_pointer, size_pointer, allocation_type, protect, debug_memory);
+}
+std::uint32_t nt_bound_query_virtual_memory(
+    std::uint32_t address, std::uint32_t output_pointer) {
+    std::lock_guard lock(binding_mutex);
+    if (!bound_memory || !bound_allocator) return kNtNotSupported;
+    return nt_query_virtual_memory_guest(*bound_memory, *bound_allocator,
+                                         address, output_pointer);
 }
 std::uint32_t nt_bound_free_virtual_memory(
     std::uint32_t base_pointer, std::uint32_t size_pointer,

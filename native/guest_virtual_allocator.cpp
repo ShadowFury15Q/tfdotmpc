@@ -153,6 +153,34 @@ bool GuestVirtualAllocator::reserved_range(
     return address >= it->first &&
         std::uint64_t(address) + bytes <= std::uint64_t(it->first) + it->second.size;
 }
+std::optional<GuestVirtualRegion> GuestVirtualAllocator::query_region(
+    std::uint32_t address) const noexcept {
+    if (address < first_ || address >= limit_) return std::nullopt;
+    const auto aligned = address & ~std::uint32_t(kPageSize - 1);
+    auto next = blocks_.upper_bound(address);
+    if (next != blocks_.begin()) {
+        const auto current = std::prev(next);
+        const std::uint64_t block_end = std::uint64_t(current->first) + current->second.size;
+        if (address < block_end) {
+            const auto& pages = current->second.pages;
+            const auto index = (aligned - current->first) / kPageSize;
+            const bool committed = pages[index] != 0;
+            std::size_t first = index, end = index + 1;
+            while (first && (pages[first - 1] != 0) == committed) --first;
+            while (end < pages.size() && (pages[end] != 0) == committed) ++end;
+            return GuestVirtualRegion{
+                current->first + static_cast<std::uint32_t>(first * kPageSize),
+                current->first, 4U,
+                static_cast<std::uint32_t>((end - first) * kPageSize),
+                committed ? 0x1000U : 0x2000U,
+                committed ? 4U : 0U, 0x20000U};
+        }
+    }
+    // The guest address is in a free gap, not inside an NT reservation.
+    const auto free_end = next == blocks_.end() ? limit_ : next->first;
+    return GuestVirtualRegion{aligned, 0U, 0U, free_end - aligned,
+                              0x10000U, 0U, 0U};
+}
 bool GuestVirtualAllocator::commit_reserved(std::uint32_t address, std::uint64_t bytes) {
     const auto length = rounded_size(bytes);
     if (!reserved_range(address, length)) return false;

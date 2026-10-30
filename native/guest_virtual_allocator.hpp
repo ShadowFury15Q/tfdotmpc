@@ -9,6 +9,15 @@
 namespace dotm {
 // Native low-address guest allocator. Backend for future Xbox kernel memory
 // APIs; this class does NOT claim to implement the Xbox kernel ABI.
+struct GuestVirtualRegion {
+    std::uint32_t base_address;
+    std::uint32_t allocation_base;
+    std::uint32_t allocation_protect;
+    std::uint32_t region_size;
+    std::uint32_t state;
+    std::uint32_t protect;
+    std::uint32_t type;
+};
 class GuestVirtualAllocator {
 public:
     static constexpr std::uint64_t kPageSize = 4096;
@@ -39,6 +48,8 @@ public:
         if (it == blocks_.end()) return std::nullopt;
         return it->second.size;
     }
+    // Query the contiguous MEM_COMMIT, MEM_RESERVE or MEM_FREE run containing an address.
+    std::optional<GuestVirtualRegion> query_region(std::uint32_t address) const noexcept;
     std::size_t allocation_count() const noexcept { return blocks_.size(); }
     std::uint64_t allocated_bytes() const noexcept { return allocated_bytes_; }
 

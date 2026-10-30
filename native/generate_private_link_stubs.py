@@ -33,7 +33,8 @@ NATIVE = {"__imp__XGetAVPack", "__imp__KeGetCurrentProcessType",
           "__imp__XamLoaderSetLaunchData",
           "__imp__XamLoaderGetLaunchDataSize",
           "__imp__XamLoaderGetLaunchData",
-          "__imp__NtAllocateVirtualMemory", "__imp__NtFreeVirtualMemory"} | {
+          "__imp__NtAllocateVirtualMemory", "__imp__NtFreeVirtualMemory",
+          "__imp__NtQueryVirtualMemory"} | {
               f"__{action}gprlr_{reg}"
               for action in ("save", "rest") for reg in range(14, 32)
           } | {
