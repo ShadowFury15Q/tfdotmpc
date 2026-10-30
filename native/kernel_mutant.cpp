@@ -1,4 +1,5 @@
 #include "kernel_mutant.hpp"
+#include "kernel_thread.hpp"
 #include "guest_memory.hpp"
 #include <algorithm>
 #include <chrono>
@@ -335,7 +336,7 @@ std::uint32_t nt_bound_wait_for_single_object_ex(std::uint32_t handle,
     auto object = find_mutant(handle);
     if (!object) {
         auto event = find_event(handle);
-        if (!event) return kInvalidHandle;
+        if (!event) return nt_bound_wait_thread(handle, timeout);
         std::unique_lock lock(event->mutex);
         const auto pulse_at_start = event->pulse_epoch;
         ++event->waiters;
@@ -369,8 +370,10 @@ std::uint32_t nt_bound_wait_for_single_object_ex(std::uint32_t handle,
     return kSuccess;
 }
 std::uint32_t nt_bound_close_mutant(std::uint32_t handle) {
-    std::lock_guard lock(registry_mutex);
-    if (handles.erase(handle)) return kSuccess;
-    return event_handles.erase(handle) ? kSuccess : kInvalidHandle;
+    {
+        std::lock_guard lock(registry_mutex);
+        if (handles.erase(handle) || event_handles.erase(handle)) return kSuccess;
+    }
+    return nt_bound_close_thread(handle);
 }
 }

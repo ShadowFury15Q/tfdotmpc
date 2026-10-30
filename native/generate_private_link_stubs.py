@@ -39,6 +39,7 @@ NATIVE = {"__imp__XGetAVPack", "__imp__KeGetCurrentProcessType",
           "__imp__NtCreateMutant", "__imp__NtReleaseMutant",
           "__imp__NtCreateEvent", "__imp__NtSetEvent", "__imp__NtClearEvent", "__imp__NtPulseEvent",
           "__imp__NtWaitForSingleObjectEx", "__imp__NtClose",
+          "__imp__ExCreateThread", "__imp__NtResumeThread", "__imp__ExTerminateThread",
           "__imp__FscSetCacheElementCount", "__imp__FscGetCacheElementCount",
           "__imp__XexLoadImage", "__imp__XexGetModuleHandle",
           "__imp__XexGetProcedureAddress", "__imp__XexGetModuleSection", "__imp__XexUnloadImage", "__imp__RtlNtStatusToDosError"} | {
