@@ -248,16 +248,14 @@ def generate(directory: Path, minimum_units: int = 696) -> tuple[str, int, int]:
         )
     lines = [
         '#include "ppc_recomp_shared.h"',
-        '#include <cstdio>',
-        '#include <cstdlib>',
-        '// PRIVATE LINK PROBE ONLY: unresolved PPC imports deliberately abort.',
+        '#include <stdexcept>',
+        '// PRIVATE LINK PROBE ONLY: unresolved PPC imports throw diagnostic errors.',
         '// These are not implemented Xbox kernel, XAM or register-save semantics.',
     ]
     for name in unresolved:
         lines.extend([
             f"PPC_FUNC({name}) {{",
-            f'    std::fputs("Unimplemented PPC external: {name}\\n", stderr);',
-            "    std::abort();",
+            f'    throw std::runtime_error("Unimplemented PPC external: {name}");',
             "}",
         ])
     return "\n".join(lines) + "\n", len(units), len(unresolved)
