@@ -77,6 +77,19 @@ jobs:
           python scripts/test_prepare_private_boot.py
           if ($LASTEXITCODE -ne 0) { throw "Private original title preparation tests failed" }
 
+      # Source-only handoff for an offline PRIVATE build against user-owned PPC.
+      # Checkout contains no original game XEX, PE, assets or generated PPC.
+      - name: Upload public runtime sources and LZO dependency for offline private link
+        if: runner.os == 'Linux' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DOTM-Public-Private-Link-Inputs
+          path: |
+            native/**
+            scripts/**
+            native-build/_deps/lzokay-src/**
+          if-no-files-found: error
+
       - name: Upload native diagnostic binaries (no game files)
         if: success()
         uses: actions/upload-artifact@v4
