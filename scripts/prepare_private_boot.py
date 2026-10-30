@@ -95,6 +95,12 @@ def verified_or_extracted_pe(root, output, extractor):
         if path.is_file() and pe_entry(path) == (EXPECTED_IMAGE_BASE, EXPECTED_ENTRY):
             print("Using existing decrypted original PPC PE:", path)
             return path
+    if extractor is None:
+        # The uploaded original XEX is retail AES + Basic compression.
+        # It can be decoded losslessly without a separate executable.
+        from extract_dotm_xex_basic import extract as extract_original_xex
+        return verify_pe(extract_original_xex(
+            root / "default.xex", output / "original_title.pe"))
     executable, kind = find_extractor(extractor, root)
     path = output / "original_title.pe"
     if path.exists():
