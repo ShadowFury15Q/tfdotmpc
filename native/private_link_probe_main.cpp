@@ -2,6 +2,7 @@
 #include "guest_memory.hpp"
 #include "guest_virtual_allocator.hpp"
 #include "kernel_guest_memory.hpp"
+#include "kernel_critical_sections.hpp"
 #include "native_input.hpp"
 #include "ppc_recomp_shared.h" // Includes the generated PPC configuration and context
 #include "xam_guest_input.hpp"
@@ -37,10 +38,12 @@ struct ScopedHostBindings {
                        dotm::GuestVirtualAllocator& allocator,
                        dotm::XamInputHost& input) {
         dotm::bind_kernel_guest_memory(&memory, &allocator);
+        dotm::bind_kernel_critical_sections(&memory);
         dotm::bind_xam_guest_input(&input, &memory);
     }
     ~ScopedHostBindings() {
         dotm::bind_xam_guest_input(nullptr, nullptr);
+        dotm::bind_kernel_critical_sections(nullptr);
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
     }
     ScopedHostBindings(const ScopedHostBindings&) = delete;

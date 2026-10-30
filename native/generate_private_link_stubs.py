@@ -19,7 +19,12 @@ ALIAS = re.compile(
 )
 MAPPING = re.compile(r"\{\s*(0x[0-9A-Fa-f]+)\s*,\s*([A-Za-z_]\w*)\s*\}")
 HELPER = re.compile(r"__?(?:save|rest)(?:gprlr|fpr|vmx)_\d+")
-NATIVE = {"__imp__KeTlsAlloc", "__imp__KeTlsFree", "__imp__KeTlsGetValue", "__imp__KeTlsSetValue",
+NATIVE = {"__imp__RtlInitializeCriticalSection",
+          "__imp__RtlInitializeCriticalSectionAndSpinCount",
+          "__imp__RtlEnterCriticalSection",
+          "__imp__RtlTryEnterCriticalSection",
+          "__imp__RtlLeaveCriticalSection",
+          "__imp__KeTlsAlloc", "__imp__KeTlsFree", "__imp__KeTlsGetValue", "__imp__KeTlsSetValue",
           "__imp__XamInputGetState", "__imp__XamInputGetCapabilities",
           "__imp__NtAllocateVirtualMemory", "__imp__NtFreeVirtualMemory"} | {
               f"__{action}gprlr_{reg}"
