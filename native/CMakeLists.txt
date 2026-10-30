@@ -122,6 +122,15 @@ add_test(NAME xenonrecomp_xam_input_original_import_abi
 set(DOTM_PRIVATE_PPC_DIR "" CACHE PATH "Private XenonRecomp C++ directory (never commit it)")
 if(DOTM_PRIVATE_PPC_DIR)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  # The original XenonRecomp output uses Clang builtins and SIMDe x86 headers.
+  # Keep these dependencies private: public synthetic CI needs neither.
+  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    message(FATAL_ERROR "Private XenonRecomp output requires a Clang C++ compiler")
+  endif()
+  find_path(DOTM_SIMDE_INCLUDE_DIR NAMES x86/avx.h PATH_SUFFIXES simde)
+  if(NOT DOTM_SIMDE_INCLUDE_DIR)
+    message(FATAL_ERROR "Private PPC requires SIMDe headers: set DOTM_SIMDE_INCLUDE_DIR to the directory containing x86/avx.h")
+  endif()
   foreach(required_file ppc_recomp_shared.h ppc_context.h ppc_func_mapping.cpp)
     if(NOT EXISTS "${DOTM_PRIVATE_PPC_DIR}/${required_file}")
       message(FATAL_ERROR "Private XenonRecomp file missing: ${required_file}")
@@ -154,7 +163,16 @@ if(DOTM_PRIVATE_PPC_DIR)
     "${DOTM_PRIVATE_PPC_DIR}/ppc_func_mapping.cpp"
     ${DOTM_PRIVATE_PPC_UNITS} "${DOTM_PRIVATE_STUBS}")
   target_include_directories(dotm_private_link_probe
-    PRIVATE "${DOTM_PRIVATE_PPC_DIR}")
+    PRIVATE "${DOTM_PRIVATE_PPC_DIR}" "${DOTM_SIMDE_INCLUDE_DIR}")
+  # Older SIMDe releases omit the SSE MXCSR rounding mask constant.
+  # Force-include a public compatibility shim; never modify generated files.
+  if(MSVC)
+    target_compile_options(dotm_private_link_probe PRIVATE
+      "/FI${CMAKE_CURRENT_SOURCE_DIR}/private_ppc_simde_compat.h")
+  else()
+    target_compile_options(dotm_private_link_probe PRIVATE
+      -include "${CMAKE_CURRENT_SOURCE_DIR}/private_ppc_simde_compat.h")
+  endif()
   target_link_libraries(dotm_private_link_probe
     PRIVATE dotm_recomp_bridge dotm_xam_input dotm_kernel_guest_memory)
   if(MSVC)
