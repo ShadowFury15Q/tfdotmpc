@@ -7,6 +7,8 @@ on:
       - 'native/**'
       - 'scripts/private_ppc_preflight.py'
       - 'scripts/test_private_ppc_preflight.py'
+      - 'scripts/prepare_private_boot.py'
+      - 'scripts/test_prepare_private_boot.py'
       - '.github/workflows/test_dotm_native_runtime.yml'
   workflow_dispatch:
 
@@ -58,6 +60,12 @@ jobs:
         run: |
           python scripts/test_private_ppc_preflight.py
           if ($LASTEXITCODE -ne 0) { throw "Private PPC preflight tests failed" }
+
+      - name: Test original private XEX/PE preparation (no game assets)
+        shell: pwsh
+        run: |
+          python scripts/test_prepare_private_boot.py
+          if ($LASTEXITCODE -ne 0) { throw "Private original title preparation tests failed" }
 
       - name: Upload native diagnostic binaries (no game files)
         if: success()
