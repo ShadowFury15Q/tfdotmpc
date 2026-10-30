@@ -87,11 +87,24 @@ int main() {
         check(static_cast<bool>(out.write(
             reinterpret_cast<const char*>(header.data()), header.size())));
     }
+    // Reject corrupted ordinal before allocating any kernel export pages.
+    for (int i = 0; i < 4; ++i)
+        memory.address(0x820009D8U)[i] = std::uint8_t(0xDEADBEEFU >> (24 - i * 8));
+    bool bad_command_line_import = false;
+    try { dotm::install_original_xex_title_header(memory, file.path, entry); }
+    catch (const std::runtime_error&) { bad_command_line_import = true; }
+    check(bad_command_line_import && !memory.committed_range(0x81907000U, 1));
+    for (int i = 0; i < 4; ++i)
+        memory.address(0x820009D8U)[i] = std::uint8_t(0x000101AEU >> (24 - i * 8));
     check(dotm::install_original_xex_title_header(memory, file.path, entry)
           == 0x81000000U);
     check(get32(memory, 0x8200085CU) == 0x81904000U);
     check(get32(memory, 0x81904000U + 16) == 0U);
     check(get32(memory, 0x82000998U) == 0x81900000U);
+    check(get32(memory, 0x820009D8U) == 0x81907000U);
+    check(std::strcmp(reinterpret_cast<const char*>(memory.address(0x81907000U)),
+                      "\"default.xex\"") == 0,
+          "ExLoadedCommandLine points to a real guest ANSI command line");
     check(get32(memory, 0x82000978U) == 0x81902000U);
     check(get32(memory, 0x81902000U) == 0x20U);
     check(memory.address(0x81902004U)[0] == 6U);
