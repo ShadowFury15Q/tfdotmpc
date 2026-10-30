@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <vector>
 
 namespace dotm {
 // Native low-address guest allocator. Backend for future Xbox kernel memory
@@ -24,12 +25,14 @@ public:
     std::optional<std::uint32_t> reserve(
         std::uint64_t bytes, std::uint64_t alignment = kPageSize);
     bool reserve_at(std::uint32_t address, std::uint64_t bytes);
-    // Only full-region commits are supported; partial commits fail closed.
+    // Commit any page-aligned subrange of a reserved guest region.
     bool commit_reserved(std::uint32_t address, std::uint64_t bytes);
-    // Full-region decommit retains the reservation for a later recommit.
+    // Decommit any committed page-aligned subrange, retaining its reservation.
     bool decommit_reserved(std::uint32_t address, std::uint64_t bytes);
     // Exact-base release revokes host access; failure preserves tracking.
     bool release(std::uint32_t address);
+    // Query whether an entire page-aligned range belongs to one reservation.
+    bool reserved_range(std::uint32_t address, std::uint64_t bytes) const noexcept;
     // Exact-base query used by the NT MEM_RELEASE ABI; interior pointers fail.
     std::optional<std::uint64_t> allocation_size(std::uint32_t address) const noexcept {
         const auto it = blocks_.find(address);
@@ -49,7 +52,7 @@ private:
     void reserve_and_track(std::uint32_t address, std::uint64_t bytes);
     GuestMemory& memory_;
     std::uint32_t first_, limit_;
-    struct Block { std::uint64_t size; bool committed; };
+    struct Block { std::uint64_t size; std::vector<std::uint8_t> pages; };
     std::map<std::uint32_t, Block> blocks_;
     std::uint64_t allocated_bytes_ = 0;
 };
