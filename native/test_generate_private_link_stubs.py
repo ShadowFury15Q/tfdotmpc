@@ -32,9 +32,9 @@ class PrivateLinkStubsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Incomplete private"):
                 generate(root, 2)
             source, units, unresolved = generate(root, 1)
-            self.assertEqual((units, unresolved), (1, 2))
+            self.assertEqual((units, unresolved), (1, 1))
             self.assertIn("PPC_FUNC(__imp__KeWaitForSingleObject)", source)
-            self.assertIn("PPC_FUNC(__savefpr_14)", source)
+            self.assertNotIn("PPC_FUNC(__savefpr_14)", source)
             self.assertNotIn("PPC_FUNC(_xstart)", source)
             self.assertNotIn("PPC_FUNC(__imp__XamInputGetState)", source)
             self.assertNotIn("PPC_FUNC(__imp__XamInputGetCapabilities)", source)
