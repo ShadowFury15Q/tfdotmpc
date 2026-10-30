@@ -193,3 +193,25 @@ target_link_libraries(dotm_synthetic_private_link_test
   PRIVATE dotm_recomp_bridge dotm_xam_input dotm_guest_virtual_allocator dotm_kernel_guest_memory)
 add_test(NAME synthetic_full_ppc_link_and_xam_import
   COMMAND dotm_synthetic_private_link_test)
+
+# Exercise the same private boot probe against synthetic PPC units. This
+# tests stack setup and host bindings without distributing or running game code.
+add_executable(dotm_synthetic_private_boot_probe
+  private_link_probe_main.cpp
+  compiled_ppc_adapter.cpp
+  xam_ppc_import.cpp kernel_ppc_import.cpp
+  "${DOTM_SYNTHETIC_PPC_DIR}/ppc_func_mapping.cpp"
+  "${DOTM_SYNTHETIC_PPC_DIR}/ppc_recomp.0.cpp"
+  "${DOTM_SYNTHETIC_STUBS}")
+target_compile_definitions(dotm_synthetic_private_boot_probe
+  PRIVATE DOTM_SYNTHETIC_PRIVATE_BOOT=1)
+target_include_directories(dotm_synthetic_private_boot_probe PRIVATE
+  "${DOTM_SYNTHETIC_PPC_DIR}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures")
+target_link_libraries(dotm_synthetic_private_boot_probe PRIVATE
+  dotm_recomp_bridge dotm_xam_input dotm_guest_virtual_allocator
+  dotm_kernel_guest_memory)
+add_test(NAME synthetic_private_boot_link_probe
+  COMMAND dotm_synthetic_private_boot_probe)
+add_test(NAME synthetic_private_boot_executes_entry
+  COMMAND dotm_synthetic_private_boot_probe --synthetic-entry)
