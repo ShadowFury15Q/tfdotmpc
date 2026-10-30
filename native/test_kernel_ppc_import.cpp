@@ -86,21 +86,21 @@ int main() {
               "Failed allocation leaves guest arguments unchanged");
         check(allocate(0, 0) == dotm::kNtInvalidParameter,
               "Zero region rejected");
-        check(allocate(0, 4096, 0x2000) == dotm::kNtSuccess,
+        check(allocate(0, 8192, 0x2000) == dotm::kNtSuccess,
               "Reservation-only must reserve guest address space");
         const auto reserved = read32(memory, ptr);
         check(!memory.committed_range(reserved, 1) &&
-              heap.allocation_size(reserved) == 4096 &&
+              heap.allocation_size(reserved) == 8192 &&
               heap.allocated_bytes() == 8192,
               "MEM_RESERVE does not commit physical guest pages");
-        check(allocate(reserved, 2048, 0x1000) == dotm::kNtNotSupported,
+        check(allocate(reserved, 4096, 0x1000) == dotm::kNtNotSupported,
               "Partial MEM_COMMIT is rejected without changing reservation");
         check(!memory.committed_range(reserved, 1),
               "Unsupported partial commit must not touch guest pages");
-        check(allocate(reserved, 4096, 0x1000) == dotm::kNtSuccess,
+        check(allocate(reserved, 8192, 0x1000) == dotm::kNtSuccess,
               "MEM_COMMIT activates a full reserved region");
-        check(memory.committed_range(reserved, 4096) &&
-              heap.allocated_bytes() == 12288,
+        check(memory.committed_range(reserved, 8192) &&
+              heap.allocated_bytes() == 16384,
               "Committed reservation has real writable guest memory");
         check(release(reserved, 0) == dotm::kNtSuccess,
               "MEM_RELEASE frees committed reservation");
