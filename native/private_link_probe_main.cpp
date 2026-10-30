@@ -8,6 +8,7 @@
 #include "native_input.hpp"
 #include "ppc_recomp_shared.h" // Includes the generated PPC configuration and context
 #include "xam_guest_input.hpp"
+#include "xam_launch_data.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -38,13 +39,16 @@ void unresolved_indirect(PPCContext&, std::uint8_t*) {
 struct ScopedHostBindings {
     ScopedHostBindings(dotm::GuestMemory& memory,
                        dotm::GuestVirtualAllocator& allocator,
-                       dotm::XamInputHost& input) {
+                       dotm::XamInputHost& input,
+                       dotm::XamLaunchDataHost& launch_data) {
         dotm::bind_kernel_guest_memory(&memory, &allocator);
         dotm::bind_kernel_critical_sections(&memory);
         dotm::bind_xex_optional_header(&memory);
         dotm::bind_xam_guest_input(&input, &memory);
+        dotm::bind_xam_launch_data(&launch_data, &memory);
     }
     ~ScopedHostBindings() {
+        dotm::bind_xam_launch_data(nullptr, nullptr);
         dotm::bind_xam_guest_input(nullptr, nullptr);
         dotm::bind_xex_optional_header(nullptr);
         dotm::bind_kernel_critical_sections(nullptr);
@@ -117,7 +121,8 @@ void execute_guest_entry(dotm::GuestMemory& memory, std::uint32_t entry) {
     dotm::NativeInput native_input;
     dotm::XamInputHost xam_input;
     xam_input.publish(native_input.next_frame());
-    ScopedHostBindings bindings(memory, allocator, xam_input);
+    dotm::XamLaunchDataHost launch_data;
+    ScopedHostBindings bindings(memory, allocator, xam_input, launch_data);
 
     PPCContext context{};
     context.r1.u64 = kInitialStackPointer;
