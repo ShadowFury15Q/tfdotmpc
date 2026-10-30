@@ -14,6 +14,10 @@ PPC_FUNC(__imp__XexLoadImage) {
 PPC_FUNC(__imp__XexGetModuleHandle) {
     ctx.r3.u64 = dotm::bound_xex_get_module_handle(ctx.r3.u32, ctx.r4.u32);
 }
+PPC_FUNC(__imp__XexGetModuleSection) {
+    ctx.r3.u64 = dotm::bound_xex_get_module_section(
+        ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32);
+}
 PPC_FUNC(__imp__XexGetProcedureAddress) {
     ctx.r3.u64 = dotm::bound_xex_get_procedure_address(
         ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);

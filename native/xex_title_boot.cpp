@@ -23,6 +23,8 @@ constexpr std::uint32_t kNtInvalidHandle = 0xC0000008U;
 constexpr std::uint32_t kNtInvalidParameter = 0xC000000DU;
 constexpr std::uint32_t kNtNotSupported = 0xC00000BBU;
 constexpr std::uint32_t kNtDriverEntryNotFound = 0xC0000263U;
+constexpr std::uint32_t kNtNotFound = 0xC0000225U;
+constexpr std::uint32_t kXexResourceInfoKey = 0x000002FFU;
 std::atomic<GuestMemory*> bound_system_memory{nullptr};
 std::mutex module_mutex;
 // XboxHardwareInfo and KeDebugMonitorData are kernel-exported data imports.
@@ -129,6 +131,65 @@ std::uint32_t bound_xex_get_module_handle(
     }
     put32(*memory, output_pointer, 0U);
     return 1168U; // Xbox ERROR_NOT_FOUND.
+}
+// XexGetModuleSection uses XEX2 RESOURCE_INFO (key 0x000002FF), not PE
+// section headers. Original DOTM queries its 7-byte "HashSec" resource.
+std::uint32_t bound_xex_get_module_section(
+    std::uint32_t module_handle, std::uint32_t section_name,
+    std::uint32_t output_address, std::uint32_t output_size) {
+    std::lock_guard lock(module_mutex);
+    auto* memory = bound_system_memory.load(std::memory_order_acquire);
+    if (!memory) return kNtNotSupported;
+    if (module_handle != kModuleAddress && module_handle != kXamModuleAddress)
+        return kNtInvalidHandle;
+    const auto name = read_module_name(*memory, section_name);
+    if (name.empty() || name.size() > 8 ||
+        !valid_output(*memory, output_address) ||
+        !valid_output(*memory, output_size) ||
+        (std::uint64_t(output_address) < std::uint64_t(output_size) + 4 &&
+         std::uint64_t(output_size) < std::uint64_t(output_address) + 4))
+        return kNtInvalidParameter;
+    // The native XAM handle has no proprietary XEX resource section table.
+    if (module_handle == kXamModuleAddress) return kNtNotFound;
+    if (!memory->committed_range(kHeaderAddress, 24)) return kNtNotFound;
+    const auto* header = memory->address(kHeaderAddress);
+    const auto header_size = be32(header + 8);
+    const auto header_count = be32(header + 20);
+    if (be32(header) != 0x58455832U || header_size < 24 ||
+        header_size > kMaximumHeaderSize ||
+        !memory->committed_range(kHeaderAddress, header_size) ||
+        header_count > (header_size - 24) / 8)
+        return kNtInvalidParameter;
+    for (std::uint32_t i = 0; i < header_count; ++i) {
+        const auto* field = header + 24 + i * 8;
+        if (be32(field) != kXexResourceInfoKey) continue;
+        const auto offset = be32(field + 4);
+        if (offset > header_size || header_size - offset < 4)
+            return kNtInvalidParameter;
+        const auto bytes = be32(header + offset);
+        if (bytes < 4 || (bytes - 4) % 16 || bytes > header_size - offset)
+            return kNtInvalidParameter;
+        for (std::uint32_t pos = offset + 4; pos < offset + bytes; pos += 16) {
+            const auto* resource = header + pos;
+            std::string resource_name;
+            for (int j = 0; j < 8 && resource[j]; ++j) {
+                const auto ch = resource[j];
+                if (ch >= 0x80) return kNtInvalidParameter;
+                resource_name.push_back(char(ch >= 'A' && ch <= 'Z'
+                    ? ch + ('a' - 'A') : ch));
+            }
+            if (resource_name != name) continue;
+            const auto address = be32(resource + 8);
+            const auto size = be32(resource + 12);
+            if (!size || !memory->committed_range(address, size))
+                return kNtInvalidParameter;
+            put32(*memory, output_address, address);
+            put32(*memory, output_size, size);
+            return 0U;
+        }
+        return kNtNotFound;
+    }
+    return kNtNotFound;
 }
 std::uint32_t bound_xex_get_procedure_address(
     std::uint32_t module_handle, std::uint32_t ordinal,

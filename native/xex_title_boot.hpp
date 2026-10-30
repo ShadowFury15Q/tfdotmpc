@@ -12,6 +12,9 @@ std::uint32_t bound_xex_load_image(
     std::uint32_t minimum_version, std::uint32_t output_pointer);
 std::uint32_t bound_xex_get_module_handle(
     std::uint32_t name_pointer, std::uint32_t output_pointer);
+std::uint32_t bound_xex_get_module_section(
+    std::uint32_t module_handle, std::uint32_t section_name,
+    std::uint32_t output_address, std::uint32_t output_size);
 std::uint32_t bound_xex_get_procedure_address(
     std::uint32_t module_handle, std::uint32_t ordinal,
     std::uint32_t output_pointer);

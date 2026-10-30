@@ -87,6 +87,20 @@ int main() {
         check(static_cast<bool>(out.write(
             reinterpret_cast<const char*>(header.data()), header.size())));
     }
+    // The original title's XEX2 resource directory is independent of PE
+    // section names; exercise the same HashSec lookup as the game.
+    put32(header, 20, 3);
+    put32(header, 40, 0x000002FFU);
+    put32(header, 44, 0x180U);
+    put32(header, 0x180U, 20U);
+    std::memcpy(header.data() + 0x184U, "HashSec", 7);
+    put32(header, 0x18CU, 0x82000000U);
+    put32(header, 0x190U, 128U);
+    {
+        std::ofstream out(file.path, std::ios::binary | std::ios::trunc);
+        check(static_cast<bool>(out.write(
+            reinterpret_cast<const char*>(header.data()), header.size())));
+    }
     // Reject corrupted ordinal before allocating any kernel export pages.
     for (int i = 0; i < 4; ++i)
         memory.address(0x820009D8U)[i] = std::uint8_t(0xDEADBEEFU >> (24 - i * 8));
@@ -135,6 +149,30 @@ int main() {
     check(dotm::bound_xex_get_module_handle(0U, handle_ptr) == 0U &&
           get32(memory, handle_ptr) == 0x81901000U,
           "Null module name resolves the original title module");
+    std::memcpy(memory.address(name_ptr + 0x20U), "HashSec", 8);
+    check(dotm::bound_xex_get_module_section(
+              0x81901000U, name_ptr + 0x20U, handle_ptr + 0x10U,
+              handle_ptr + 0x14U) == 0U &&
+          get32(memory, handle_ptr + 0x10U) == 0x82000000U &&
+          get32(memory, handle_ptr + 0x14U) == 128U,
+          "Original XEX2 HashSec resource resolves to its actual guest range");
+    check(dotm::bound_xex_get_module_section(
+              0x81905000U, name_ptr + 0x20U, handle_ptr + 0x10U,
+              handle_ptr + 0x14U) == 0xC0000225U,
+          "XAM must not invent a resource section");
+    check(dotm::bound_xex_get_module_section(
+              0x12345678U, name_ptr + 0x20U, handle_ptr + 0x10U,
+              handle_ptr + 0x14U) == 0xC0000008U,
+          "Unknown module handles must be rejected");
+    check(dotm::bound_xex_get_module_section(
+              0x81901000U, name_ptr + 0x20U, handle_ptr + 0x10U,
+              handle_ptr + 0x12U) == 0xC000000DU,
+          "Overlapping output pointers must not corrupt the guest");
+    std::memcpy(memory.address(name_ptr + 0x20U), "Missing", 8);
+    check(dotm::bound_xex_get_module_section(
+              0x81901000U, name_ptr + 0x20U, handle_ptr + 0x10U,
+              handle_ptr + 0x14U) == 0xC0000225U,
+          "Unknown resource must return STATUS_NOT_FOUND");
     check(dotm::bound_xex_get_procedure_address(0x81905000U, 2815U,
                                                 handle_ptr) == 0xC0000263U &&
           get32(memory, handle_ptr) == 0U,
