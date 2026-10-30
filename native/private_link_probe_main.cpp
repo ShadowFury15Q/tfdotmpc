@@ -11,6 +11,14 @@
 #include <cstring>
 #include <exception>
 #include <stdexcept>
+#ifdef DOTM_SYNTHETIC_PRIVATE_BOOT
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <system_error>
+#include <vector>
+#endif
 
 namespace {
 constexpr std::uint32_t kStackBase = 0x70000000U;
@@ -38,6 +46,57 @@ struct ScopedHostBindings {
     ScopedHostBindings(const ScopedHostBindings&) = delete;
     ScopedHostBindings& operator=(const ScopedHostBindings&) = delete;
 };
+
+#ifdef DOTM_SYNTHETIC_PRIVATE_BOOT
+// Exercise the real PE loading and entry-verification path in public CI.
+// This PE contains only generated test bytes, never original game content.
+void load_synthetic_boot_pe(dotm::GuestMemory& memory) {
+    std::vector<std::uint8_t> pe(0x600, 0);
+    const auto put16 = [&](std::size_t offset, std::uint16_t value) {
+        pe[offset] = static_cast<std::uint8_t>(value);
+        pe[offset + 1] = static_cast<std::uint8_t>(value >> 8);
+    };
+    const auto put32 = [&](std::size_t offset, std::uint32_t value) {
+        for (int i = 0; i < 4; ++i)
+            pe[offset + i] = static_cast<std::uint8_t>(value >> (8 * i));
+    };
+    put16(0, 0x5A4D);
+    put32(0x3C, 0x80);
+    put32(0x80, 0x4550);
+    put16(0x84, 0x01F2);
+    put16(0x86, 1);
+    put16(0x94, 0xE0);
+    put16(0x98, 0x10B);
+    put32(0x98 + 16, 0x0077F670U);
+    put32(0x98 + 28, dotm::GuestMemory::kImageBase);
+    put32(0x98 + 60, 0x200);
+    std::memcpy(pe.data() + 0x178, ".text", 5);
+    put32(0x178 + 8, 0x1000);
+    put32(0x178 + 12, 0x0077F000U);
+    put32(0x178 + 16, 0x100);
+    put32(0x178 + 20, 0x200);
+
+    const auto path = std::filesystem::temp_directory_path() /
+        ("dotm_synthetic_boot_" +
+         std::to_string(reinterpret_cast<std::uintptr_t>(&memory)) + "_" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+         ".pe");
+    struct RemoveTemporaryFile {
+        std::filesystem::path path;
+        ~RemoveTemporaryFile() {
+            std::error_code ignored;
+            std::filesystem::remove(path, ignored);
+        }
+    } cleanup{path};
+    {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        if (!output.write(reinterpret_cast<const char*>(pe.data()),
+                          static_cast<std::streamsize>(pe.size())))
+            throw std::runtime_error("Cannot create synthetic PPC PE fixture");
+    }
+    memory.load_pe(path);
+}
+#endif
 
 void execute_guest_entry(dotm::GuestMemory& memory, std::uint32_t entry) {
     // Reserve a dedicated 1 MiB guest stack outside the NT heap range.
@@ -82,9 +141,13 @@ int main(int argc, char** argv) {
     try {
         dotm::GuestMemory memory;
         if (run_original) memory.load_pe(argv[2]);
+#ifdef DOTM_SYNTHETIC_PRIVATE_BOOT
+        if (synthetic_entry) load_synthetic_boot_pe(memory);
+#endif
         const auto result = dotm::install_actual_xenon_table(memory, unresolved_indirect);
-        if (run_original && memory.loaded_pe_entry() != result.guest_entry)
-            throw std::runtime_error("Private PE entry point differs from the linked original _xstart mapping");
+        if ((run_original || synthetic_entry) &&
+            memory.loaded_pe_entry() != result.guest_entry)
+            throw std::runtime_error("Loaded PPC PE entry differs from linked _xstart mapping");
         std::printf("Private native PPC link verified: %zu mapped functions, entry 0x%08X\n",
                     result.mapped_functions, result.guest_entry);
         if (!run_original && !synthetic_entry) {
