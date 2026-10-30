@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <exception>
 #include <stdexcept>
+#include <string>
 
 namespace {
 void fail_if(bool condition, const char* message) {
@@ -29,6 +30,19 @@ int main() {
         PPCContext context{};
         memory.find_function(result.guest_entry)(context, memory.base());
         fail_if(context.calls != 1, "Synthetic _xstart did not execute");
+
+        // The first unsupported Xbox import must surface an actionable
+        // error to the host, rather than aborting the entire process.
+        bool unresolved_import_reported = false;
+        try {
+            memory.find_function(0x82500004U)(context, memory.base());
+        } catch (const std::runtime_error& error) {
+            unresolved_import_reported =
+                std::string(error.what()).find("__imp__KeWaitForSingleObject")
+                != std::string::npos;
+        }
+        fail_if(!unresolved_import_reported,
+                "Unimplemented PPC import did not return a named diagnostic");
 
         dotm::NativeInput input;
         dotm::XamInputHost xam;
