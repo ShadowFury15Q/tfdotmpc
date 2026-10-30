@@ -92,12 +92,37 @@ std::optional<std::vector<std::uint8_t>> export_ue3_texture_dds(
     if(texture.format!="PF_DXT1"&&texture.format!="PF_DXT5")
         return std::nullopt;
     const bool bc3=(texture.format=="PF_DXT5");
-    for(const auto& mip:parse_ue3_texture_mips(pkg,idx)){
-        if(mip.storage!=Ue3MipStorage::Embedded&&
-           mip.storage!=Ue3MipStorage::LzoEmbedded)continue;
-        const auto bytes=read_ue3_texture_mip_bytes(pkg,idx,mip);
-        return convert_xbox_tiled_bc_to_dds(mip.width,mip.height,bc3,bytes);
+    const auto levels=parse_ue3_texture_mips(pkg,idx);
+    std::vector<std::size_t> selected;
+    for(std::size_t i=0;i<levels.size();++i){
+        const auto& mip=levels[i];
+        const bool resident=mip.storage==Ue3MipStorage::Embedded||
+                            mip.storage==Ue3MipStorage::LzoEmbedded;
+        if(!resident){
+            if(!selected.empty())break; // Never bridge an external/absent mip.
+            continue; // Highest-resolution levels may be streamed externally.
+        }
+        if(!selected.empty()){
+            const auto& prev=levels[selected.back()];
+            if((prev.width==1&&prev.height==1)||
+               mip.width!=std::max(1u,prev.width/2)||
+               mip.height!=std::max(1u,prev.height/2))
+                throw std::invalid_argument("Noncontiguous resident UE3 mip dimensions");
+        }
+        selected.push_back(i);
     }
-    return std::nullopt;
+    if(selected.empty())return std::nullopt;
+    // Own decompressed bytes until conversion finishes: XboxTiledBcMip is a view.
+    std::vector<std::vector<std::uint8_t>> payloads;
+    payloads.reserve(selected.size());
+    for(const auto i:selected)
+        payloads.push_back(read_ue3_texture_mip_bytes(pkg,idx,levels[i]));
+    std::vector<XboxTiledBcMip> views;
+    views.reserve(selected.size());
+    for(std::size_t j=0;j<selected.size();++j){
+        const auto& mip=levels[selected[j]];
+        views.push_back({mip.width,mip.height,payloads[j]});
+    }
+    return convert_xbox_tiled_bc_mips_to_dds(views,bc3);
 }
 }
