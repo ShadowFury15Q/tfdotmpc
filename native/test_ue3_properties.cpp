@@ -181,6 +181,29 @@ int main(){
    catch(const std::runtime_error&){external_rejected=true;}
    check(external_rejected,"Do not fabricate external mip data");
   }
+  // Stage 44: malformed LZO block tables must be rejected before
+  // allocating the advertised uncompressed buffer.
+  const auto valid_lzo=example(false,true,true);
+  const auto valid_lzo_pkg=dotm::Ue3Package::parse(valid_lzo);
+  const auto valid_lzo_mips=dotm::parse_ue3_texture_mips(valid_lzo_pkg,0);
+  const auto lzo_offset=std::size_t(valid_lzo_mips.at(0).source_offset);
+  check(lzo_offset+24<=valid_lzo.size(),"Synthetic LZO header bounds");
+  for(const auto& mutation:std::vector<std::pair<std::size_t,std::uint32_t>>{
+          {4,0u},           // Invalid block size.
+          {8,0u},           // Advertised compressed byte sum is wrong.
+          {12,31u},         // Uncompressed size disagrees with bulk metadata.
+          {16,0xffffffffu},// Compressed block extends beyond source bytes.
+          {20,33u},        // Expanded block exceeds declared output size.
+          {20,31u}}){      // Expanded block sum is too short.
+   auto damaged=valid_lzo;
+   set32(damaged,lzo_offset+mutation.first,mutation.second);
+   const auto damaged_pkg=dotm::Ue3Package::parse(damaged);
+   const auto damaged_mips=dotm::parse_ue3_texture_mips(damaged_pkg,0);
+   bool rejected=false;
+   try{(void)dotm::read_ue3_texture_mip_bytes(damaged_pkg,0,damaged_mips.at(0));}
+   catch(const std::runtime_error&){rejected=true;}
+   check(rejected,"Reject malformed LZO block descriptor");
+  }
   // Stage 42: actual package-to-DDS export must include consecutive local
   // mips, skip unavailable higher levels, and never bridge streamed gaps.
   const auto chain_pkg=dotm::Ue3Package::parse(example(false,true,false,1));

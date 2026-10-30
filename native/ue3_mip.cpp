@@ -26,24 +26,32 @@ std::vector<std::uint8_t> expand_lzo(std::span<const std::uint8_t> input,std::ui
     const std::size_t blocks=(std::size_t(raw)+blocksize-1)/blocksize;
     if(blocks>4096)throw std::runtime_error("Too many compressed texture blocks");
     checked(input,16,8*blocks);
-    std::size_t inpos=16+8*blocks,outpos=0,comp_sum=0;
-    std::vector<std::uint8_t> result(outsize);
+    // Validate the entire block table and compressed payload before
+    // allocating the uncompressed buffer or calling the LZO decoder.
+    const std::size_t data_start=16+8*blocks;
+    std::size_t scan_in=data_start,scan_out=0,comp_sum=0;
     for(std::size_t j=0;j<blocks;++j){
         const auto comp=be(input,16+j*8),expanded=be(input,20+j*8);
         if(!comp||!expanded||expanded>blocksize)
             throw std::runtime_error("Invalid compressed texture sub-block");
-        checked(input,inpos,comp);
-        if(outpos>result.size()||expanded>result.size()-outpos)
+        checked(input,scan_in,comp);
+        if(expanded>std::size_t(outsize)-scan_out)
             throw std::runtime_error("Overlong texture mip decompression");
+        scan_in+=comp;scan_out+=expanded;comp_sum+=comp;
+    }
+    if(stored!=comp_sum||scan_out!=outsize||scan_in!=input.size())
+        throw std::runtime_error("Compressed DOTM mip length mismatch");
+    std::vector<std::uint8_t> result(outsize);
+    std::size_t inpos=data_start,outpos=0;
+    for(std::size_t j=0;j<blocks;++j){
+        const auto comp=be(input,16+j*8),expanded=be(input,20+j*8);
         std::size_t written=0;
         auto rc=lzokay::decompress(input.data()+inpos,comp,
                                   result.data()+outpos,expanded,written);
         if(rc!=lzokay::EResult::Success||written!=expanded)
             throw std::runtime_error("DOTM LZO texture mip decoding failed");
-        inpos+=comp;outpos+=expanded;comp_sum+=comp;
+        inpos+=comp;outpos+=expanded;
     }
-    if(stored!=comp_sum||outpos!=outsize||inpos!=input.size())
-        throw std::runtime_error("Compressed DOTM mip length mismatch");
     return result;
 }
 }
