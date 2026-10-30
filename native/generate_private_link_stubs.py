@@ -20,7 +20,10 @@ ALIAS = re.compile(
 MAPPING = re.compile(r"\{\s*(0x[0-9A-Fa-f]+)\s*,\s*([A-Za-z_]\w*)\s*\}")
 HELPER = re.compile(r"__?(?:save|rest)(?:gprlr|fpr|vmx)_\d+")
 NATIVE = {"__imp__XamInputGetState", "__imp__XamInputGetCapabilities",
-          "__imp__NtAllocateVirtualMemory", "__imp__NtFreeVirtualMemory"}
+          "__imp__NtAllocateVirtualMemory", "__imp__NtFreeVirtualMemory"} | {
+              f"__{action}gprlr_{reg}"
+              for action in ("save", "rest") for reg in range(14, 32)
+          }
 
 
 # Strip C++ comments and literals before interpreting generated macro calls.
