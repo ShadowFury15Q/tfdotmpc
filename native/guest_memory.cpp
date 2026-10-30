@@ -138,11 +138,14 @@ void GuestMemory::load_pe(const std::filesystem::path& path){
   const auto virtual_size=u32(b,sh+8),rva=u32(b,sh+12);
   const auto raw=u32(b,sh+16),file_off=u32(b,sh+20);
   const std::uint64_t len=std::max(virtual_size,raw);
+  // The original retail DOTM PE declares a .reloc raw range beyond its
+  // decrypted Basic image (and a virtual range crossing our dispatch table).
+  // This is valid for our fixed-base guest: relocations are not loaded at all.
+  // Skip them BEFORE checking file offsets or image bounds; all other
+  // sections still receive strict raw/virtual range and overlap validation.
+  if(name==".reloc")continue;
   if(raw&&(file_off>v.size()||raw>v.size()-file_off))
    throw std::runtime_error("Invalid PE section raw size");
-  // The PE .reloc can extend into XenonRecomp's native indirect-call table.
-  // The guest image is fixed-base, so do not map this section.
-  if(name==".reloc")continue;
   if(rva>=kImageSize||len>kImageSize-rva)
    throw std::runtime_error("PE section intersects native dispatch table");
   if(len&&rva<header)throw std::runtime_error("PE section overlaps headers");

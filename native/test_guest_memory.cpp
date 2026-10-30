@@ -160,6 +160,21 @@ int main(int argc,char** argv){
    check(m.loaded_pe_entry()==0x8277F670U,
          "Rejected PE must preserve the previous verified entry point");
   };
+  // The real DOTM retail image has a relocation section whose declared
+  // raw data lies beyond the decrypted PE and whose RVA crosses the native
+  // dispatch-table boundary. Fixed-base loading must skip this section.
+  {auto retail_reloc=pe;put16(retail_reloc,0x86,2);
+   std::memcpy(retail_reloc.data()+0x1a0,".reloc",6);
+   put32(retail_reloc,0x1a0+8,0x2ac73c);
+   put32(retail_reloc,0x1a0+12,0x01aa0200);
+   put32(retail_reloc,0x1a0+16,0x2ac800);
+   put32(retail_reloc,0x1a0+20,0x18ca600);
+   save(retail_reloc);m.load_pe(file);
+   check(m.address(0x82001000)[0]==0xab,
+         "Retail-style out-of-file .reloc must not affect loaded code");
+   check(m.find_function(0x82500000)==target,
+         "Retail-style .reloc must not overwrite native dispatch table");
+  }
   {auto bad=pe;put32(bad,0x3c,0xfffffff0);reject(bad,"Reject invalid NT offset");}
   {auto bad=pe;put32(bad,0x98+16,0x01b10000);
    reject(bad,"Reject PE entry beyond guest image");}
