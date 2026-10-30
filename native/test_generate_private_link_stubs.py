@@ -21,7 +21,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
                 "PPC_EXTERN_FUNC(__imp__NtAllocateVirtualMemory);\n"
                 "PPC_EXTERN_FUNC(__imp__NtFreeVirtualMemory);\n"
                 "PPC_EXTERN_FUNC(__imp__KeWaitForSingleObject);\n"
-                "PPC_EXTERN_FUNC(__savegprlr_14);\n"
+                "PPC_EXTERN_FUNC(__savefpr_14);\n"
                 "PPC_EXTERN_FUNC(_xstart);\n", encoding="utf-8")
             (root / "ppc_func_mapping.cpp").write_text(
                 "{0x8277F670, _xstart},\n"
@@ -34,7 +34,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
             source, units, unresolved = generate(root, 1)
             self.assertEqual((units, unresolved), (1, 2))
             self.assertIn("PPC_FUNC(__imp__KeWaitForSingleObject)", source)
-            self.assertIn("PPC_FUNC(__savegprlr_14)", source)
+            self.assertIn("PPC_FUNC(__savefpr_14)", source)
             self.assertNotIn("PPC_FUNC(_xstart)", source)
             self.assertNotIn("PPC_FUNC(__imp__XamInputGetState)", source)
             self.assertNotIn("PPC_FUNC(__imp__XamInputGetCapabilities)", source)
