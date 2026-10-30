@@ -128,6 +128,7 @@ void execute_guest_entry(dotm::GuestMemory& memory, std::uint32_t entry) {
     dotm::XamLaunchDataHost launch_data;
     ScopedHostBindings bindings(memory, allocator, xam_input, launch_data);
 
+#ifndef DOTM_SYNTHETIC_PRIVATE_BOOT
     // The PPC r13 ABI points to KPCR. KPCR+0x100 is current KTHREAD;
     // KTHREAD+0x14C holds the main thread ID.
     constexpr std::uint32_t kPcr = 0x71000000U;
@@ -149,8 +150,11 @@ void execute_guest_entry(dotm::GuestMemory& memory, std::uint32_t entry) {
     write_guest32(kKthread + 0x60U, kStackBase);
     write_guest32(kKthread + 0x68U, kTls);
     write_guest32(kKthread + 0x14CU, 1U);
+#endif
     PPCContext context{};
+#ifndef DOTM_SYNTHETIC_PRIVATE_BOOT
     context.r13.u64 = kPcr;
+#endif
     context.r1.u64 = kInitialStackPointer;
     std::printf("Executing original PPC entry 0x%08X, guest SP 0x%08X\n",
                 entry, kInitialStackPointer);
