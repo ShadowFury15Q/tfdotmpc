@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """No game content: synthetic private PPC input-discovery regression tests."""
 import contextlib
+import hashlib
 import io
 from pathlib import Path
 import struct
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 from private_ppc_preflight import (EXPECTED_UNITS, inspect_archive, inspect_units, pe_entry, run)
 
 
@@ -69,6 +71,40 @@ class PrivatePreflightTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()) as output:
                 self.assertEqual(run(Path(tmp)), 1)
             self.assertIn("PPC archive:", output.getvalue())
+
+    def test_ready_ppc_and_pe_still_require_matching_original_xex(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with zipfile.ZipFile(root / "ppc.zip", "w") as archive:
+                for name in ("ppc_config.h", "ppc_context.h"):
+                    archive.writestr(f"ppc/{name}", "")
+                archive.writestr("ppc/ppc_recomp_shared.h", "PPC_EXTERN_FUNC(_xstart);")
+                archive.writestr("ppc/ppc_func_mapping.cpp",
+                                 "PPCFuncMapping m[] = {{ 0x8277F670, _xstart }};")
+                for index in range(EXPECTED_UNITS):
+                    archive.writestr(f"ppc/ppc_recomp.{index}.cpp", "")
+            pe = bytearray(512)
+            pe[:2] = b"MZ"
+            struct.pack_into("<I", pe, 0x3c, 0x80)
+            pe[0x80:0x84] = b"PE\\0\\0"
+            struct.pack_into("<H", pe, 0x84, 0x01F2)
+            struct.pack_into("<H", pe, 0x98, 0x010B)
+            struct.pack_into("<I", pe, 0x98 + 16, 0x0077F670)
+            struct.pack_into("<I", pe, 0x98 + 28, 0x82000000)
+            (root / "private-game.pe").write_bytes(pe)
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(run(root), 1)
+            self.assertIn("original default.xex", output.getvalue())
+            original = root / "default.xex"
+            original.write_bytes(b"synthetic-only-test")
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(run(root), 1)
+            self.assertIn("MISMATCH", output.getvalue())
+            expected_hash = hashlib.sha256(original.read_bytes()).hexdigest()
+            with patch("private_ppc_preflight.EXPECTED_XEX_SHA256", expected_hash):
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(run(root), 0)
+            self.assertIn("--xex-header", output.getvalue())
 
     def test_zip_missing_unit_and_invalid_entry(self):
         with tempfile.TemporaryDirectory() as tmp:
