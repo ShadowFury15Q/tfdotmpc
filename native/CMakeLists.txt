@@ -23,6 +23,10 @@ target_include_directories(dotm_kernel_ppc_import_test
 target_link_libraries(dotm_kernel_ppc_import_test PRIVATE dotm_kernel_guest_memory)
 add_test(NAME xbox360_nt_virtual_memory_ppc_abi COMMAND dotm_kernel_ppc_import_test)
 
+# Xbox 360 compiler nonvolatile GPR/LR save/restore ABI, tested without game data.
+add_executable(dotm_ppc_nonvolatile_gpr_test test_ppc_nonvolatile_gpr.cpp)
+add_test(NAME xbox360_nonvolatile_gpr_lr_save_restore COMMAND dotm_ppc_nonvolatile_gpr_test)
+
 add_library(dotm_recomp_bridge STATIC recomp_bridge.cpp)
 target_link_libraries(dotm_recomp_bridge PUBLIC dotm_guest_memory)
 add_executable(dotm_recomp_bridge_test test_recomp_bridge.cpp)
