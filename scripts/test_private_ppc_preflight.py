@@ -86,7 +86,7 @@ class PrivatePreflightTests(unittest.TestCase):
             pe = bytearray(512)
             pe[:2] = b"MZ"
             struct.pack_into("<I", pe, 0x3c, 0x80)
-            pe[0x80:0x84] = b"PE\\0\\0"
+            pe[0x80:0x84] = b"PE\0\0"
             struct.pack_into("<H", pe, 0x84, 0x01F2)
             struct.pack_into("<H", pe, 0x98, 0x010B)
             struct.pack_into("<I", pe, 0x98 + 16, 0x0077F670)
