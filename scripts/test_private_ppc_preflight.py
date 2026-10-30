@@ -23,13 +23,13 @@ class PrivatePreflightTests(unittest.TestCase):
                 if i != 400:
                     (path / f"ppc_recomp.{i}.cpp").touch()
             count, missing, extra, headers = inspect_units(path)
-            self.assertEqual(count, 695)
+            self.assertEqual(count, EXPECTED_UNITS - 1)
             self.assertEqual(missing, [400])
             self.assertFalse(extra or headers)
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(run(path), 1)
             (path / "ppc_recomp.400.cpp").touch()
-            self.assertEqual(inspect_units(path), (696, [], [], []))
+            self.assertEqual(inspect_units(path), (EXPECTED_UNITS, [], [], []))
 
     def test_pe_machine_base_and_entry(self):
         with tempfile.TemporaryDirectory() as tmp:
