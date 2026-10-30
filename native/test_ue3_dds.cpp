@@ -27,6 +27,33 @@ int main(){
   const auto dds5=dotm::convert_xbox_tiled_bc_to_dds(32,32,true,tiled5);
   check(dds5.size()==128+8*8*16&&dds5[87]=='5',"DXT5 FourCC/size");
   check(dds5[128]==0xb2&&dds5[129]==0xa1,"DXT5 word swap");
+  // Stage 46: minimum resident bulk size must account for sparse Xenos
+  // block addressing, not just the tightly packed BC output byte count.
+  check(dotm::required_xbox_tiled_bc_payload_bytes(32,32,false)==1856,
+        "BC1 minimum Xenos payload extent");
+  check(dotm::required_xbox_tiled_bc_payload_bytes(32,32,true)==5952,
+        "BC3 minimum Xenos payload extent");
+  check(dotm::required_xbox_tiled_bc_payload_bytes(1,1,false)==8,
+        "Single BC1 block needs exactly eight bytes");
+  check(dotm::required_xbox_tiled_bc_payload_bytes(1,1,true)==16,
+        "Single BC3 block needs exactly sixteen bytes");
+  const auto need64=dotm::required_xbox_tiled_bc_payload_bytes(64,64,false);
+  const std::vector<std::uint8_t> exact64(need64,0x5a);
+  check(dotm::convert_xbox_tiled_bc_to_dds(64,64,false,exact64).size()==128+2048,
+        "Accept exactly sufficient multi-tile BC1 payload");
+  bool short64=false;
+  try{(void)dotm::convert_xbox_tiled_bc_to_dds(
+      64,64,false,std::span<const std::uint8_t>(exact64.data(),exact64.size()-1));}
+  catch(const std::runtime_error&){short64=true;}
+  check(short64,"Reject one-byte-short multi-tile BC1 payload");
+  bool invalid_dims=false;
+  try{(void)dotm::required_xbox_tiled_bc_payload_bytes(0,32,false);}
+  catch(const std::invalid_argument&){invalid_dims=true;}
+  check(invalid_dims,"Reject zero width in resident mip preflight");
+  invalid_dims=false;
+  try{(void)dotm::required_xbox_tiled_bc_payload_bytes(16385,1,true);}
+  catch(const std::invalid_argument&){invalid_dims=true;}
+  check(invalid_dims,"Reject excessive width in resident mip preflight");
   // Stage 45: preflight must accept the last referenced Xenos tile block,
   // reject a one-byte-short source, and avoid large DDS allocations on error.
   const std::vector<std::uint8_t> tight_bc1(tiled.begin(),tiled.begin()+1856);
