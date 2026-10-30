@@ -43,6 +43,52 @@ class PrivateLinkStubsTests(unittest.TestCase):
             self.assertIn("throw std::runtime_error(", source)
             self.assertNotIn("synthetic mapping", source)
 
+    def test_xenonrecomp_alias_backed_game_functions_are_not_stubs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\\n"
+                "PPC_EXTERN_FUNC(_xstart);\\n"
+                "PPC_EXTERN_FUNC(sub_82500000);\\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\\n"
+                "{0x82500000, sub_82500000},\\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                '__attribute__((alias("__imp___xstart"))) PPC_WEAK_FUNC(_xstart);\\n'
+                "PPC_FUNC_IMPL(__imp___xstart) {}\\n"
+                '__attribute__((alias("__imp__sub_82500000"))) PPC_WEAK_FUNC(sub_82500000);\\n'
+                "PPC_FUNC_IMPL(__imp__sub_82500000) {}\\n", encoding="utf-8")
+            source, units, unresolved = generate(root, 1)
+            self.assertEqual((units, unresolved), (1, 0))
+            self.assertNotIn("PPC_FUNC(_xstart)", source)
+            self.assertNotIn("PPC_FUNC(sub_82500000)", source)
+
+    def test_xenonrecomp_alias_requires_real_target_body(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                '__attribute__((alias("__imp___xstart"))) PPC_WEAK_FUNC(_xstart);\\n',
+                encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Missing XenonRecomp alias target"):
+                generate(root, 1)
+
+    def test_disabled_xenonrecomp_alias_cannot_fake_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\\n", encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                '#if 0\\n__attribute__((alias("__imp___xstart"))) PPC_WEAK_FUNC(_xstart);\\n#endif\\n'
+                "PPC_FUNC_IMPL(__imp___xstart) {}\\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "_xstart mapping or implementation"):
+                generate(root, 1)
+
     def test_missing_recompiled_game_function_is_not_stubbed(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
