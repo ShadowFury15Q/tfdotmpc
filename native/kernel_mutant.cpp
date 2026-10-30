@@ -20,6 +20,7 @@ constexpr std::uint32_t kInvalidHandle = 0xC0000008U;
 constexpr std::uint32_t kInvalidParameter = 0xC000000DU;
 constexpr std::uint32_t kNoMemory = 0xC0000017U;
 constexpr std::uint32_t kNameCollision = 0xC0000035U;
+constexpr std::uint32_t kTypeMismatch = 0xC0000024U;
 constexpr std::uint32_t kMutantNotOwned = 0xC0000046U;
 constexpr std::uint32_t kNotSupported = 0xC00000BBU;
 constexpr std::uint32_t kTimeout = 0x00000102U;
@@ -32,11 +33,22 @@ struct Mutant {
     std::thread::id owner{};
     std::uint32_t depth = 0;
 };
+struct Event {
+    std::mutex mutex;
+    std::condition_variable ready;
+    bool manual_reset = false;
+    bool signaled = false;
+    std::uint64_t pulse_epoch = 0;
+    std::uint32_t pulse_tokens = 0;
+    std::uint32_t waiters = 0;
+};
 std::mutex registry_mutex;
 GuestMemory* bound_memory = nullptr;
 std::uint32_t next_handle = kFirstHandle;
 std::unordered_map<std::uint32_t, std::shared_ptr<Mutant>> handles;
 std::unordered_map<std::string, std::weak_ptr<Mutant>> named;
+std::unordered_map<std::uint32_t, std::shared_ptr<Event>> event_handles;
+std::unordered_map<std::string, std::weak_ptr<Event>> named_events;
 
 bool valid_guest(const GuestMemory& memory, std::uint32_t addr,
                  std::uint32_t size, bool writable) {
@@ -98,6 +110,11 @@ std::uint32_t parse_name(const GuestMemory& m, std::uint32_t attributes,
     result = std::move(value);
     return kSuccess;
 }
+std::shared_ptr<Event> find_event(std::uint32_t handle) {
+    std::lock_guard lock(registry_mutex);
+    const auto it = event_handles.find(handle);
+    return it == event_handles.end() ? nullptr : it->second;
+}
 std::shared_ptr<Mutant> find_mutant(std::uint32_t handle) {
     std::lock_guard lock(registry_mutex);
     const auto it = handles.find(handle);
@@ -108,6 +125,8 @@ void bind_kernel_mutants(GuestMemory* memory) noexcept {
     std::lock_guard lock(registry_mutex);
     handles.clear();
     named.clear();
+    event_handles.clear();
+    named_events.clear();
     next_handle = kFirstHandle;
     bound_memory = memory;
 }
@@ -127,6 +146,9 @@ std::uint32_t nt_bound_create_mutant(std::uint32_t output_handle,
         std::shared_ptr<Mutant> object;
         bool existed = false;
         if (name) {
+            const auto event_it = named_events.find(*name);
+            if (event_it != named_events.end() && !event_it->second.expired())
+                return kTypeMismatch;
             const auto it = named.find(*name);
             if (it != named.end()) object = it->second.lock();
             existed = static_cast<bool>(object);
@@ -154,6 +176,107 @@ std::uint32_t nt_bound_create_mutant(std::uint32_t output_handle,
         return kNoMemory;
     }
 }
+std::uint32_t nt_bound_create_event(std::uint32_t output_handle,
+                                     std::uint32_t object_attributes,
+                                     std::uint32_t event_type,
+                                     std::uint32_t initial_state) {
+    std::lock_guard lock(registry_mutex);
+    if (!bound_memory || (output_handle & 3U) ||
+        !valid_guest(*bound_memory, output_handle, 4, true) ||
+        event_type > 1 || initial_state > 1)
+        return kInvalidParameter;
+    std::optional<std::string> name;
+    bool open_if = false;
+    const auto status = parse_name(*bound_memory, object_attributes, name, open_if);
+    if (status != kSuccess) return status;
+    if (next_handle > 0xFFFFFFFBU) return kNoMemory;
+    try {
+        std::shared_ptr<Event> object;
+        bool existed = false;
+        if (name) {
+            const auto mutant_it = named.find(*name);
+            if (mutant_it != named.end() && !mutant_it->second.expired())
+                return kTypeMismatch;
+            const auto it = named_events.find(*name);
+            if (it != named_events.end()) object = it->second.lock();
+            existed = static_cast<bool>(object);
+            if (existed && !open_if) return kNameCollision;
+        }
+        if (!object) {
+            object = std::make_shared<Event>();
+            object->manual_reset = event_type == 0;
+            object->signaled = initial_state != 0;
+        }
+        const auto handle = next_handle;
+        event_handles.emplace(handle, object);
+        try {
+            if (name) named_events[*name] = object;
+        } catch (...) {
+            event_handles.erase(handle);
+            throw;
+        }
+        next_handle += 4;
+        write32(*bound_memory, output_handle, handle);
+        return existed ? kNameExists : kSuccess;
+    } catch (const std::bad_alloc&) {
+        return kNoMemory;
+    }
+}
+
+std::uint32_t nt_bound_set_event(std::uint32_t handle, std::uint32_t previous_state) {
+    auto event = find_event(handle);
+    if (!event) return kInvalidHandle;
+    {
+        std::lock_guard lock(registry_mutex);
+        if (previous_state && (!bound_memory || (previous_state & 3U) ||
+            !valid_guest(*bound_memory, previous_state, 4, true)))
+            return kInvalidParameter;
+    }
+    std::unique_lock lock(event->mutex);
+    const bool was_signaled = event->signaled;
+    event->signaled = true;
+    if (previous_state) {
+        std::lock_guard registry_lock(registry_mutex);
+        write32(*bound_memory, previous_state, was_signaled ? 1U : 0U);
+    }
+    lock.unlock();
+    if (event->manual_reset) event->ready.notify_all();
+    else event->ready.notify_one();
+    return kSuccess;
+}
+
+std::uint32_t nt_bound_clear_event(std::uint32_t handle) {
+    auto event = find_event(handle);
+    if (!event) return kInvalidHandle;
+    std::lock_guard lock(event->mutex);
+    event->signaled = false;
+    return kSuccess;
+}
+
+std::uint32_t nt_bound_pulse_event(std::uint32_t handle, std::uint32_t previous_state) {
+    auto event = find_event(handle);
+    if (!event) return kInvalidHandle;
+    {
+        std::lock_guard lock(registry_mutex);
+        if (previous_state && (!bound_memory || (previous_state & 3U) ||
+            !valid_guest(*bound_memory, previous_state, 4, true)))
+            return kInvalidParameter;
+    }
+    std::unique_lock lock(event->mutex);
+    const bool was_signaled = event->signaled;
+    event->signaled = false;
+    ++event->pulse_epoch;
+    event->pulse_tokens = event->manual_reset ? event->waiters
+                                               : std::min(event->waiters, 1U);
+    if (previous_state) {
+        std::lock_guard registry_lock(registry_mutex);
+        write32(*bound_memory, previous_state, was_signaled ? 1U : 0U);
+    }
+    lock.unlock();
+    event->ready.notify_all();
+    return kSuccess;
+}
+
 std::uint32_t nt_bound_release_mutant(std::uint32_t handle,
                                       std::uint32_t previous_count) {
     auto object = find_mutant(handle);
@@ -210,7 +333,28 @@ std::uint32_t nt_bound_wait_for_single_object_ex(std::uint32_t handle,
         }
     }
     auto object = find_mutant(handle);
-    if (!object) return kInvalidHandle;
+    if (!object) {
+        auto event = find_event(handle);
+        if (!event) return kInvalidHandle;
+        std::unique_lock lock(event->mutex);
+        const auto pulse_at_start = event->pulse_epoch;
+        ++event->waiters;
+        const auto available = [&] {
+            return event->signaled ||
+                (event->pulse_epoch != pulse_at_start && event->pulse_tokens != 0);
+        };
+        bool awakened = true;
+        if (duration) awakened = event->ready.wait_for(lock, *duration, available);
+        else event->ready.wait(lock, available);
+        --event->waiters;
+        if (!awakened) return kTimeout;
+        if (event->pulse_epoch != pulse_at_start && event->pulse_tokens) {
+            --event->pulse_tokens;
+        } else if (!event->manual_reset) {
+            event->signaled = false;
+        }
+        return kSuccess;
+    }
     std::unique_lock lock(object->mutex);
     const auto current = std::this_thread::get_id();
     const auto available = [&] { return !object->depth || object->owner == current; };
@@ -226,6 +370,7 @@ std::uint32_t nt_bound_wait_for_single_object_ex(std::uint32_t handle,
 }
 std::uint32_t nt_bound_close_mutant(std::uint32_t handle) {
     std::lock_guard lock(registry_mutex);
-    return handles.erase(handle) ? kSuccess : kInvalidHandle;
+    if (handles.erase(handle)) return kSuccess;
+    return event_handles.erase(handle) ? kSuccess : kInvalidHandle;
 }
 }

@@ -20,3 +20,22 @@ PPC_FUNC(__imp__NtClose) {
     (void)base;
     ctx.r3.u64 = dotm::nt_bound_close_mutant(ctx.r3.u32);
 }
+
+// EventType: 0 = notification (manual reset), 1 = synchronization (auto reset).
+PPC_FUNC(__imp__NtCreateEvent) {
+    (void)base;
+    ctx.r3.u64 = dotm::nt_bound_create_event(
+        ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32);
+}
+PPC_FUNC(__imp__NtSetEvent) {
+    (void)base;
+    ctx.r3.u64 = dotm::nt_bound_set_event(ctx.r3.u32, ctx.r4.u32);
+}
+PPC_FUNC(__imp__NtClearEvent) {
+    (void)base;
+    ctx.r3.u64 = dotm::nt_bound_clear_event(ctx.r3.u32);
+}
+PPC_FUNC(__imp__NtPulseEvent) {
+    (void)base;
+    ctx.r3.u64 = dotm::nt_bound_pulse_event(ctx.r3.u32, ctx.r4.u32);
+}

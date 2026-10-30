@@ -9,6 +9,10 @@ PPC_EXTERN_FUNC(__imp__NtCreateMutant);
 PPC_EXTERN_FUNC(__imp__NtReleaseMutant);
 PPC_EXTERN_FUNC(__imp__NtWaitForSingleObjectEx);
 PPC_EXTERN_FUNC(__imp__NtClose);
+PPC_EXTERN_FUNC(__imp__NtCreateEvent);
+PPC_EXTERN_FUNC(__imp__NtSetEvent);
+PPC_EXTERN_FUNC(__imp__NtClearEvent);
+PPC_EXTERN_FUNC(__imp__NtPulseEvent);
 namespace {
 void check(bool value) { if (!value) throw std::runtime_error("Xbox mutant PPC ABI failure"); }
 void write32(dotm::GuestMemory& m, std::uint32_t a, std::uint32_t v) {
@@ -99,6 +103,53 @@ int main() {
     c.r3.u64 = h;
     __imp__NtClose(c, m.base());
     check(c.r3.u32 == 0);
+    // Real notification/synchronization event handles share the NT handle
+    // namespace with mutants and support wait, set, pulse, clear and close.
+    c.r3.u64 = base + 24; c.r4.u64 = 0; c.r5.u64 = 1; c.r6.u64 = 0;
+    __imp__NtCreateEvent(c, m.base());
+    check(c.r3.u32 == 0);
+    const auto auto_event = read32(m, base + 24);
+    wait(c, m, auto_event, base + 8);
+    check(c.r3.u32 == 0x102U);
+    c.r3.u64 = auto_event; c.r4.u64 = base + 28;
+    __imp__NtSetEvent(c, m.base());
+    check(c.r3.u32 == 0 && read32(m, base + 28) == 0);
+    wait(c, m, auto_event, base + 8);
+    check(c.r3.u32 == 0);
+    wait(c, m, auto_event, base + 8);
+    check(c.r3.u32 == 0x102U); // Auto reset consumes the signal.
+    c.r3.u64 = auto_event; c.r4.u64 = base + 28;
+    __imp__NtPulseEvent(c, m.base());
+    check(c.r3.u32 == 0 && read32(m, base + 28) == 0);
+    wait(c, m, auto_event, base + 8);
+    check(c.r3.u32 == 0x102U); // No waiter: pulse cannot latch.
+    c.r3.u64 = base + 32; c.r4.u64 = 0; c.r5.u64 = 0; c.r6.u64 = 1;
+    __imp__NtCreateEvent(c, m.base());
+    check(c.r3.u32 == 0);
+    const auto manual_event = read32(m, base + 32);
+    wait(c, m, manual_event, base + 8);
+    check(c.r3.u32 == 0);
+    wait(c, m, manual_event, base + 8);
+    check(c.r3.u32 == 0); // Manual reset retains signal.
+    c.r3.u64 = manual_event;
+    __imp__NtClearEvent(c, m.base());
+    check(c.r3.u32 == 0);
+    wait(c, m, manual_event, base + 8);
+    check(c.r3.u32 == 0x102U);
+    c.r3.u64 = manual_event; c.r4.u64 = base + 0x1000;
+    __imp__NtSetEvent(c, m.base());
+    check(c.r3.u32 == 0xC000000DU); // Invalid output pointer.
+    c.r3.u64 = manual_event;
+    __imp__NtClose(c, m.base());
+    check(c.r3.u32 == 0);
+    wait(c, m, manual_event, base + 8);
+    check(c.r3.u32 == 0xC0000008U);
+    c.r3.u64 = auto_event;
+    __imp__NtClose(c, m.base());
+    check(c.r3.u32 == 0);
+    c.r3.u64 = base + 36; c.r4.u64 = 0; c.r5.u64 = 2; c.r6.u64 = 0;
+    __imp__NtCreateEvent(c, m.base());
+    check(c.r3.u32 == 0xC000000DU);
     dotm::bind_kernel_mutants(nullptr);
     return 0;
 }
