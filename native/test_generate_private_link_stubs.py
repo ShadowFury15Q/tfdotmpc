@@ -40,7 +40,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
             self.assertNotIn("PPC_FUNC(__imp__XamInputGetCapabilities)", source)
             self.assertNotIn("PPC_FUNC(__imp__NtAllocateVirtualMemory)", source)
             self.assertNotIn("PPC_FUNC(__imp__NtFreeVirtualMemory)", source)
-            self.assertIn("std::abort()", source)
+            self.assertIn("throw std::runtime_error(", source)
             self.assertNotIn("synthetic mapping", source)
 
     def test_missing_recompiled_game_function_is_not_stubbed(self):
