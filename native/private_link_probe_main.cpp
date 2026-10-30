@@ -83,6 +83,8 @@ int main(int argc, char** argv) {
         dotm::GuestMemory memory;
         if (run_original) memory.load_pe(argv[2]);
         const auto result = dotm::install_actual_xenon_table(memory, unresolved_indirect);
+        if (run_original && memory.loaded_pe_entry() != result.guest_entry)
+            throw std::runtime_error("Private PE entry point differs from the linked original _xstart mapping");
         std::printf("Private native PPC link verified: %zu mapped functions, entry 0x%08X\n",
                     result.mapped_functions, result.guest_entry);
         if (!run_original && !synthetic_entry) {
