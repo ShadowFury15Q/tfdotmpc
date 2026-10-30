@@ -124,6 +124,46 @@ int main() {
             require(fragmented.address(address)[0] == page + 1,
                     "Fragmented allocator preserves externally owned pages");
         }
+        // A single reservation can contain disjoint committed subranges.
+        // Releasing it must revoke every committed run and reclaim its address.
+        dotm::GuestMemory partial;
+        constexpr std::uint32_t partial_first = 0x50000000U;
+        Alloc partial_heap(partial, partial_first, partial_first + 8 * 4096);
+        require(partial_heap.reserve_at(partial_first, 4 * 4096),
+                "Reserve a four-page guest region");
+        require(partial_heap.reserved_range(partial_first + 4096, 8192),
+                "Interior reserved subrange is recognized");
+        require(!partial_heap.reserved_range(partial_first + 3 * 4096, 8192),
+                "Subrange must not cross reservation boundary");
+        require(partial_heap.commit_reserved(partial_first, 4096) &&
+                partial_heap.commit_reserved(partial_first + 2 * 4096, 4096),
+                "Commit disjoint pages within one reservation");
+        require(partial_heap.allocated_bytes() == 8192 &&
+                partial_heap.allocation_count() == 1,
+                "Only committed pages count toward backing memory");
+        require(!partial_heap.commit_reserved(partial_first, 4096),
+                "Duplicate page commit is rejected");
+        require(!partial_heap.decommit_reserved(partial_first + 4096, 4096),
+                "Decommit of a reserved-only page is rejected");
+        partial.address(partial_first)[0] = 0xA7;
+        partial.address(partial_first + 2 * 4096)[0] = 0xB8;
+        require(partial_heap.decommit_reserved(partial_first, 4096),
+                "Decommit one page without releasing the reservation");
+        require(partial.committed_range(partial_first + 2 * 4096, 1) &&
+                partial.address(partial_first + 2 * 4096)[0] == 0xB8,
+                "Disjoint committed page survives partial decommit");
+        require(partial_heap.commit_reserved(partial_first, 4096) &&
+                partial.address(partial_first)[0] == 0,
+                "Recommitted page is zero-initialized");
+        require(partial_heap.release(partial_first) &&
+                partial_heap.allocated_bytes() == 0 &&
+                partial_heap.allocation_count() == 0,
+                "Release reclaims all disjoint committed pages");
+        require(!partial.committed_range(partial_first, 1) &&
+                !partial.committed_range(partial_first + 2 * 4096, 1),
+                "Released guest reservation revokes all host backing");
+        require(partial_heap.reserve_at(partial_first, 4 * 4096),
+                "Released reservation can be reused");
         std::cout << "DOTM guest virtual allocator synthetic tests PASS\n";
         return 0;
     } catch (const std::exception& e) {
