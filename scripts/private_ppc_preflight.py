@@ -10,7 +10,7 @@ import sys
 EXPECTED_XEX_SHA256 = "6fd9ae9fb94ea8e9cc91a6a0cc62b04441411bdafe2479f0d380d4a3a9957ca6"
 EXPECTED_ENTRY = 0x8277F670
 EXPECTED_IMAGE_BASE = 0x82000000
-EXPECTED_UNITS = 696
+EXPECTED_UNITS = 697
 REQUIRED = ("ppc_recomp_shared.h", "ppc_context.h", "ppc_func_mapping.cpp")
 UNIT_NAME = re.compile(r"ppc_recomp\.(\d+)\.cpp$")
 SKIP_DIRS = {".git", "node_modules", "native-build", "build", ".venv", "__pycache__"}
@@ -110,12 +110,12 @@ def run(root: Path):
         if missing:
             print(f"  Missing numbered units: {len(missing)}; first: {missing[:8]}")
         if extra:
-            print(f"  Unexpected indices >=696: {extra[:8]}")
+            print(f"  Unexpected indices >=697: {extra[:8]}")
         if headers:
             print(f"  Missing required headers/mapping: {', '.join(headers)}")
         if not (missing or extra or headers):
             ready = True
-            print("  READY: 696 contiguous units and required headers present (not yet compiled)")
+            print("  READY: 697 contiguous units and required headers present (not yet compiled)")
             print(f'  Configure: cmake -S native -B private-build -DDOTM_PRIVATE_PPC_DIR="{directory}"')
             print("  Build: cmake --build private-build --target dotm_private_link_probe --config Release")
     if not found_units:
