@@ -4,6 +4,7 @@
 #include "kernel_guest_memory.hpp"
 #include "kernel_critical_sections.hpp"
 #include "xex_optional_header.hpp"
+#include "xex_title_boot.hpp"
 #include "native_input.hpp"
 #include "ppc_recomp_shared.h" // Includes the generated PPC configuration and context
 #include "xam_guest_input.hpp"
@@ -134,14 +135,16 @@ void execute_guest_entry(dotm::GuestMemory& memory, std::uint32_t entry) {
 
 int main(int argc, char** argv) {
     const bool link_only = argc == 1;
-    const bool run_original = argc == 3 && std::strcmp(argv[1], "--run-entry") == 0;
+    const bool run_original =
+        argc == 5 && std::strcmp(argv[1], "--run-entry") == 0 &&
+        std::strcmp(argv[3], "--xex-header") == 0;
 #ifdef DOTM_SYNTHETIC_PRIVATE_BOOT
     const bool synthetic_entry = argc == 2 && std::strcmp(argv[1], "--synthetic-entry") == 0;
 #else
     const bool synthetic_entry = false;
 #endif
     if (!link_only && !run_original && !synthetic_entry) {
-        std::fputs("Usage: dotm_private_link_probe [--run-entry <decrypted Xbox 360 PPC PE>]\n", stderr);
+        std::fputs("Usage: dotm_private_link_probe [--run-entry <decrypted PPC PE> --xex-header <original default.xex>]\\n", stderr);
         return 2;
     }
     try {
@@ -154,10 +157,15 @@ int main(int argc, char** argv) {
         if ((run_original || synthetic_entry) &&
             memory.loaded_pe_entry() != result.guest_entry)
             throw std::runtime_error("Loaded PPC PE entry differs from linked _xstart mapping");
+        if (run_original) {
+            const auto header_address =
+                dotm::install_original_xex_title_header(memory, argv[4], result.guest_entry);
+            std::printf("Original XEX2 header mapped at guest 0x%08X\\n", header_address);
+        }
         std::printf("Private native PPC link verified: %zu mapped functions, entry 0x%08X\n",
                     result.mapped_functions, result.guest_entry);
         if (!run_original && !synthetic_entry) {
-            std::puts("No game entry executed; use --run-entry with a private decrypted PE.");
+            std::puts("No game entry executed; use --run-entry with a private decrypted PE and original XEX2 header.");
             return 0;
         }
         execute_guest_entry(memory, result.guest_entry);

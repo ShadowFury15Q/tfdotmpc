@@ -53,6 +53,13 @@ target_include_directories(dotm_xex_optional_header_ppc_test PRIVATE
 target_link_libraries(dotm_xex_optional_header_ppc_test PRIVATE dotm_xex_optional_header)
 add_test(NAME xbox360_original_xex_optional_header_ppc_abi
   COMMAND dotm_xex_optional_header_ppc_test)
+# Private XEX file header loader + real guest module pointer wiring.
+# It reads original XEX headers locally; never embeds/distributes game bytes.
+add_library(dotm_xex_title_boot STATIC xex_title_boot.cpp)
+target_link_libraries(dotm_xex_title_boot PUBLIC dotm_xex_optional_header)
+add_executable(dotm_xex_title_boot_test test_xex_title_boot.cpp)
+target_link_libraries(dotm_xex_title_boot_test PRIVATE dotm_xex_title_boot)
+add_test(NAME xbox360_original_xex_title_module_boot COMMAND dotm_xex_title_boot_test)
 
 add_library(dotm_recomp_bridge STATIC recomp_bridge.cpp)
 target_link_libraries(dotm_recomp_bridge PUBLIC dotm_guest_memory)
@@ -213,7 +220,7 @@ if(DOTM_PRIVATE_PPC_DIR)
   target_precompile_headers(dotm_private_link_probe PRIVATE
     "${DOTM_PRIVATE_PPC_DIR}/ppc_recomp_shared.h")
   target_link_libraries(dotm_private_link_probe
-    PRIVATE dotm_recomp_bridge dotm_xam_input dotm_kernel_guest_memory dotm_kernel_tls dotm_kernel_critical_sections dotm_xex_optional_header)
+    PRIVATE dotm_recomp_bridge dotm_xam_input dotm_kernel_guest_memory dotm_kernel_tls dotm_kernel_critical_sections dotm_xex_optional_header dotm_xex_title_boot)
   if(MSVC)
     target_compile_options(dotm_private_link_probe PRIVATE /bigobj)
   endif()
@@ -249,7 +256,7 @@ target_include_directories(dotm_synthetic_private_link_test PRIVATE
   "${DOTM_SYNTHETIC_PPC_DIR}"
   "${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures")
 target_link_libraries(dotm_synthetic_private_link_test
-  PRIVATE dotm_recomp_bridge dotm_xam_input dotm_guest_virtual_allocator dotm_kernel_guest_memory dotm_kernel_tls dotm_kernel_critical_sections dotm_xex_optional_header)
+  PRIVATE dotm_recomp_bridge dotm_xam_input dotm_guest_virtual_allocator dotm_kernel_guest_memory dotm_kernel_tls dotm_kernel_critical_sections dotm_xex_optional_header dotm_xex_title_boot)
 # Run endian-precise Xbox 360 FPR ABI tests without proprietary PPC units.
 add_executable(dotm_ppc_nonvolatile_fpr_test test_ppc_nonvolatile_fpr.cpp)
 add_test(NAME xbox360_original_ppc_fpr_save_restore COMMAND dotm_ppc_nonvolatile_fpr_test)
@@ -274,7 +281,7 @@ target_include_directories(dotm_synthetic_private_boot_probe PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures")
 target_link_libraries(dotm_synthetic_private_boot_probe PRIVATE
   dotm_recomp_bridge dotm_xam_input dotm_guest_virtual_allocator
-  dotm_kernel_guest_memory dotm_kernel_tls dotm_kernel_critical_sections dotm_xex_optional_header)
+  dotm_kernel_guest_memory dotm_kernel_tls dotm_kernel_critical_sections dotm_xex_optional_header dotm_xex_title_boot)
 add_test(NAME synthetic_private_boot_link_probe
   COMMAND dotm_synthetic_private_boot_probe)
 add_test(NAME synthetic_private_boot_executes_entry
