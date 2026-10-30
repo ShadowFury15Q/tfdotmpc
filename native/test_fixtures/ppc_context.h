@@ -6,7 +6,7 @@
 struct PPCRegister { std::uint64_t u64=0; };
 struct PPCContext {
  std::uint32_t calls=0;
- PPCRegister r3{},r4{},r5{},r6{},r7{};
+ PPCRegister r1{},r3{},r4{},r5{},r6{},r7{};
 };
 typedef void PPCFunc(PPCContext& __restrict ctx,std::uint8_t* base);
 struct PPCFuncMapping { std::size_t guest; PPCFunc* host; };
