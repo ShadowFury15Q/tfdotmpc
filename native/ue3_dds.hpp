@@ -23,8 +23,9 @@ std::vector<std::uint8_t> convert_xbox_tiled_bc_to_dds(
     std::uint32_t width, std::uint32_t height, bool bc3,
     std::span<const std::uint8_t> xenos_payload);
 // Returns nullopt when the Texture2D is not DXT1/DXT5 or has no local mip.
-// Selection is the first available embedded or LZO mip (may be lower resolution
-// than original if the higher mips are streamed externally).
+// Exports the first contiguous run of embedded/LZO mips. Higher streamed
+// levels are skipped, but missing levels within a run are never bridged.
+// The DDS may begin at a lower resolution than the original texture.
 std::optional<std::vector<std::uint8_t>> export_ue3_texture_dds(
     const Ue3Package& package, std::size_t export_index);
 }
