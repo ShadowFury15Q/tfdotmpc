@@ -9,6 +9,8 @@
 PPC_EXTERN_FUNC(__imp__RtlFillMemoryUlong);
 PPC_EXTERN_FUNC(__imp__RtlCompareMemoryUlong);
 PPC_EXTERN_FUNC(__imp__RtlNtStatusToDosError);
+PPC_EXTERN_FUNC(__imp__RtlMultiByteToUnicodeN);
+PPC_EXTERN_FUNC(__imp__RtlUnicodeToMultiByteN);
 
 namespace {
 void check(bool condition, const char* message) {
@@ -59,6 +61,40 @@ int main() {
             __imp__RtlNtStatusToDosError(ctx, memory.base());
             check(ctx.r3.u32 == expected, "NTSTATUS to DOS mapping PPC ABI");
         }
+        // Real original PPC CRT converts Xbox ANSI bytes to big-endian UTF-16.
+        const auto input = address + 0x100U;
+        const auto output = address + 0x200U;
+        const auto written = address + 0x300U;
+        memory.address(input)[0] = 'A';
+        memory.address(input)[1] = 0x80U; // CP1252 euro sign.
+        memory.address(input)[2] = 0xE9U; // e acute.
+        ctx.r3.u64 = output; ctx.r4.u64 = 6; ctx.r5.u64 = written;
+        ctx.r6.u64 = input; ctx.r7.u64 = 3;
+        __imp__RtlMultiByteToUnicodeN(ctx, memory.base());
+        check(ctx.r3.u32 == 0 && memory.address(output)[0] == 0 &&
+              memory.address(output)[1] == 'A' &&
+              memory.address(output)[2] == 0x20 && memory.address(output)[3] == 0xAC &&
+              memory.address(output)[4] == 0 && memory.address(output)[5] == 0xE9 &&
+              memory.address(written)[3] == 6,
+              "CP1252 to UTF-16BE PPC ABI and byte count");
+        ctx.r3.u64 = input + 16; ctx.r4.u64 = 3; ctx.r5.u64 = written;
+        ctx.r6.u64 = output; ctx.r7.u64 = 6;
+        __imp__RtlUnicodeToMultiByteN(ctx, memory.base());
+        check(ctx.r3.u32 == 0 && memory.address(input + 16)[0] == 'A' &&
+              memory.address(input + 17)[0] == 0x80U &&
+              memory.address(input + 18)[0] == 0xE9U &&
+              memory.address(written)[3] == 3,
+              "UTF-16BE to CP1252 roundtrip PPC ABI");
+        ctx.r3.u64 = output; ctx.r4.u64 = 2; ctx.r5.u64 = written;
+        ctx.r6.u64 = input; ctx.r7.u64 = 3;
+        __imp__RtlMultiByteToUnicodeN(ctx, memory.base());
+        check(ctx.r3.u32 == 0x80000005U && memory.address(written)[3] == 2,
+              "Truncated conversion reports STATUS_BUFFER_OVERFLOW");
+        ctx.r3.u64 = output; ctx.r4.u64 = 6; ctx.r5.u64 = written;
+        ctx.r6.u64 = 0x50000000U; ctx.r7.u64 = 3;
+        __imp__RtlMultiByteToUnicodeN(ctx, memory.base());
+        check(ctx.r3.u32 == 0xC000000DU,
+              "Invalid source range rejected without dereferencing guest memory");
         bool rejected = false;
         try { dotm::rtl_bound_fill_memory_ulong(0x50000000U, 4, 1); }
         catch (const std::runtime_error&) { rejected = true; }
