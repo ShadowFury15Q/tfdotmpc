@@ -192,6 +192,12 @@ add_test(NAME xenonrecomp_xam_input_original_import_abi
 # PRIVATE link-only validation of the original XenonRecomp output.
 # This target is intentionally absent from public CI and never calls _xstart.
 # Point DOTM_PRIVATE_PPC_DIR at the locally generated, uncommitted ppc/ directory.
+# Synthetic PPC update-form regression runs without proprietary sources.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME xenonrecomp_ppc_update_semantics
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_repair_ppc_updates.py")
+endif()
 set(DOTM_PRIVATE_PPC_DIR "" CACHE PATH "Private XenonRecomp C++ directory (never commit it)")
 if(DOTM_PRIVATE_PPC_DIR)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -219,6 +225,25 @@ if(DOTM_PRIVATE_PPC_DIR)
       message(FATAL_ERROR "Private PPC translation unit missing: ppc_recomp.${unit_index}.cpp")
     endif()
     list(APPEND DOTM_PRIVATE_PPC_UNITS "${unit_path}")
+  endforeach()
+  # XenonRecomp omitted 496 update-form PPC operations in the supplied
+  # original title. Repair PRIVATE build copies, never the user's sources.
+  set(DOTM_PRIVATE_ORIGINAL_DIR "${DOTM_PRIVATE_PPC_DIR}")
+  set(DOTM_PRIVATE_PPC_DIR "${CMAKE_CURRENT_BINARY_DIR}/private_ppc_patched")
+  execute_process(
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/repair_ppc_update_ops.py"
+      --source "${DOTM_PRIVATE_ORIGINAL_DIR}" --dest "${DOTM_PRIVATE_PPC_DIR}"
+    RESULT_VARIABLE DOTM_PPC_REPAIR_RESULT
+    OUTPUT_VARIABLE DOTM_PPC_REPAIR_LOG
+    ERROR_VARIABLE DOTM_PPC_REPAIR_ERROR)
+  if(NOT DOTM_PPC_REPAIR_RESULT EQUAL 0)
+    message(FATAL_ERROR "Private PPC update repair failed: ${DOTM_PPC_REPAIR_ERROR}")
+  endif()
+  message(STATUS "${DOTM_PPC_REPAIR_LOG}")
+  set(DOTM_PRIVATE_PPC_UNITS "")
+  foreach(unit_index RANGE 0 696)
+    list(APPEND DOTM_PRIVATE_PPC_UNITS
+      "${DOTM_PRIVATE_PPC_DIR}/ppc_recomp.${unit_index}.cpp")
   endforeach()
   set(DOTM_PRIVATE_STUBS "${CMAKE_CURRENT_BINARY_DIR}/private_link_stubs.cpp")
   add_custom_command(
