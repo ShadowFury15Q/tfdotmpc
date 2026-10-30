@@ -1,5 +1,6 @@
 #include "ue3_properties.hpp"
 #include "ue3_texture.hpp"
+#include "ue3_dds.hpp"
 #include "ue3_mip.hpp"
 #include <lzokay.hpp>
 #include <cmath>
@@ -28,7 +29,8 @@ void add_tag(std::vector<std::uint8_t>&b,std::uint32_t name,std::uint32_t type,
  add_fname(b,name);add_fname(b,type);add32(b,len);add32(b,idx);
 }
 void check(bool b,const char*msg){if(!b)throw std::runtime_error(msg);}
-std::vector<std::uint8_t> example(bool corrupt=false,bool with_mips=false,bool compressed=false) {
+std::vector<std::uint8_t> example(bool corrupt=false,bool with_mips=false,bool compressed=false,
+                                  int dds_variant=0) {
  // These are entirely synthetic, never extracted from a commercial game.
  std::vector<std::uint8_t> b(113);
  set32(b,0,0x9E2A83C1U);set32(b,4,0x00AE0219U);
@@ -63,6 +65,29 @@ std::vector<std::uint8_t> example(bool corrupt=false,bool with_mips=false,bool c
  add_fname(b,0);                 // None terminal
  if(!with_mips) {
   add32(b,0x12345678u);          // Native class-specific data after properties
+ } else if(dds_variant) {
+  // Synthetic Xenos-tiled BC3 payloads, not game assets. Variant 2 has a
+  // streamed gap; variant 3 has an invalid resident dimension transition.
+  add32(b,dds_variant==2?4:3);
+  auto streamed=[&](std::uint32_t w,std::uint32_t h){
+   add32(b,0x11);add32(b,16384);add32(b,1234);add32(b,0x800000);
+   add32(b,0xAABBCCDDu);add32(b,w);add32(b,h);
+  };
+  auto resident=[&](std::uint32_t w,std::uint32_t h,std::uint8_t marker){
+   std::vector<std::uint8_t> raw(16384,0);
+   raw[0]=marker;raw[1]=0x5a;
+   add32(b,0);add32(b,std::uint32_t(raw.size()));
+   add32(b,std::uint32_t(raw.size()));
+   const auto off=b.size();add32(b,0);add32(b,0xDEADBEEFu);
+   set32(b,off,std::uint32_t(b.size()));
+   b.insert(b.end(),raw.begin(),raw.end());
+   add32(b,w);add32(b,h);
+  };
+  streamed(64,64);
+  resident(32,32,0xa1);
+  if(dds_variant==2)streamed(16,16);
+  resident(dds_variant==2?8u:(dds_variant==3?7u:16u),
+           dds_variant==2?8u:(dds_variant==3?7u:16u),0xc3);
  } else {
   add32(b,3); // Three synthetic mips.
   std::vector<std::uint8_t> source;
@@ -143,6 +168,27 @@ int main(){
    catch(const std::runtime_error&){external_rejected=true;}
    check(external_rejected,"Do not fabricate external mip data");
   }
+  // Stage 42: actual package-to-DDS export must include consecutive local
+  // mips, skip unavailable higher levels, and never bridge streamed gaps.
+  const auto chain_pkg=dotm::Ue3Package::parse(example(false,true,false,1));
+  const auto chain=dotm::export_ue3_texture_dds(chain_pkg,0);
+  check(chain.has_value()&&chain->size()==128+1024+256,
+        "Export both resident BC3 mips");
+  check(chain->at(87)=='5'&&chain->at(28)==2&&chain->at(10)==0x0a,
+        "DDS mip chain header and DXT5 format");
+  check(chain->at(128)==0x5a&&chain->at(129)==0xa1&&
+        chain->at(128+1024)==0x5a&&chain->at(128+1025)==0xc3,
+        "DDS mip data offsets and Xenos byte swap");
+  const auto gap_pkg=dotm::Ue3Package::parse(example(false,true,false,2));
+  const auto gap=dotm::export_ue3_texture_dds(gap_pkg,0);
+  check(gap.has_value()&&gap->size()==128+1024&&gap->at(28)==0,
+        "Do not merge mips across an external streaming gap");
+  bool invalid_chain=false;
+  try {
+   const auto bad_chain=dotm::Ue3Package::parse(example(false,true,false,3));
+   (void)dotm::export_ue3_texture_dds(bad_chain,0);
+  }catch(const std::invalid_argument&){invalid_chain=true;}
+  check(invalid_chain,"Reject invalid resident mip dimensions");
   bool threw=false;
   try {
    const auto broken=dotm::Ue3Package::parse(example(true));
