@@ -23,6 +23,9 @@ NATIVE = {"__imp__XamInputGetState", "__imp__XamInputGetCapabilities",
           "__imp__NtAllocateVirtualMemory", "__imp__NtFreeVirtualMemory"} | {
               f"__{action}gprlr_{reg}"
               for action in ("save", "rest") for reg in range(14, 32)
+          } | {
+              f"__{action}fpr_{reg}"
+              for action in ("save", "rest") for reg in range(14, 32)
           }
 
 
