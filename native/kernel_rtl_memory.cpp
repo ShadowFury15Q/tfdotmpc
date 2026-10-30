@@ -1,6 +1,8 @@
 #include "kernel_rtl_memory.hpp"
 #include "guest_memory.hpp"
 #include <cstdint>
+#include <algorithm>
+#include <vector>
 #include <stdexcept>
 
 namespace {
@@ -73,5 +75,84 @@ std::uint32_t rtl_bound_compare_memory_ulong(std::uint32_t source,
             return i;
     }
     return length;
+}
+}
+
+
+namespace {
+constexpr std::uint32_t kTextSuccess = 0;
+constexpr std::uint32_t kTextOverflow = 0x80000005U;
+constexpr std::uint32_t kTextInvalidParameter = 0xC000000DU;
+constexpr std::uint32_t kTextNotSupported = 0xC00000BBU;
+constexpr std::uint16_t kCp1252High[] = {
+    0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+    0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
+    0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+    0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178
+};
+std::uint16_t decode_cp1252(std::uint8_t c) {
+    return c >= 0x80 && c < 0xA0 ? kCp1252High[c - 0x80] : c;
+}
+std::uint8_t encode_cp1252(std::uint16_t c) {
+    if (c < 0x80 || (c >= 0xA0 && c <= 0xFF)) return std::uint8_t(c);
+    for (std::uint32_t i = 0; i < 32; ++i)
+        if (kCp1252High[i] == c) return std::uint8_t(0x80 + i);
+    return '?'; // Windows ANSI default-character replacement.
+}
+bool valid_text_guest(const dotm::GuestMemory& m, std::uint32_t a,
+                      std::uint32_t length, bool write) {
+    if (!length) return true;
+    const auto start = std::uint64_t(a);
+    const auto end = start + length;
+    const auto table = dotm::GuestMemory::kFunctionTableOffset;
+    return start >= 0x10000U && end <= dotm::GuestMemory::kAddressSpaceSize &&
+           !(write && start < table + dotm::GuestMemory::kFunctionTableSize && end > table) &&
+           m.committed_range(start, length);
+}
+void put_text_u32(dotm::GuestMemory& m, std::uint32_t a, std::uint32_t value) {
+    auto* p = m.address(a);
+    p[0] = std::uint8_t(value >> 24); p[1] = std::uint8_t(value >> 16);
+    p[2] = std::uint8_t(value >> 8); p[3] = std::uint8_t(value);
+}
+}
+namespace dotm {
+std::uint32_t rtl_bound_multi_byte_to_unicode(std::uint32_t output,
+    std::uint32_t output_max, std::uint32_t written, std::uint32_t input,
+    std::uint32_t input_size) {
+    if (!bound_memory) return kTextNotSupported;
+    auto& m = *bound_memory;
+    if ((written && ((written & 3U) || !valid_text_guest(m, written, 4, true))) ||
+        !valid_text_guest(m, input, input_size, false) ||
+        !valid_text_guest(m, output, output_max, true)) return kTextInvalidParameter;
+    const auto converted = std::min<std::uint32_t>(input_size, output_max / 2);
+    // Snapshot the source so overlapping guest input/output is deterministic.
+    std::vector<std::uint8_t> source;
+    if (input_size) source.assign(m.address(input), m.address(input) + converted);
+    for (std::uint32_t i = 0; i < converted; ++i) {
+        const auto code = decode_cp1252(source[i]);
+        m.address(output)[2*i] = std::uint8_t(code >> 8);
+        m.address(output)[2*i+1] = std::uint8_t(code);
+    }
+    if (written) put_text_u32(m, written, converted * 2);
+    return converted == input_size ? kTextSuccess : kTextOverflow;
+}
+std::uint32_t rtl_bound_unicode_to_multi_byte(std::uint32_t output,
+    std::uint32_t output_max, std::uint32_t written, std::uint32_t input,
+    std::uint32_t input_size) {
+    if (!bound_memory) return kTextNotSupported;
+    auto& m = *bound_memory;
+    if ((input_size & 1U) ||
+        (written && ((written & 3U) || !valid_text_guest(m, written, 4, true))) ||
+        !valid_text_guest(m, input, input_size, false) ||
+        !valid_text_guest(m, output, output_max, true)) return kTextInvalidParameter;
+    const auto converted = std::min<std::uint32_t>(input_size / 2, output_max);
+    std::vector<std::uint8_t> source;
+    if (converted) source.assign(m.address(input), m.address(input) + 2*converted);
+    for (std::uint32_t i = 0; i < converted; ++i) {
+        const auto code = std::uint16_t(std::uint16_t(source[2*i]) << 8 | source[2*i+1]);
+        m.address(output)[i] = encode_cp1252(code);
+    }
+    if (written) put_text_u32(m, written, converted);
+    return converted * 2 == input_size ? kTextSuccess : kTextOverflow;
 }
 }
