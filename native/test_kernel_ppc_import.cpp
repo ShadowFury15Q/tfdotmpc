@@ -93,26 +93,34 @@ int main() {
               heap.allocation_size(reserved) == 8192 &&
               heap.allocated_bytes() == 8192,
               "MEM_RESERVE does not commit physical guest pages");
-        check(allocate(reserved, 4096, 0x1000) == dotm::kNtNotSupported,
-              "Partial MEM_COMMIT is rejected without changing reservation");
-        check(!memory.committed_range(reserved, 1),
-              "Unsupported partial commit must not touch guest pages");
-        check(allocate(reserved, 8192, 0x1000) == dotm::kNtSuccess,
-              "MEM_COMMIT activates a full reserved region");
+        check(allocate(reserved, 4096, 0x1000) == dotm::kNtSuccess,
+              "Partial MEM_COMMIT activates first reserved guest page");
+        check(memory.committed_range(reserved, 4096) &&
+              !memory.committed_range(reserved + 4096, 4096) &&
+              heap.allocated_bytes() == 12288,
+              "Partial commit leaves neighboring reserved page untouched");
+        check(allocate(reserved + 4096, 4096, 0x1000) == dotm::kNtSuccess,
+              "Interior MEM_COMMIT activates second reserved guest page");
         check(memory.committed_range(reserved, 8192) &&
               heap.allocated_bytes() == 16384,
-              "Committed reservation has real writable guest memory");
+              "Both partial commits account for the full reservation");
+        check(allocate(reserved, 4096, 0x1000) == dotm::kNtNotSupported,
+              "Duplicate MEM_COMMIT does not double-count committed pages");
         memory.address(reserved)[0] = 0xAB;
-        check(release(reserved, 4096, 0x4000U) == dotm::kNtNotSupported,
-              "Partial MEM_DECOMMIT fails without altering reservation");
-        check(memory.committed_range(reserved, 8192),
-              "Partial decommit preserves committed pages");
-        check(release(reserved, 8192, 0x4000U) == dotm::kNtSuccess,
-              "Full MEM_DECOMMIT succeeds");
+        memory.address(reserved + 4096)[0] = 0xCD;
+        check(release(reserved, 4096, 0x4000U) == dotm::kNtSuccess,
+              "Partial MEM_DECOMMIT revokes first guest page");
+        check(!memory.committed_range(reserved, 4096) &&
+              memory.committed_range(reserved + 4096, 4096) &&
+              memory.address(reserved + 4096)[0] == 0xCD &&
+              heap.allocated_bytes() == 12288,
+              "Partial decommit preserves neighboring committed guest page");
+        check(release(reserved + 4096, 4096, 0x4000U) == dotm::kNtSuccess,
+              "Interior MEM_DECOMMIT revokes remaining guest page");
         check(!memory.committed_range(reserved, 8192) &&
               heap.allocation_size(reserved) == 8192 &&
               heap.allocated_bytes() == 8192,
-              "MEM_DECOMMIT retains reservation but revokes physical pages");
+              "Decommitted reservation retains address space and accounting");
         check(allocate(reserved, 8192, 0x1000U) == dotm::kNtSuccess,
               "MEM_COMMIT restores decommitted reservation");
         check(memory.address(reserved)[0] == 0 &&
