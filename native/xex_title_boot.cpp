@@ -44,6 +44,11 @@ constexpr std::uint32_t kThreadTypeAddress = 0x81908000U;
 // Retail kernel ordinal 614 (0x266): KeCertMonitorData, optional monitor pointer.
 constexpr std::uint32_t kCertMonitorImport = 0x82000958U;
 constexpr std::uint32_t kCertMonitorAddress = 0x81909000U;
+// Xbox kernel data exports: VdGlobalXamDevice (0x1BF) and
+// VdGlobalDevice (0x1BE). Both are writable pointers to GPU device state.
+constexpr std::uint32_t kGlobalXamDeviceImport = 0x8200095CU;
+constexpr std::uint32_t kGlobalDeviceImport = 0x82000960U;
+constexpr std::uint32_t kGpuDeviceGlobalsAddress = 0x8190A000U;
 constexpr std::uint32_t kRetailHardwareFlags = 0x20U;
 constexpr std::uint8_t kHardwareCpuCount = 6U;
 // The original DOTM sub_827813F8 dereferences [0x82000998] then its handle,
@@ -254,7 +259,9 @@ std::uint32_t install_original_xex_title_header(
         !memory.committed_range(kDebugMonitorImport, 4) ||
         !memory.committed_range(kCommandLineImport, 4) ||
         !memory.committed_range(kThreadTypeImport, 4) ||
-        !memory.committed_range(kCertMonitorImport, 4))
+        !memory.committed_range(kCertMonitorImport, 4) ||
+        !memory.committed_range(kGlobalXamDeviceImport, 4) ||
+        !memory.committed_range(kGlobalDeviceImport, 4))
         throw std::runtime_error("Load original decrypted PE before XEX2 module wiring");
     const auto timestamp_import_tag = be32(memory.address(kTimeStampBundleImport));
     if (timestamp_import_tag != 0 && timestamp_import_tag != 0x000100ADU)
@@ -274,6 +281,11 @@ std::uint32_t install_original_xex_title_header(
     const auto cert_monitor_tag = be32(memory.address(kCertMonitorImport));
     if (cert_monitor_tag != 0 && cert_monitor_tag != 0x00010266U)
         throw std::runtime_error("Unexpected KeCertMonitorData import ordinal");
+    const auto global_xam_device_tag = be32(memory.address(kGlobalXamDeviceImport));
+    const auto global_device_tag = be32(memory.address(kGlobalDeviceImport));
+    if ((global_xam_device_tag != 0 && global_xam_device_tag != 0x000101BFU) ||
+        (global_device_tag != 0 && global_device_tag != 0x000101BEU))
+        throw std::runtime_error("Unexpected VdGlobalDevice import ordinals");
     if (memory.any_committed_range(kHeaderAddress, kMaximumHeaderSize) ||
         memory.any_committed_range(kModuleHandleAddress, 4096) ||
         memory.any_committed_range(kModuleAddress, 4096) ||
@@ -284,7 +296,8 @@ std::uint32_t install_original_xex_title_header(
         memory.any_committed_range(kDebugMonitorAddress, 4096) ||
         memory.any_committed_range(kCommandLineAddress, 4096) ||
         memory.any_committed_range(kThreadTypeAddress, 4096) ||
-        memory.any_committed_range(kCertMonitorAddress, 4096))
+        memory.any_committed_range(kCertMonitorAddress, 4096) ||
+        memory.any_committed_range(kGpuDeviceGlobalsAddress, 4096))
         throw std::runtime_error("XEX2 module boot memory overlaps existing guest state");
     // Validate the executable entry BEFORE touching any guest memory.
     bool matched_entry = false;
@@ -320,6 +333,7 @@ std::uint32_t install_original_xex_title_header(
     memory.commit(kCommandLineAddress, 4096);
     memory.commit(kThreadTypeAddress, 4096);
     memory.commit(kCertMonitorAddress, 4096);
+    memory.commit(kGpuDeviceGlobalsAddress, 4096);
     // System XAM module uses an Xbox 360 LDR_DATA_TABLE_ENTRY as HMODULE.
     // No proprietary xam.xex is loaded: only the built-in native service handle.
     std::memset(memory.address(kXamModuleAddress), 0, 4096);
@@ -360,6 +374,11 @@ std::uint32_t install_original_xex_title_header(
     // Export points at a valid guest variable containing a null callback pointer.
     std::memset(memory.address(kCertMonitorAddress), 0, 4096);
     put32(memory, kCertMonitorImport, kCertMonitorAddress);
+    // Original graphics startup stores the live device pointer into the
+    // exported guest variable, not into the PE import-ordinal placeholder.
+    std::memset(memory.address(kGpuDeviceGlobalsAddress), 0, 4096);
+    put32(memory, kGlobalXamDeviceImport, kGpuDeviceGlobalsAddress);
+    put32(memory, kGlobalDeviceImport, kGpuDeviceGlobalsAddress + 4U);
     put32(memory, kModuleHandleAddress, kModuleAddress);
     put32(memory, kModuleAddress + 0x58, kHeaderAddress);
     put32(memory, kOriginalModuleImport, kModuleHandleAddress);

@@ -121,6 +121,19 @@ int main() {
           "Corrupt KeCertMonitorData ordinal rejected before allocation");
     for (int i = 0; i < 4; ++i)
         memory.address(0x82000958U)[i] = std::uint8_t(0x00010266U >> (24 - i * 8));
+    // The original XEX image stores ordinal tokens rather than guest pointers
+    // for the writable VdGlobalDevice and VdGlobalXamDevice data exports.
+    for (int i = 0; i < 4; ++i)
+        memory.address(0x8200095CU)[i] = std::uint8_t(0xDEADBEEFU >> (24 - i * 8));
+    bool bad_device_import = false;
+    try { dotm::install_original_xex_title_header(memory, file.path, entry); }
+    catch (const std::runtime_error&) { bad_device_import = true; }
+    check(bad_device_import && !memory.committed_range(0x8190A000U, 4),
+          "Invalid GPU global import ordinal rejected before allocation");
+    for (int i = 0; i < 4; ++i) {
+        memory.address(0x8200095CU)[i] = std::uint8_t(0x000101BFU >> (24 - i * 8));
+        memory.address(0x82000960U)[i] = std::uint8_t(0x000101BEU >> (24 - i * 8));
+    }
     check(dotm::install_original_xex_title_header(memory, file.path, entry)
           == 0x81000000U);
     check(get32(memory, 0x8200085CU) == 0x81904000U);
@@ -131,6 +144,18 @@ int main() {
     check(get32(memory, 0x82000958U) == 0x81909000U &&
           get32(memory, 0x81909000U) == 0U,
           "KeCertMonitorData import resolves to disabled retail monitor pointer");
+    check(get32(memory, 0x8200095CU) == 0x8190A000U &&
+          get32(memory, 0x82000960U) == 0x8190A004U &&
+          get32(memory, 0x8190A000U) == 0U &&
+          get32(memory, 0x8190A004U) == 0U,
+          "GPU global data imports resolve to separate writable guest pointers");
+    // GPU startup writes its actual device address through the imported slot.
+    auto* device_ptr = memory.address(get32(memory, 0x82000960U));
+    device_ptr[0] = 0x82; device_ptr[1] = 0x51;
+    device_ptr[2] = 0x00; device_ptr[3] = 0x00;
+    check(get32(memory, 0x8190A004U) == 0x82510000U &&
+          get32(memory, 0x8190A000U) == 0U,
+          "GPU device global is writable without aliasing XAM device");
     check(get32(memory, 0x81908000U) == 27U);
     check(std::strcmp(reinterpret_cast<const char*>(memory.address(0x81907000U)),
                       "\"default.xex\"") == 0,
