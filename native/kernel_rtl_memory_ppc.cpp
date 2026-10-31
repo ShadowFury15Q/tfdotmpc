@@ -3,6 +3,12 @@
 
 // Xbox 360 PowerPC calling convention: r3=guest pointer, r4=byte length,
 // r5=32-bit pattern. RtlFillMemoryUlong returns void; preserve r3.
+PPC_FUNC(__imp__RtlInitAnsiString) {
+    dotm::rtl_bound_init_ansi_string(ctx.r3.u32, ctx.r4.u32);
+}
+PPC_FUNC(__imp__RtlInitUnicodeString) {
+    dotm::rtl_bound_init_unicode_string(ctx.r3.u32, ctx.r4.u32);
+}
 PPC_FUNC(__imp__RtlFillMemoryUlong) {
     dotm::rtl_bound_fill_memory_ulong(ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
 }

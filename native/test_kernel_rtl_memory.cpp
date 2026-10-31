@@ -7,6 +7,8 @@
 #include <stdexcept>
 
 PPC_EXTERN_FUNC(__imp__RtlFillMemoryUlong);
+PPC_EXTERN_FUNC(__imp__RtlInitAnsiString);
+PPC_EXTERN_FUNC(__imp__RtlInitUnicodeString);
 PPC_EXTERN_FUNC(__imp__RtlCompareMemoryUlong);
 PPC_EXTERN_FUNC(__imp__RtlNtStatusToDosError);
 PPC_EXTERN_FUNC(__imp__RtlMultiByteToUnicodeN);
@@ -103,6 +105,40 @@ int main() {
         try { (void)dotm::rtl_bound_compare_memory_ulong(0x50000000U, 4, 1); }
         catch (const std::runtime_error&) { rejected = true; }
         check(rejected, "Uncommitted guest read must be rejected");
+        // Xbox ANSI_STRING / UNICODE_STRING descriptors are 8-byte
+        // big-endian structures with byte lengths and guest buffer pointers.
+        const auto ansi = address + 0x380U;
+        const auto ansi_text = address + 0x3A0U;
+        const auto wide = address + 0x3C0U;
+        const auto wide_text = address + 0x3E0U;
+        memory.address(ansi_text)[0] = 'A';
+        memory.address(ansi_text)[1] = 'B';
+        memory.address(ansi_text)[2] = 0;
+        ctx.r3.u64 = ansi; ctx.r4.u64 = ansi_text;
+        __imp__RtlInitAnsiString(ctx, memory.base());
+        check(ctx.r3.u32 == ansi && memory.address(ansi)[0] == 0 &&
+              memory.address(ansi)[1] == 2 && memory.address(ansi)[3] == 3 &&
+              memory.address(ansi)[4] == 0x40 && memory.address(ansi)[5] == 0 &&
+              memory.address(ansi)[6] == 3 && memory.address(ansi)[7] == 0xA0,
+              "RtlInitAnsiString big-endian PPC descriptor");
+        ctx.r3.u64 = ansi; ctx.r4.u64 = 0;
+        __imp__RtlInitAnsiString(ctx, memory.base());
+        check(memory.address(ansi)[1] == 0 && memory.address(ansi)[3] == 0 &&
+              memory.address(ansi)[7] == 0,
+              "RtlInitAnsiString null source");
+        memory.address(wide_text)[0] = 0;
+        memory.address(wide_text)[1] = 'Z';
+        memory.address(wide_text)[2] = 0;
+        memory.address(wide_text)[3] = 0;
+        ctx.r3.u64 = wide; ctx.r4.u64 = wide_text;
+        __imp__RtlInitUnicodeString(ctx, memory.base());
+        check(memory.address(wide)[1] == 2 && memory.address(wide)[3] == 4 &&
+              memory.address(wide)[7] == 0xE0,
+              "RtlInitUnicodeString UTF-16BE descriptor");
+        rejected = false;
+        try { dotm::rtl_bound_init_ansi_string(ansi, 0x50000000U); }
+        catch (const std::runtime_error&) { rejected = true; }
+        check(rejected, "RtlInitAnsiString rejects uncommitted source");
         dotm::bind_kernel_rtl_memory(nullptr);
         rejected = false;
         try { dotm::rtl_bound_fill_memory_ulong(address, 4, 1); }

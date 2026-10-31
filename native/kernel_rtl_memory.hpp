@@ -4,6 +4,8 @@ namespace dotm {
 class GuestMemory;
 // Binding is thread-local, as Xbox kernel imports run on the calling guest thread.
 void bind_kernel_rtl_memory(GuestMemory* memory) noexcept;
+void rtl_bound_init_ansi_string(std::uint32_t destination, std::uint32_t source);
+void rtl_bound_init_unicode_string(std::uint32_t destination, std::uint32_t source);
 std::uint32_t rtl_bound_multi_byte_to_unicode(std::uint32_t output,
     std::uint32_t output_max, std::uint32_t written, std::uint32_t input,
     std::uint32_t input_size);

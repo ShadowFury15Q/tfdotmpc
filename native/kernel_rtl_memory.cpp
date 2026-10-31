@@ -40,6 +40,75 @@ void bind_kernel_rtl_memory(GuestMemory* memory) noexcept {
     bound_memory = memory;
 }
 
+void rtl_bound_init_ansi_string(std::uint32_t destination, std::uint32_t source) {
+    const auto table = GuestMemory::kFunctionTableOffset;
+    const auto end = std::uint64_t(destination) + 8U;
+    if ((destination & 3U) || !bound_memory ||
+        (destination < table + GuestMemory::kFunctionTableSize && end > table) ||
+        !bound_memory->committed_range(destination, 8))
+        throw std::runtime_error("RtlInitAnsiString: invalid guest ANSI_STRING");
+    std::uint32_t length = 0;
+    if (source) {
+        // Xbox ANSI_STRING length is a 16-bit byte count. Scan only committed
+        // guest bytes, never follow a host pointer or read past 0xFFFE bytes.
+        while (length <= 0xFFFEU) {
+            const auto address = std::uint64_t(source) + length;
+            if (address >= GuestMemory::kAddressSpaceSize ||
+                !bound_memory->committed_range(address, 1))
+                throw std::runtime_error("RtlInitAnsiString: invalid source");
+            if (!bound_memory->address(address)[0]) break;
+            ++length;
+        }
+        if (length > 0xFFFEU)
+            throw std::runtime_error("RtlInitAnsiString: source too long");
+    }
+    auto* out = bound_memory->address(destination);
+    out[0] = std::uint8_t(length >> 8);
+    out[1] = std::uint8_t(length);
+    const auto maximum = source ? length + 1U : 0U;
+    out[2] = std::uint8_t(maximum >> 8);
+    out[3] = std::uint8_t(maximum);
+    out[4] = std::uint8_t(source >> 24);
+    out[5] = std::uint8_t(source >> 16);
+    out[6] = std::uint8_t(source >> 8);
+    out[7] = std::uint8_t(source);
+}
+
+void rtl_bound_init_unicode_string(std::uint32_t destination, std::uint32_t source) {
+    const auto table = GuestMemory::kFunctionTableOffset;
+    const auto end = std::uint64_t(destination) + 8U;
+    if ((destination & 3U) || !bound_memory ||
+        (destination < table + GuestMemory::kFunctionTableSize && end > table) ||
+        !bound_memory->committed_range(destination, 8))
+        throw std::runtime_error("RtlInitUnicodeString: invalid guest UNICODE_STRING");
+    std::uint32_t length = 0;
+    if (source) {
+        if (source & 1U)
+            throw std::runtime_error("RtlInitUnicodeString: unaligned source");
+        while (length <= 0xFFFCU) {
+            const auto address = std::uint64_t(source) + length;
+            if (address >= GuestMemory::kAddressSpaceSize ||
+                !bound_memory->committed_range(address, 2))
+                throw std::runtime_error("RtlInitUnicodeString: invalid source");
+            const auto* code = bound_memory->address(address);
+            if (!code[0] && !code[1]) break;
+            length += 2;
+        }
+        if (length > 0xFFFCU)
+            throw std::runtime_error("RtlInitUnicodeString: source too long");
+    }
+    auto* out = bound_memory->address(destination);
+    out[0] = std::uint8_t(length >> 8);
+    out[1] = std::uint8_t(length);
+    const auto maximum = source ? length + 2U : 0U;
+    out[2] = std::uint8_t(maximum >> 8);
+    out[3] = std::uint8_t(maximum);
+    out[4] = std::uint8_t(source >> 24);
+    out[5] = std::uint8_t(source >> 16);
+    out[6] = std::uint8_t(source >> 8);
+    out[7] = std::uint8_t(source);
+}
+
 void rtl_bound_fill_memory_ulong(std::uint32_t destination,
                                  std::uint32_t length,
                                  std::uint32_t pattern) {
