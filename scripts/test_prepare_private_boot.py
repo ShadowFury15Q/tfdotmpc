@@ -112,7 +112,7 @@ class PrivateBootTests(unittest.TestCase):
                 p.staged_boot_resources(root, output)
             (staged / name).unlink()
             with zipfile.ZipFile(root / "DOTM_BOOT_RESOURCES.zip", "w") as z:
-                z.writestr(name, b"corrupted bytes")
+                z.writestr(name, b"x" * len(content))
                 z.writestr("DOTM_BOOT_RESOURCES_HASHES.json", json.dumps(manifest))
             with self.assertRaisesRegex(ValueError, "SHA256 mismatch"):
                 p.staged_boot_resources(root, output)
