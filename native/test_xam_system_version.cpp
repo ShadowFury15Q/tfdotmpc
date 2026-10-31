@@ -28,5 +28,5 @@ int main() {
         if (dotm::parse_xam_console_language(locale) != expected)
             throw std::runtime_error("Xbox 360 console language mapping mismatch");
     }
-    std::cout << "XAM dashboard and original Xbox console language profile PASS\\n";
+    std::cout << "XAM dashboard and original Xbox console language profile PASS\n";
 }
