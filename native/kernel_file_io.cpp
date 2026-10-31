@@ -238,8 +238,13 @@ std::uint32_t nt_bound_query_information_file(std::uint32_t handle,
             // expose modification time but not reliable creation/access/change.
             const auto mtime = std::filesystem::last_write_time(file.path, ec);
             if (ec) return kAccessDenied;
+            // MSVC's file_clock has no to_sys(); convert through a relative
+            // clock offset, supported by both Windows clang-cl and Linux Clang.
+            const auto system_mtime = std::chrono::system_clock::now() +
+                std::chrono::duration_cast<std::chrono::system_clock::duration>(
+                    mtime - std::filesystem::file_time_type::clock::now());
             const auto unix_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::file_clock::to_sys(mtime).time_since_epoch()).count();
+                system_mtime.time_since_epoch()).count();
             constexpr std::uint64_t epoch = 116444736000000000ULL;
             const auto last_write = unix_ns >= 0 ?
                 epoch + static_cast<std::uint64_t>(unix_ns / 100) : 0U;
