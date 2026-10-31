@@ -216,9 +216,12 @@ endif()
 
 # Xbox 360 XAM input ABI backed by native Win32 keyboard/mouse actions.
 # Public CI tests use no original game code or assets.
-add_library(dotm_xam_input STATIC xam_input.cpp xam_guest_input.cpp)
+add_library(dotm_xam_input STATIC xam_input.cpp xam_guest_input.cpp xam_system_version.cpp)
 target_include_directories(dotm_xam_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(dotm_xam_input PUBLIC dotm_native_input dotm_guest_memory)
+add_executable(dotm_xam_system_version_test test_xam_system_version.cpp)
+target_link_libraries(dotm_xam_system_version_test PRIVATE dotm_xam_input)
+add_test(NAME xbox360_xam_system_version_dashboard_profile COMMAND dotm_xam_system_version_test)
 
 add_executable(dotm_xam_input_test test_xam_input.cpp)
 target_link_libraries(dotm_xam_input_test PRIVATE dotm_xam_input)

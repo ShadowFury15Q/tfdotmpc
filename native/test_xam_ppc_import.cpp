@@ -2,6 +2,7 @@
 #include "guest_memory.hpp"
 #include "native_input.hpp"
 #include "xam_guest_input.hpp"
+#include "xam_system_version.hpp"
 #include <array>
 #include <cstdint>
 #include <iostream>
@@ -9,6 +10,7 @@
 
 PPC_EXTERN_FUNC(__imp__XamInputGetState);
 PPC_EXTERN_FUNC(__imp__XamInputGetCapabilities);
+PPC_EXTERN_FUNC(__imp__XamGetSystemVersion);
 
 namespace {
 void require(bool pass,const char* message){if(!pass)throw std::runtime_error(message);}
@@ -24,6 +26,10 @@ int main(){
 
     constexpr std::uint32_t guest_ptr=0x82032000u;
     PPCContext ctx{};
+    ctx.r3.u64=~std::uint64_t{0};
+    __imp__XamGetSystemVersion(ctx,memory.base());
+    require(ctx.r3.u64==dotm::xam_system_version(),
+            "Original PPC XamGetSystemVersion returns retail dashboard version in r3");
     ctx.r3.u64=0; // controller user
     ctx.r4.u64=1; // GAMEPAD
     ctx.r5.u64=guest_ptr;
