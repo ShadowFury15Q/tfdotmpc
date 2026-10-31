@@ -170,4 +170,27 @@ int main() {
     dotm::bind_kernel_threads(nullptr);
     check(std::chrono::steady_clock::now() - shutdown_start < std::chrono::seconds(2));
     check(calls.load() == 1);
+    check(!memory.committed_range(0x72000000U, 1) &&
+          !memory.committed_range(0x78000000U, 1));
+
+    // A title can create far more than 32 threads over its lifetime even
+    // though Xenon supports only a limited number of simultaneous workers.
+    // Closing a finished handle must allow its stack/KPCR slot to be reused.
+    dotm::bind_kernel_threads(&memory);
+    for (unsigned iteration = 0; iteration < 40; ++iteration) {
+        create(c, memory, 0U);
+        check(c.r3.u32 == 0U);
+        const auto recycled = read32(memory.address(0x70100000U));
+        check(recycled == 0xF7000000U);
+        c.r3.u64 = recycled; c.r4.u64 = 1; c.r5.u64 = 0; c.r6.u64 = 0;
+        __imp__NtWaitForSingleObjectEx(c, memory.base());
+        check(c.r3.u32 == 0U);
+        c.r3.u64 = recycled;
+        __imp__NtClose(c, memory.base());
+        check(c.r3.u32 == 0U);
+    }
+    check(calls.load() == 41U);
+    dotm::bind_kernel_threads(nullptr);
+    check(!memory.committed_range(0x72000000U, 1) &&
+          !memory.committed_range(0x78000000U, 1));
 }

@@ -143,8 +143,10 @@ std::optional<std::chrono::nanoseconds> read_timeout(const GuestMemory& memory,
 
 void bind_kernel_threads(GuestMemory* memory) {
     std::vector<std::shared_ptr<ThreadState>> previous;
+    GuestMemory* previous_memory = nullptr;
     {
         std::lock_guard lock(registry_mutex);
+        previous_memory = bound_memory;
         previous.swap(all_threads);
         handles.clear();
         bound_memory = nullptr;
@@ -154,6 +156,7 @@ void bind_kernel_threads(GuestMemory* memory) {
     // Running guest code is not forcibly interrupted: it must finish before
     // the guest address space can be released.
     for (const auto& state : previous) {
+        if (!state) continue;
         if (state->worker.joinable() &&
             state->worker.get_id() == std::this_thread::get_id())
             throw std::logic_error("Cannot unbind guest threads from a guest worker");
@@ -164,7 +167,16 @@ void bind_kernel_threads(GuestMemory* memory) {
         state->cv.notify_all();
     }
     for (const auto& state : previous)
-        if (state->worker.joinable()) state->worker.join();
+        if (state && state->worker.joinable()) state->worker.join();
+    // All workers have exited: their private stacks and KPCR/TLS pages
+    // must not remain committed across a new title boot.
+    if (previous_memory) {
+        for (std::size_t slot = 0; slot < previous.size(); ++slot) {
+            if (!previous[slot]) continue;
+            previous_memory->decommit(kStackBase + slot * kStackBytes, kStackBytes);
+            previous_memory->decommit(kPcrBase + slot * kPcrStride, 0x3000U);
+        }
+    }
     std::lock_guard lock(registry_mutex);
     bound_memory = memory;
 }
@@ -190,10 +202,31 @@ std::uint32_t nt_bound_create_thread(std::uint32_t handle_output,
     if (affinity) {
         while ((affinity & (1U << guest_cpu)) == 0) ++guest_cpu;
     }
-    if (all_threads.size() >= kMaxThreads) return kNoMemory;
-    const auto slot = static_cast<std::uint32_t>(all_threads.size());
+    // Closed, finished threads no longer consume a Xenon thread slot.
+    // Never recycle a still-running worker even if its handle was closed.
+    std::uint32_t slot = static_cast<std::uint32_t>(all_threads.size());
+    for (std::uint32_t i = 0; i < all_threads.size(); ++i) {
+        const auto& old = all_threads[i];
+        if (!old) { slot = i; break; }
+        std::lock_guard state_lock(old->mutex);
+        if (old->finished && !handles.contains(old->handle)) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot >= kMaxThreads) return kNoMemory;
+    const bool append_slot = slot == all_threads.size();
     const auto stack = kStackBase + slot * kStackBytes;
     const auto pcr = kPcrBase + slot * kPcrStride;
+    if (!append_slot && all_threads[slot]) {
+        // finished is set only after guest code has stopped accessing its
+        // stack; join before decommitting any guest pages.
+        auto retired = all_threads[slot];
+        if (retired->worker.joinable()) retired->worker.join();
+        bound_memory->decommit(stack, kStackBytes);
+        bound_memory->decommit(pcr, 0x3000U);
+        all_threads[slot].reset();
+    }
     if (bound_memory->any_committed_range(stack, kStackBytes) ||
         bound_memory->any_committed_range(pcr, 0x3000))
         return kNoMemory;
@@ -224,7 +257,8 @@ std::uint32_t nt_bound_create_thread(std::uint32_t handle_output,
         state->suspend_count = creation_flags & 1U;
         handles.emplace(state->handle, state);
         try {
-            all_threads.push_back(state);
+            if (append_slot) all_threads.push_back(state);
+            else all_threads[slot] = state;
             try {
                 auto* memory = bound_memory;
                 state->worker = std::thread([state, memory, pcr, top, api_startup,
@@ -267,7 +301,8 @@ std::uint32_t nt_bound_create_thread(std::uint32_t handle_output,
                     state->cv.notify_all();
                 });
             } catch (...) {
-                all_threads.pop_back();
+                if (append_slot) all_threads.pop_back();
+                else all_threads[slot].reset();
                 throw;
             }
         } catch (...) {
@@ -283,7 +318,8 @@ std::uint32_t nt_bound_create_thread(std::uint32_t handle_output,
             }
             state->cv.notify_all();
             state->worker.join();
-            all_threads.pop_back();
+            if (append_slot) all_threads.pop_back();
+            else all_threads[slot].reset();
             handles.erase(state->handle);
             bound_memory->decommit(pcr, 0x3000);
             bound_memory->decommit(stack, kStackBytes);
