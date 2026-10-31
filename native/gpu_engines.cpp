@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
 #include <stdexcept>
 
@@ -51,6 +52,15 @@ void write_be32(std::uint32_t address, std::uint32_t value) {
 // CPU-side Xenos MMIO and PM4 packet writes address the same register file.
 // Guest PPC accesses the MMIO pages directly, so the guest bytes are the
 // authoritative register state whenever the aperture has been mapped.
+// A successful GPU reset must invalidate both register representations.
+// Otherwise direct PPC MMIO reads retain stale values after initialization
+// even though the native PM4 register shadow has been cleared.
+void reset_gpu_registers() {
+    gpu_registers.fill(0);
+    if (guest_memory &&
+        guest_memory->committed_range(kXenosMmioBase, kXenosMmioBytes))
+        std::memset(guest_memory->address(kXenosMmioBase), 0, kXenosMmioBytes);
+}
 std::uint32_t read_gpu_register(std::uint32_t index) {
     const auto address = kXenosMmioBase + index * 4U;
     return readable(address, 4U) ? read_be32(address) : gpu_registers[index];
@@ -112,7 +122,7 @@ std::uint32_t vd_bound_initialize_engines(
     const auto me_hash = microcode_fingerprint(me_microcode);
     if (!pfp_hash || !me_hash) return 0;
     engine = {};
-    gpu_registers.fill(0);
+    reset_gpu_registers();
     engine.initialized = true;
     engine.flags = flags;
     engine.startup_callback = callback;
@@ -126,7 +136,7 @@ std::uint32_t vd_bound_initialize_engines(
 void vd_bound_shutdown_engines() noexcept {
     std::lock_guard lock(gpu_mutex);
     engine = {};
-    gpu_registers.fill(0);
+    reset_gpu_registers();
 }
 std::uint32_t vd_bound_call_graphics_notification_routines(
     std::uint32_t notification, std::uint32_t scaling_pointer) {
