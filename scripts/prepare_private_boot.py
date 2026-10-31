@@ -5,6 +5,8 @@ Never downloads original game assets, edits default.xex, or copies assets
 into the public repository. Use --boot to build and attempt the original _xstart.
 """
 import argparse
+import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -116,6 +118,52 @@ def verified_or_extracted_pe(root, output, extractor):
     return verify_pe(path)
 
 
+def staged_boot_resources(root, output):
+    """Verify a private boot-resource ZIP and stage files without overwriting originals."""
+    archive = next((p for p in (
+        root / "DOTM_BOOT_RESOURCES.zip",
+        root / "private" / "DOTM_BOOT_RESOURCES.zip",
+        output.parent / "DOTM_BOOT_RESOURCES.zip",
+    ) if p.is_file()), None)
+    if archive is None:
+        return None
+    target = output / "game"
+    with zipfile.ZipFile(archive) as z:
+        manifest = json.loads(z.read("DOTM_BOOT_RESOURCES_HASHES.json"))
+        entries = manifest.get("files", [])
+        if not entries or len(entries) != len({entry["path"] for entry in entries}):
+            raise ValueError("Invalid boot resource hash manifest")
+        for entry in entries:
+            name = entry["path"]
+            parts = Path(name).parts
+            if (not name.startswith("TransGame/") or
+                    any(part in ("", ".", "..") for part in parts) or
+                    "\\\\" in name or ":" in name):
+                raise ValueError("Unsafe original title resource path: " + name)
+            info = z.getinfo(name)
+            if (info.external_attr >> 16) & 0o170000 == 0o120000:
+                raise ValueError("Refusing symbolic link in boot resources: " + name)
+            if info.file_size != entry["bytes"]:
+                raise ValueError("Original boot resource size mismatch: " + name)
+            digest = hashlib.sha256()
+            with z.open(info) as source:
+                for block in iter(lambda: source.read(1024 * 1024), b""):
+                    digest.update(block)
+            if digest.hexdigest() != entry["sha256"]:
+                raise ValueError("Original boot resource SHA256 mismatch: " + name)
+        for entry in entries:
+            destination = target.joinpath(*Path(entry["path"]).parts)
+            if destination.exists():
+                if not destination.is_file() or sha256(destination) != entry["sha256"]:
+                    raise ValueError("Refusing to overwrite different original resource: " + str(destination))
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with z.open(entry["path"]) as source, destination.open("xb") as dest:
+                shutil.copyfileobj(source, dest)
+    print("Verified and staged private original boot resources:", len(entries), target)
+    return target
+
+
 def boot(repo, root, output, ppc, pe, xex, simde, game_root):
     cmake, ninja = shutil.which("cmake"), shutil.which("ninja")
     clang = shutil.which("clang++") or shutil.which("clang-cl")
@@ -145,6 +193,8 @@ def boot(repo, root, output, ppc, pe, xex, simde, game_root):
             if (candidate / "TransGame" / "Xbox360TOC.txt").is_file():
                 game_root = candidate
                 break
+        if game_root is None:
+            game_root = staged_boot_resources(root, output)
     if game_root is not None:
         game_root = game_root.resolve()
         toc = game_root / "TransGame" / "Xbox360TOC.txt"
