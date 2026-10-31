@@ -355,7 +355,7 @@ int main() {
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 61,
               "PM4 REG_RMW resolves both register operands and masks their indices");
         put(61, 0xC0022100U); put(62, 0x80000123U);
-        put(63, 0x200U); put(64, 0xFFFFFFFFU);
+        put(63, 0x200U); put(64, 0U);
         const auto and_expected = both_expected & 0x0F0F0F0FU;
         check(dotm::vd_bound_execute_ring(65) == 1 &&
               dotm::vd_bound_read_gpu_register(0x123U) == and_expected,
