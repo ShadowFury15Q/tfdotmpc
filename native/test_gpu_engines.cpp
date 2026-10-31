@@ -179,6 +179,24 @@ int main() {
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 4 &&
               memory.address(writeback)[3] == 4,
               "Zero-header PM4 type-0 writes register zero and advances by two dwords");
+        // PM4_REG_RMW updates a real GPU register without discarding other bits.
+        put(4, 0xC0000000U | (2U << 16) | (0x21U << 8));
+        put(5, 0x123U);
+        put(6, 0x00FF00FFU);
+        put(7, 0xA000B000U);
+        check(dotm::vd_bound_execute_ring(8) == 1 &&
+              dotm::vd_bound_read_gpu_register(0x123) ==
+                  ((0x11223344U & 0x00FF00FFU) | 0xA000B000U) &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 8 &&
+              memory.address(writeback)[3] == 8,
+              "PM4 REG_RMW applies AND/OR masks and advances GPU ring");
+        put(8, 0xC0000000U | (1U << 16) | (0x21U << 8));
+        put(9, 0x123U);
+        put(10, 0U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(11); },
+                     "Malformed REG_RMW must not be accepted");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 8,
+              "Malformed REG_RMW leaves GPU read pointer unchanged");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
