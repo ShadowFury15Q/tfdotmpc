@@ -131,7 +131,7 @@ std::uint32_t resolve_object_path_locked(std::uint32_t attributes,
         return kInvalidParameter;
     const std::string guest_path(
         reinterpret_cast<const char*>(memory->address(text)), length);
-    if (guest_path.find('\\0') != std::string::npos)
+    if (guest_path.find('\0') != std::string::npos)
         return kInvalidParameter;
     if (mount_root.empty())
         throw std::runtime_error(
