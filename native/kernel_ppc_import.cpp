@@ -1,6 +1,7 @@
 #include "ppc_recomp_shared.h" // Private XenonRecomp header; public CI uses a synthetic fixture.
 #include "kernel_guest_memory.hpp"
 #include <cstdint>
+#include <array>
 #include <chrono>
 #include <stdexcept>
 #include <thread>
@@ -120,4 +121,13 @@ PPC_FUNC(__imp__XGetVideoMode) {
 PPC_FUNC(__imp__VdQueryVideoMode) {
     (void)base;
     dotm::vd_bound_query_video_mode(ctx.r3.u32);
+}
+
+// Retail xboxkrnl DbgPrint: ANSI format in r3, 32-bit arguments in r4-r10.
+// The kernel bridge validates guest pointers before logging to host stderr.
+PPC_FUNC(__imp__DbgPrint) {
+    (void)base;
+    ctx.r3.u64 = dotm::ke_bound_dbg_print(ctx.r3.u32,
+        {ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r7.u32,
+         ctx.r8.u32, ctx.r9.u32, ctx.r10.u32});
 }

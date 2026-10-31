@@ -1,5 +1,8 @@
 #include "kernel_guest_memory.hpp"
 #include <cstdint>
+#include <array>
+#include <cstdio>
+#include <string>
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -497,5 +500,105 @@ std::uint32_t nt_bound_free_virtual_memory(
     if (!bound_memory || !bound_allocator) return kNtNotSupported;
     return nt_free_virtual_memory_guest(*bound_memory, *bound_allocator,
         base_pointer, size_pointer, free_type, debug_memory);
+}
+
+std::uint32_t ke_bound_dbg_print(std::uint32_t format,
+                                 const std::array<std::uint32_t, 7>& args) {
+    std::lock_guard lock(binding_mutex);
+    if (!bound_memory)
+        throw std::runtime_error("DbgPrint requires bound Xbox guest memory");
+    const auto guest_string = [&](std::uint32_t pointer) {
+        std::string result;
+        for (std::uint32_t i = 0; i < 2048; ++i) {
+            const auto address = std::uint64_t(pointer) + i;
+            if (address < 0x10000U || address >= GuestMemory::kAddressSpaceSize ||
+                !bound_memory->committed_range(address, 1))
+                throw std::runtime_error("DbgPrint string points outside committed guest memory");
+            const char ch = static_cast<char>(
+                bound_memory->address(static_cast<std::uint32_t>(address))[0]);
+            if (!ch) return result;
+            result.push_back(ch);
+        }
+        throw std::runtime_error("DbgPrint guest string exceeds 2048 bytes");
+    };
+    const auto fmt = guest_string(format);
+    std::string output;
+    std::size_t argument = 0;
+    for (std::size_t i = 0; i < fmt.size(); ++i) {
+        if (fmt[i] != '%') {
+            output.push_back(fmt[i]);
+            continue;
+        }
+        if (++i >= fmt.size())
+            throw std::runtime_error("DbgPrint unterminated format");
+        if (fmt[i] == '%') {
+            output.push_back('%');
+            continue;
+        }
+        std::string spec = "%";
+        while (i < fmt.size() &&
+               (fmt[i] == '-' || fmt[i] == '+' || fmt[i] == ' ' ||
+                fmt[i] == '#' || fmt[i] == '0')) {
+            spec.push_back(fmt[i++]);
+        }
+        std::uint32_t width = 0;
+        while (i < fmt.size() && fmt[i] >= '0' && fmt[i] <= '9') {
+            width = width * 10 + static_cast<unsigned>(fmt[i++] - '0');
+            if (width > 64)
+                throw std::runtime_error("DbgPrint field width exceeds 64");
+            spec.push_back(fmt[i - 1]);
+        }
+        if (i < fmt.size() && fmt[i] == '.') {
+            spec.push_back(fmt[i++]);
+            std::uint32_t precision = 0;
+            while (i < fmt.size() && fmt[i] >= '0' && fmt[i] <= '9') {
+                precision = precision * 10 + static_cast<unsigned>(fmt[i++] - '0');
+                if (precision > 64)
+                    throw std::runtime_error("DbgPrint precision exceeds 64");
+                spec.push_back(fmt[i - 1]);
+            }
+        }
+        if (i >= fmt.size())
+            throw std::runtime_error("DbgPrint unterminated conversion");
+        // The retail DOTM call sites use 32-bit PPC varargs. Never reinterpret
+        // a 64-bit guest argument as two independent 32-bit arguments.
+        if (fmt[i] == 'l' || fmt[i] == 'h' || fmt[i] == 'L' || fmt[i] == 'I')
+            throw std::runtime_error("DbgPrint 64-bit/wide conversion needs PPC ABI support");
+        const char conversion = fmt[i];
+        if (conversion != 's' && conversion != 'd' && conversion != 'i' &&
+            conversion != 'u' && conversion != 'x' && conversion != 'X' &&
+            conversion != 'o' && conversion != 'c' && conversion != 'p')
+            throw std::runtime_error("Unsupported Xbox DbgPrint format conversion");
+        if (argument == args.size())
+            throw std::runtime_error("DbgPrint requires PPC stack varargs beyond r10");
+        const auto value = args[argument++];
+        if (conversion == 's') {
+            const auto string = value ? guest_string(value) : std::string("(null)");
+            if (string.size() < width && spec.find('-') == std::string::npos)
+                output.append(width - string.size(), ' ');
+            output += string;
+            if (string.size() < width && spec.find('-') != std::string::npos)
+                output.append(width - string.size(), ' ');
+        } else {
+            char buffer[128]{};
+            if (conversion == 'p') {
+                std::snprintf(buffer, sizeof(buffer), "0x%08X", value);
+            } else {
+                spec.push_back(conversion);
+                if (conversion == 'd' || conversion == 'i')
+                    std::snprintf(buffer, sizeof(buffer), spec.c_str(),
+                                  static_cast<int>(value));
+                else
+                    std::snprintf(buffer, sizeof(buffer), spec.c_str(), value);
+            }
+            output += buffer;
+        }
+        if (output.size() > 8192)
+            throw std::runtime_error("DbgPrint output exceeds 8192 bytes");
+    }
+    if (!output.empty())
+        std::fwrite(output.data(), 1, output.size(), stderr);
+    std::fflush(stderr);
+    return static_cast<std::uint32_t>(output.size());
 }
 }

@@ -1,6 +1,7 @@
 #pragma once
 #include "guest_virtual_allocator.hpp"
 #include <cstdint>
+#include <array>
 #include <optional>
 
 namespace dotm {
@@ -60,6 +61,10 @@ std::uint32_t nt_free_virtual_memory_guest(
 void ke_query_system_time_guest(GuestMemory& memory, std::uint32_t output,
                                 std::uint64_t filetime);
 void ke_bound_query_system_time(std::uint32_t output);
+// Xbox DbgPrint: format in r3, seven 32-bit PPC varargs in r4-r10.
+// Reads only committed guest strings; never passes guest pointers to host printf.
+std::uint32_t ke_bound_dbg_print(std::uint32_t format,
+    const std::array<std::uint32_t, 7>& args);
 void bind_kernel_guest_memory(GuestMemory* memory,
                               GuestVirtualAllocator* allocator) noexcept;
 std::uint32_t nt_bound_allocate_virtual_memory(

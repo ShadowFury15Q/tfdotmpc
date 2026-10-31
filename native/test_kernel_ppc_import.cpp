@@ -1,6 +1,7 @@
 #include "ppc_recomp_shared.h"
 #include "kernel_guest_memory.hpp"
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <stdexcept>
 
@@ -9,6 +10,7 @@ PPC_EXTERN_FUNC(__imp__NtFreeVirtualMemory);
 PPC_EXTERN_FUNC(__imp__NtQueryVirtualMemory);
 PPC_EXTERN_FUNC(__imp__KeGetCurrentProcessType);
 PPC_EXTERN_FUNC(__imp__KeQuerySystemTime);
+PPC_EXTERN_FUNC(__imp__DbgPrint);
 
 namespace {
 void check(bool ok, const char* message) {
@@ -34,6 +36,27 @@ int main() {
         memory.commit(ptr, 4096);
         dotm::bind_kernel_guest_memory(&memory, &heap);
         PPCContext ctx{};
+
+        // _xstart calls DbgPrint with a guest format pointer and r4
+        // containing a guest string pointer; host printf must never see
+        // either raw guest address as a native pointer.
+        constexpr std::uint32_t debug_format = ptr + 0x100U;
+        constexpr std::uint32_t debug_string = ptr + 0x180U;
+        const char format_text[] = "DOTM %08X %s %%\\n";
+        const char message_text[] = "startup";
+        std::memcpy(memory.address(debug_format), format_text, sizeof(format_text));
+        std::memcpy(memory.address(debug_string), message_text, sizeof(message_text));
+        ctx.r3.u32 = debug_format;
+        ctx.r4.u32 = 0x82518534U;
+        ctx.r5.u32 = debug_string;
+        __imp__DbgPrint(ctx, memory.base());
+        check(ctx.r3.u32 == sizeof("DOTM 82518534 startup %\\n") - 1,
+              "DbgPrint PPC register ABI and formatted byte count");
+        ctx.r3.u32 = 0x50000000U;
+        bool debug_rejected = false;
+        try { __imp__DbgPrint(ctx, memory.base()); }
+        catch (const std::runtime_error&) { debug_rejected = true; }
+        check(debug_rejected, "DbgPrint must reject uncommitted guest strings");
         ctx.r3.u64 = 0xFFFFFFFFU;
         __imp__KeGetCurrentProcessType(ctx, memory.base());
         check(ctx.r3.u64 == 1U, "Retail user process type ABI");
