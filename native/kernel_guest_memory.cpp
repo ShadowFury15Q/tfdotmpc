@@ -203,7 +203,7 @@ std::uint32_t mm_query_statistics_guest(
     words[3] = kTotalPhysicalPages - used_pages;
     words[4] = virtual_bytes;
     words[5] = reserved_bytes;
-    words[6] = static_cast<std::uint32_t>(physical_pages);
+    words[6] = used_pages;
     words[9] = static_cast<std::uint32_t>(image_pages);
     words[10] = static_cast<std::uint32_t>(allocated_pages);
     words[11] = static_cast<std::uint32_t>(allocated_pages);
