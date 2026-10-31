@@ -7,6 +7,7 @@ PPC_EXTERN_FUNC(__imp__MmQueryStatistics);
 PPC_EXTERN_FUNC(__imp__ExGetXConfigSetting);
 PPC_EXTERN_FUNC(__imp__XGetVideoMode);
 PPC_EXTERN_FUNC(__imp__VdQueryVideoMode);
+PPC_EXTERN_FUNC(__imp__VdQueryVideoFlags);
 namespace {
 void check(bool ok, const char* msg) { if (!ok) throw std::runtime_error(msg); }
 void put32(dotm::GuestMemory& m, std::uint32_t a, std::uint32_t v) {
@@ -104,6 +105,10 @@ int main() {
         check(get32(memory, output + 0x240) == 1280 &&
               get32(memory, output + 0x244) == 720,
               "VdQueryVideoMode uses the same Xbox output profile");
+        ctx.r3.u32 = 0xFFFFFFFFU;
+        __imp__VdQueryVideoFlags(ctx, memory.base());
+        check(ctx.r3.u32 == 3U,
+              "VdQueryVideoFlags matches the actual 1280x720 widescreen profile");
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
         ctx.r3.u64 = output;
         __imp__MmQueryStatistics(ctx, memory.base());

@@ -19,6 +19,9 @@ constexpr std::uint32_t kMemReserve = 0x2000U;
 constexpr std::uint32_t kMemDecommit = 0x4000U;
 constexpr std::uint32_t kMemRelease = 0x8000U;
 constexpr std::uint32_t kPageReadWrite = 0x04U;
+constexpr std::uint32_t kXboxVideoWidth = 1280U;
+constexpr std::uint32_t kXboxVideoHeight = 720U;
+constexpr std::uint32_t kXboxVideoWidescreen = 1U;
 // Xbox 360 flags: large 64 KiB pages, heap allocation, and NOZERO.
 constexpr std::uint32_t kXboxLargePages = 0x20000000U;
 constexpr std::uint32_t kXboxHeap = 0x40000000U;
@@ -295,10 +298,18 @@ void vd_bound_query_video_mode(std::uint32_t output_pointer) {
     // Xbox 360 retail 720p HDTV output. The native renderer will present
     // this guest surface to the host monitor separately.
     constexpr std::uint32_t words[12] = {
-        1280, 720, 0, 1, 1, 0x42700000U, 1, 0x4A, 1, 0, 0, 0
+        kXboxVideoWidth, kXboxVideoHeight, 0, kXboxVideoWidescreen, 1,
+        0x42700000U, 1, 0x4A, 1, 0, 0, 0
     };
     for (std::size_t i = 0; i < 12; ++i)
         write_be32(*bound_memory, output_pointer + std::uint32_t(i * 4), words[i]);
+}
+std::uint32_t vd_bound_query_video_flags() {
+    // Xbox 360 VdQueryVideoFlags: bit 0 = widescreen, bit 1 = >=1024 px,
+    // bit 2 = >=1920 px. Derive from the same video mode reported to PPC.
+    return (kXboxVideoWidescreen ? 1U : 0U) |
+           (kXboxVideoWidth >= 1024U ? 2U : 0U) |
+           (kXboxVideoWidth >= 1920U ? 4U : 0U);
 }
 std::uint32_t nt_free_virtual_memory_guest(
     GuestMemory& memory, GuestVirtualAllocator& allocator,

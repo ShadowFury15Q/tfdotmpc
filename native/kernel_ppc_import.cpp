@@ -143,6 +143,10 @@ PPC_FUNC(__imp__VdQueryVideoMode) {
     (void)base;
     dotm::vd_bound_query_video_mode(ctx.r3.u32);
 }
+PPC_FUNC(__imp__VdQueryVideoFlags) {
+    (void)base;
+    ctx.r3.u64 = dotm::vd_bound_query_video_flags();
+}
 
 // Retail xboxkrnl DbgPrint: ANSI format in r3, 32-bit arguments in r4-r10.
 // The kernel bridge validates guest pointers before logging to host stderr.
