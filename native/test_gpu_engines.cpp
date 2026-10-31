@@ -43,8 +43,9 @@ int main() {
         auto* mmio_bytes = memory.address(mmio);
         mmio_bytes[0] = 0x12; mmio_bytes[1] = 0x34;
         mmio_bytes[2] = 0x56; mmio_bytes[3] = 0x78;
-        check(dotm::vd_bound_read_gpu_mmio_register(0x714U / 4U) == 0x12345678U,
-              "Original PPC GPU register writes retain big-endian values");
+        check(dotm::vd_bound_read_gpu_mmio_register(0x714U / 4U) == 0x12345678U &&
+              dotm::vd_bound_read_gpu_register(0x714U / 4U) == 0x12345678U,
+              "Original PPC MMIO writes are visible to the native PM4 register file");
         dotm::vd_bound_map_gpu_mmio(); // idempotent
         expect_throw([&] { (void)dotm::vd_bound_read_gpu_mmio_register(0x5000U); },
                      "GPU MMIO register reads reject out-of-range indexes");
@@ -205,6 +206,7 @@ int main() {
         check(state.ring_read_pointer_dwords == 21 &&
               state.packets_executed == 7 && state.register_writes == 10 &&
               dotm::vd_bound_read_gpu_register(0x123) == 0x11223344U &&
+              dotm::vd_bound_read_gpu_mmio_register(0x123) == 0x11223344U &&
               dotm::vd_bound_read_gpu_register(0x124) == 0x55667788U &&
               dotm::vd_bound_read_gpu_register(0x22) == 0xAABBCCDDU &&
               dotm::vd_bound_read_gpu_register(0x23) == 0xEEFF0099U &&
@@ -253,6 +255,13 @@ int main() {
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 4 &&
               memory.address(writeback)[3] == 4,
               "Zero-header PM4 type-0 writes register zero and advances by two dwords");
+        // Original PPC can write Xenos MMIO directly between PM4 packets.
+        // REG_RMW must read that CPU-written value, not a stale shadow copy.
+        auto* cpu_register = memory.address(0x7FC80000U + 0x123U * 4U);
+        cpu_register[0] = 0xFE; cpu_register[1] = 0xDC;
+        cpu_register[2] = 0xBA; cpu_register[3] = 0x98;
+        check(dotm::vd_bound_read_gpu_register(0x123) == 0xFEDCBA98U,
+              "Direct PPC MMIO writes update the command processor register state");
         // PM4_REG_RMW updates a real GPU register without discarding other bits.
         put(4, 0xC0000000U | (2U << 16) | (0x21U << 8));
         put(5, 0x123U);
@@ -260,7 +269,9 @@ int main() {
         put(7, 0xA000B000U);
         check(dotm::vd_bound_execute_ring(8) == 1 &&
               dotm::vd_bound_read_gpu_register(0x123) ==
-                  ((0x11223344U & 0x00FF00FFU) | 0xA000B000U) &&
+                  ((0xFEDCBA98U & 0x00FF00FFU) | 0xA000B000U) &&
+              dotm::vd_bound_read_gpu_mmio_register(0x123) ==
+                  ((0xFEDCBA98U & 0x00FF00FFU) | 0xA000B000U) &&
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 8 &&
               memory.address(writeback)[3] == 8,
               "PM4 REG_RMW applies AND/OR masks and advances GPU ring");
