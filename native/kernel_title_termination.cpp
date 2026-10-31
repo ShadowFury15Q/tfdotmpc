@@ -8,6 +8,7 @@ namespace {
 std::mutex registration_mutex;
 GuestMemory* guest = nullptr;
 std::vector<TitleTerminationNotification> notifications;
+bool terminating = false;
 std::uint32_t be32(std::uint32_t address) {
     const auto* b = guest->address(address);
     return (std::uint32_t(b[0]) << 24) | (std::uint32_t(b[1]) << 16) |
@@ -18,6 +19,7 @@ void bind_title_termination(GuestMemory* memory) noexcept {
     std::lock_guard lock(registration_mutex);
     guest = memory;
     notifications.clear();
+    terminating = false;
 }
 void ex_bound_register_title_termination(std::uint32_t registration,
                                          std::uint32_t create) {
@@ -48,5 +50,26 @@ void ex_bound_register_title_termination(std::uint32_t registration,
 std::vector<TitleTerminationNotification> title_termination_snapshot() {
     std::lock_guard lock(registration_mutex);
     return notifications;
+}
+[[noreturn]] void xam_bound_loader_terminate_title(PPCContext& context) {
+    std::vector<TitleTerminationNotification> callbacks;
+    GuestMemory* active = nullptr;
+    {
+        std::lock_guard lock(registration_mutex);
+        if (!guest) throw std::runtime_error("XamLoaderTerminateTitle without a bound title");
+        if (terminating) throw TitleTerminated();
+        terminating = true;
+        active = guest;
+        callbacks = notifications;
+    }
+    // Xbox kernel invokes termination callbacks by descending priority.
+    // Never hold registration_mutex while executing guest PPC callbacks.
+    std::stable_sort(callbacks.begin(), callbacks.end(),
+        [](const auto& a, const auto& b) { return a.priority > b.priority; });
+    for (const auto& callback : callbacks) {
+        active->find_function(callback.callback_address)(context, active->base());
+    }
+    // A terminated title must not continue executing PPC after this import.
+    throw TitleTerminated();
 }
 }
