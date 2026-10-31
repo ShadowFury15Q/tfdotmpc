@@ -197,6 +197,18 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 throw std::runtime_error("Predicated Xenos PM4 packet requires bin state");
             if (opcode == 0x10U) {
                 // PM4_NOP has payload but does not change GPU state.
+            } else if (opcode == 0x21U) {
+                // PM4_REG_RMW: register index, AND mask, OR mask.
+                // Apply the update only after validating the complete packet.
+                if (payload != 3U)
+                    throw std::runtime_error("Invalid Xenos PM4 REG_RMW payload size");
+                const auto index = at(first);
+                if (index >= gpu_registers.size())
+                    throw std::runtime_error("Xenos PM4 REG_RMW register out of range");
+                const auto and_mask = at(first + 1);
+                const auto or_mask = at(first + 2);
+                gpu_registers[index] = (gpu_registers[index] & and_mask) | or_mask;
+                ++engine.register_writes;
             } else if (opcode == 0x55U || opcode == 0x56U || opcode == 0x2DU) {
                 const auto offset_type = at(first);
                 std::uint32_t index = offset_type & 0xFFFFU;
