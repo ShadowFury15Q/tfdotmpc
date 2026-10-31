@@ -14,6 +14,15 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#elif defined(__linux__)
+#include <pthread.h>
+#include <sched.h>
+#endif
 
 namespace dotm {
 namespace {
@@ -40,12 +49,50 @@ struct ThreadState {
     std::uint32_t exit_code = 0;
     bool finished = false;
     bool stop_requested = false;
+    bool startup_ready = false;
 };
 std::mutex registry_mutex;
 GuestMemory* bound_memory = nullptr;
 std::unordered_map<std::uint32_t, std::shared_ptr<ThreadState>> handles;
 std::vector<std::shared_ptr<ThreadState>> all_threads;
 thread_local bool executing_guest_thread = false;
+
+// Xenon hardware-thread affinity is encoded in creation flags bits 24..29.
+// Map each requested logical Xenon CPU to a CPU permitted by the host process.
+// Affinity must be established before the guest entry is allowed to run.
+bool pin_guest_worker(std::thread& worker, unsigned guest_cpu) {
+#if defined(_WIN32)
+    DWORD_PTR process_mask = 0, system_mask = 0;
+    if (!GetProcessAffinityMask(GetCurrentProcess(), &process_mask, &system_mask))
+        return false;
+    std::vector<DWORD_PTR> allowed;
+    for (unsigned bit = 0; bit < sizeof(DWORD_PTR) * 8; ++bit) {
+        const DWORD_PTR mask = DWORD_PTR{1} << bit;
+        if (process_mask & mask) allowed.push_back(mask);
+    }
+    return !allowed.empty() &&
+        SetThreadAffinityMask(worker.native_handle(),
+                              allowed[guest_cpu % allowed.size()]) != 0;
+#elif defined(__linux__)
+    cpu_set_t permitted;
+    CPU_ZERO(&permitted);
+    if (pthread_getaffinity_np(pthread_self(), sizeof(permitted), &permitted) != 0)
+        return false;
+    std::vector<int> allowed;
+    for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu)
+        if (CPU_ISSET(cpu, &permitted)) allowed.push_back(cpu);
+    if (allowed.empty()) return false;
+    cpu_set_t selected;
+    CPU_ZERO(&selected);
+    CPU_SET(allowed[guest_cpu % allowed.size()], &selected);
+    return pthread_setaffinity_np(worker.native_handle(), sizeof(selected),
+                                  &selected) == 0;
+#else
+    (void)worker;
+    (void)guest_cpu;
+    return false;
+#endif
+}
 
 bool valid_guest(const GuestMemory& m, std::uint32_t address,
                  std::uint32_t length, bool writable) {
@@ -133,9 +180,14 @@ std::uint32_t nt_bound_create_thread(std::uint32_t handle_output,
         !valid_code(start_address) || (api_startup && !valid_code(api_startup)) ||
         stack_size > kStackBytes)
         return kInvalidParameter;
-    // Bits 24..29 select an Xbox hardware thread; scheduling affinity is not
-    // yet enforced. Reject it rather than silently claim that it worked.
-    if (creation_flags & ~1U) return kNotSupported;
+    constexpr std::uint32_t kHardwareAffinityMask = 0x3F000000U;
+    if (creation_flags & ~(1U | kHardwareAffinityMask)) return kNotSupported;
+    const auto affinity = (creation_flags & kHardwareAffinityMask) >> 24;
+    if (affinity && (affinity & (affinity - 1U))) return kInvalidParameter;
+    unsigned guest_cpu = 0;
+    if (affinity) {
+        while ((affinity & (1U << guest_cpu)) == 0) ++guest_cpu;
+    }
     if (all_threads.size() >= kMaxThreads) return kNoMemory;
     const auto slot = static_cast<std::uint32_t>(all_threads.size());
     const auto stack = kStackBase + slot * kStackBytes;
@@ -180,7 +232,8 @@ std::uint32_t nt_bound_create_thread(std::uint32_t handle_output,
                     {
                         std::unique_lock lock(state->mutex);
                         state->cv.wait(lock, [&] {
-                            return state->suspend_count == 0 || state->stop_requested;
+                            return (state->startup_ready && state->suspend_count == 0) ||
+                                   state->stop_requested;
                         });
                         cancelled_before_start = state->stop_requested;
                     }
@@ -217,6 +270,26 @@ std::uint32_t nt_bound_create_thread(std::uint32_t handle_output,
             handles.erase(state->handle);
             throw;
         }
+        if (affinity && !pin_guest_worker(state->worker, guest_cpu)) {
+            // A failed native affinity request must not run the guest entry.
+            // Wake the startup gate, join, and roll back all guest allocations.
+            {
+                std::lock_guard state_lock(state->mutex);
+                state->stop_requested = true;
+            }
+            state->cv.notify_all();
+            state->worker.join();
+            all_threads.pop_back();
+            handles.erase(state->handle);
+            bound_memory->decommit(pcr, 0x3000);
+            bound_memory->decommit(stack, kStackBytes);
+            return kNotSupported;
+        }
+        {
+            std::lock_guard state_lock(state->mutex);
+            state->startup_ready = true;
+        }
+        state->cv.notify_all();
         write32(*bound_memory, handle_output, state->handle);
         if (thread_id_output) write32(*bound_memory, thread_id_output, id);
         return kSuccess;
