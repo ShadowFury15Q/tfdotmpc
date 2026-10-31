@@ -1,11 +1,20 @@
 #include "ppc_recomp_shared.h"
 #include "kernel_title_termination.hpp"
 #include <cstdint>
+#include <array>
+#include <vector>
 #include <iostream>
 #include <stdexcept>
 
 PPC_EXTERN_FUNC(__imp__ExRegisterTitleTerminateNotification);
+PPC_EXTERN_FUNC(__imp__XamLoaderTerminateTitle);
 namespace {
+std::vector<int> callback_order;
+void first_callback(PPCContext&, std::uint8_t*) { callback_order.push_back(1); }
+void second_callback(PPCContext&, std::uint8_t*) { callback_order.push_back(2); }
+void unexpected_callback(PPCContext&, std::uint8_t*) {
+    throw std::runtime_error("Unmapped termination callback invoked");
+}
 void check(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
 }
@@ -60,6 +69,39 @@ int main() {
         dotm::bind_title_termination(nullptr);
         check(dotm::title_termination_snapshot().empty(),
               "Title termination callbacks are scoped to the bound game");
+        // Actual native XAM termination must execute guest callbacks before
+        // unwinding, never fall through to the next original PPC instruction.
+        dotm::bind_title_termination(&mem);
+        constexpr auto code = dotm::GuestMemory::kCodeBase;
+        mem.commit(code, 4096);
+        mem.initialize_function_table(unexpected_callback);
+        const std::array<dotm::FunctionEntry, 2> functions{{
+            {code + 0x100U, first_callback},
+            {code + 0x104U, second_callback},
+        }};
+        mem.install_functions(functions);
+        put32(mem, image + 0x20, code + 0x100U);
+        put32(mem, image + 0x24, 1);
+        put32(mem, image + 0x40, code + 0x104U);
+        put32(mem, image + 0x44, 5);
+        ctx.r3.u64 = image + 0x20;
+        ctx.r4.u64 = 1;
+        __imp__ExRegisterTitleTerminateNotification(ctx, mem.base());
+        ctx.r3.u64 = image + 0x40;
+        __imp__ExRegisterTitleTerminateNotification(ctx, mem.base());
+        bool terminated = false;
+        try { __imp__XamLoaderTerminateTitle(ctx, mem.base()); }
+        catch (const dotm::TitleTerminated&) { terminated = true; }
+        check(terminated && callback_order == std::vector<int>({2, 1}),
+              "XAM title shutdown executes original PPC callbacks by priority");
+        terminated = false;
+        try { __imp__XamLoaderTerminateTitle(ctx, mem.base()); }
+        catch (const dotm::TitleTerminated&) { terminated = true; }
+        check(terminated && callback_order.size() == 2,
+              "Repeated termination must not dispatch callbacks twice");
+        dotm::bind_title_termination(nullptr);
+        check(dotm::title_termination_snapshot().empty(),
+              "Terminated title callbacks must not leak to the next game");
         std::cout << "Xbox title-termination callback registration PPC ABI PASS\n";
         return 0;
     } catch (const std::exception& e) {
