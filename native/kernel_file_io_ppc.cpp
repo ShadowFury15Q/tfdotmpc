@@ -18,6 +18,13 @@ PPC_FUNC(__imp__NtReadFile) {
         ctx.r9.u32, ctx.r10.u32, ctx.r1.u32);
 }
 
+// NtQueryFullAttributesFile(POBJECT_ATTRIBUTES, PFILE_NETWORK_OPEN_INFORMATION).
+// Original DOTM reads FileAttributes at the output structure's +48 offset.
+PPC_FUNC(__imp__NtQueryFullAttributesFile) {
+    ctx.r3.u64 = dotm::nt_bound_query_full_attributes_file(
+        ctx.r3.u32, ctx.r4.u32);
+}
+
  // NtQueryInformationFile: handle, IO_STATUS_BLOCK*, buffer, size, class.
 PPC_FUNC(__imp__NtQueryInformationFile) {
     ctx.r3.u64 = dotm::nt_bound_query_information_file(ctx.r3.u32,
