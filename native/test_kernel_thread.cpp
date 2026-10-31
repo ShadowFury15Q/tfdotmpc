@@ -4,8 +4,10 @@
 #include "ppc_recomp_shared.h"
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <stdexcept>
+#include <thread>
 PPC_EXTERN_FUNC(__imp__ExCreateThread);
 PPC_EXTERN_FUNC(__imp__NtResumeThread);
 PPC_EXTERN_FUNC(__imp__KeDelayExecutionThread);
@@ -14,6 +16,7 @@ PPC_EXTERN_FUNC(__imp__NtWaitForSingleObjectEx);
 PPC_EXTERN_FUNC(__imp__NtClose);
 namespace {
 std::atomic<unsigned> calls{0};
+std::atomic<bool> delay_entered{false};
 void check(bool condition) { if (!condition) throw std::runtime_error("Xbox guest thread ABI regression"); }
 void write32(dotm::GuestMemory& m, std::uint32_t a, std::uint32_t v) {
     for (int i = 0; i < 4; ++i) m.address(a)[i] = std::uint8_t(v >> (24 - 8 * i));
@@ -24,6 +27,7 @@ std::uint32_t read32(const std::uint8_t* p) {
 }
 constexpr std::uint32_t kStartup = 0x82501000U;
 constexpr std::uint32_t kEntry = 0x82501100U;
+constexpr std::uint32_t kDelayEntry = 0x82501200U;
 PPC_FUNC(test_thread_entry) {
     check(ctx.r13.u32 >= 0x78000000U && ctx.r1.u32 >= 0x72000000U);
     check(ctx.r3.u32 == 0x12345678U);
@@ -31,6 +35,13 @@ PPC_FUNC(test_thread_entry) {
     check(read32(base + kthread + 0x14CU) == 2U);
     calls.fetch_add(1);
     ctx.r3.u64 = 0x55;
+}
+PPC_FUNC(test_thread_delay_entry) {
+    delay_entered.store(true, std::memory_order_release);
+    ctx.r3.u64 = 1;
+    ctx.r4.u64 = 0;
+    ctx.r5.u64 = 0x70100040U;
+    __imp__KeDelayExecutionThread(ctx, base);
 }
 PPC_FUNC(test_thread_startup) {
     check(ctx.r3.u32 == kEntry && ctx.r4.u32 == 0x12345678U);
@@ -53,8 +64,9 @@ int main() {
     dotm::GuestMemory memory;
     memory.commit(0x70100000U, 4096);
     memory.initialize_function_table(test_thread_entry);
-    const std::array<dotm::FunctionEntry, 2> mapping{{
-        {kStartup, test_thread_startup}, {kEntry, test_thread_entry}}};
+    const std::array<dotm::FunctionEntry, 3> mapping{{
+        {kStartup, test_thread_startup}, {kEntry, test_thread_entry},
+        {kDelayEntry, test_thread_delay_entry}}};
     memory.install_functions(mapping);
     dotm::bind_kernel_threads(&memory);
     dotm::bind_kernel_mutants(&memory);
@@ -110,7 +122,28 @@ int main() {
     c.r3.u64 = 1; c.r4.u64 = 0; c.r5.u64 = 0x70100031U;
     __imp__KeDelayExecutionThread(c, memory.base());
     check(c.r3.u32 == 0xC000000DU);
+    // A guest thread blocked in a one-hour kernel delay must not prevent
+    // shutdown after the original PPC entry fails.
+    write32(memory, 0x70100040U, 0xFFFFFFF7U);
+    write32(memory, 0x70100044U, 0x9E3B9800U); // -1 hour, NT 100 ns units
+    c.r3.u64 = 0x70100050U;
+    c.r4.u64 = 0x20000U;
+    c.r5.u64 = 0x70100054U;
+    c.r6.u64 = 0;
+    c.r7.u64 = kDelayEntry;
+    c.r8.u64 = 0;
+    c.r9.u64 = 0;
+    __imp__ExCreateThread(c, memory.base());
+    check(c.r3.u32 == 0);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!delay_entered.load(std::memory_order_acquire)) {
+        check(std::chrono::steady_clock::now() < deadline);
+        std::this_thread::yield();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto shutdown_start = std::chrono::steady_clock::now();
     dotm::bind_kernel_mutants(nullptr);
     dotm::bind_kernel_threads(nullptr);
+    check(std::chrono::steady_clock::now() - shutdown_start < std::chrono::seconds(2));
     check(calls.load() == 1);
 }
