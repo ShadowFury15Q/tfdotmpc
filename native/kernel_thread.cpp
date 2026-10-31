@@ -39,6 +39,7 @@ struct ThreadState {
     std::uint32_t suspend_count = 0;
     std::uint32_t exit_code = 0;
     bool finished = false;
+    bool stop_requested = false;
 };
 std::mutex registry_mutex;
 GuestMemory* bound_memory = nullptr;
@@ -99,15 +100,22 @@ void bind_kernel_threads(GuestMemory* memory) {
         handles.clear();
         bound_memory = nullptr;
     }
-    // The guest address space must remain alive until all native guest threads
-    // have exited. Never detach threads that still access that memory.
+    // Cancel guest workers that have not yet passed their initial suspend
+    // gate. Otherwise unbinding a suspended thread deadlocks forever on join.
+    // Running guest code is not forcibly interrupted: it must finish before
+    // the guest address space can be released.
     for (const auto& state : previous) {
-        if (state->worker.joinable()) {
-            if (state->worker.get_id() == std::this_thread::get_id())
-                throw std::logic_error("Cannot unbind guest threads from a guest worker");
-            state->worker.join();
+        if (state->worker.joinable() &&
+            state->worker.get_id() == std::this_thread::get_id())
+            throw std::logic_error("Cannot unbind guest threads from a guest worker");
+        {
+            std::lock_guard state_lock(state->mutex);
+            state->stop_requested = true;
         }
+        state->cv.notify_all();
     }
+    for (const auto& state : previous)
+        if (state->worker.joinable()) state->worker.join();
     std::lock_guard lock(registry_mutex);
     bound_memory = memory;
 }
@@ -168,10 +176,15 @@ std::uint32_t nt_bound_create_thread(std::uint32_t handle_output,
                 state->worker = std::thread([state, memory, pcr, top, api_startup,
                                               start_address, parameter, entry] {
                     std::uint32_t exit_code = 0;
+                    bool cancelled_before_start = false;
                     {
                         std::unique_lock lock(state->mutex);
-                        state->cv.wait(lock, [&] { return state->suspend_count == 0; });
+                        state->cv.wait(lock, [&] {
+                            return state->suspend_count == 0 || state->stop_requested;
+                        });
+                        cancelled_before_start = state->stop_requested;
                     }
+                    if (!cancelled_before_start) {
                     executing_guest_thread = true;
                     try {
                         exit_code = entry(*memory, pcr, top - 0x100U,
@@ -188,9 +201,10 @@ std::uint32_t nt_bound_create_thread(std::uint32_t handle_output,
                         exit_code = 0xC0000005U;
                     }
                     executing_guest_thread = false;
+                    }
                     {
                         std::lock_guard lock(state->mutex);
-                        state->exit_code = exit_code;
+                        state->exit_code = cancelled_before_start ? 0xC0000120U : exit_code;
                         state->finished = true;
                     }
                     state->cv.notify_all();
