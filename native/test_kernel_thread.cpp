@@ -58,9 +58,11 @@ int main() {
     dotm::bind_kernel_threads(&memory);
     dotm::bind_kernel_mutants(&memory);
     PPCContext c{};
-    create(c, memory, 0x01000000U);
+    create(c, memory, 0x03000000U); // two hardware CPUs is not a valid selector
+    check(c.r3.u32 == 0xC000000DU);
+    create(c, memory, 2U); // unsupported creation flag
     check(c.r3.u32 == 0xC00000BBU);
-    create(c, memory, 1U); // suspended
+    create(c, memory, 0x02000001U); // Xbox CPU 1, initially suspended
     check(c.r3.u32 == 0);
     const auto handle = read32(memory.address(0x70100000U));
     check(handle == 0xF7000000U);
