@@ -96,6 +96,28 @@ void vd_bound_shutdown_engines() noexcept {
     engine = {};
     gpu_registers.fill(0);
 }
+std::uint32_t vd_bound_call_graphics_notification_routines(
+    std::uint32_t notification, std::uint32_t scaling_pointer) {
+    std::lock_guard lock(gpu_mutex);
+    // Original DOTM calls with r3=1 and r4 pointing to four big-endian
+    // uint16_t dimensions (frontbuffer W/H, backbuffer W/H).
+    if (notification != 1U || !readable(scaling_pointer, 8U))
+        throw std::runtime_error("Invalid Xbox graphics scaling notification");
+    const auto* data = guest_memory->address(scaling_pointer);
+    const auto be16 = [&](unsigned offset) {
+        return std::uint16_t((std::uint16_t(data[offset]) << 8) |
+                             data[offset + 1]);
+    };
+    engine.last_graphics_notification = notification;
+    engine.frontbuffer_width = be16(0);
+    engine.frontbuffer_height = be16(2);
+    engine.backbuffer_width = be16(4);
+    engine.backbuffer_height = be16(6);
+    ++engine.graphics_notifications;
+    // No guest graphics notification registrations exist in the original
+    // title's import graph. The native renderer can consume this state.
+    return 0;
+}
 void vd_bound_set_graphics_interrupt_callback(
     std::uint32_t callback, std::uint32_t context) {
     std::lock_guard lock(gpu_mutex);

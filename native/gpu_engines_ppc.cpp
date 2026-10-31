@@ -10,6 +10,11 @@ PPC_FUNC(__imp__VdShutdownEngines) {
     (void)base;
     dotm::vd_bound_shutdown_engines();
 }
+PPC_FUNC(__imp__VdCallGraphicsNotificationRoutines) {
+    (void)base;
+    ctx.r3.u64 = dotm::vd_bound_call_graphics_notification_routines(
+        ctx.r3.u32, ctx.r4.u32);
+}
 PPC_FUNC(__imp__VdSetGraphicsInterruptCallback) {
     (void)base;
     dotm::vd_bound_set_graphics_interrupt_callback(ctx.r3.u32, ctx.r4.u32);

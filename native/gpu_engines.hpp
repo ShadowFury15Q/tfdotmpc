@@ -33,6 +33,13 @@ struct GpuEngineSnapshot {
     std::uint32_t me_init_command_word_count = 0;
     std::uint64_t me_init_command_fingerprint = 0;
     std::uint32_t system_command_buffer_gpu_identifier_address = 0;
+    // Last original-title display scaling notification (four big-endian u16s).
+    std::uint64_t graphics_notifications = 0;
+    std::uint32_t last_graphics_notification = 0;
+    std::uint16_t frontbuffer_width = 0;
+    std::uint16_t frontbuffer_height = 0;
+    std::uint16_t backbuffer_width = 0;
+    std::uint16_t backbuffer_height = 0;
 };
 
 // The binding must be removed before the guest address space is destroyed.
@@ -43,6 +50,8 @@ std::uint32_t vd_bound_initialize_engines(
     std::uint32_t flags, std::uint32_t callback, std::uint32_t callback_context,
     std::uint32_t pfp_microcode, std::uint32_t me_microcode);
 void vd_bound_shutdown_engines() noexcept;
+std::uint32_t vd_bound_call_graphics_notification_routines(
+    std::uint32_t notification, std::uint32_t scaling_pointer);
 void vd_bound_set_graphics_interrupt_callback(
     std::uint32_t callback, std::uint32_t context);
 void vd_bound_set_system_command_buffer_gpu_identifier_address(std::uint32_t address);

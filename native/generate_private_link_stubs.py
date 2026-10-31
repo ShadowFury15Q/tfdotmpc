@@ -44,7 +44,7 @@ NATIVE = {"__imp__KeSetEvent", "__imp__KeResetEvent", "__imp__KeWaitForSingleObj
           "__imp__MmQueryAllocationSize", "__imp__MmGetPhysicalAddress",
           "__imp__ExGetXConfigSetting",
           "__imp__XGetVideoMode", "__imp__VdQueryVideoMode", "__imp__VdQueryVideoFlags", "__imp__KeQueryPerformanceFrequency",
-          "__imp__VdInitializeEngines", "__imp__VdShutdownEngines",
+          "__imp__VdCallGraphicsNotificationRoutines", "__imp__VdInitializeEngines", "__imp__VdShutdownEngines",
           "__imp__VdSetGraphicsInterruptCallback",
           "__imp__VdSetSystemCommandBufferGpuIdentifierAddress",
           # Private import mislabeled by an old xboxkrnl ordinal table: 0x1DF

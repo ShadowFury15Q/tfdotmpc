@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 PPC_EXTERN_FUNC(__imp__VdInitializeEngines);
+PPC_EXTERN_FUNC(__imp__VdCallGraphicsNotificationRoutines);
 PPC_EXTERN_FUNC(__imp__VdShutdownEngines);
 PPC_EXTERN_FUNC(__imp__VdSetGraphicsInterruptCallback);
 PPC_EXTERN_FUNC(__imp__VdInitializeRingBuffer);
@@ -47,6 +48,26 @@ int main() {
               state.pfp_microcode_fingerprint && state.me_microcode_fingerprint &&
               state.pfp_microcode_fingerprint != state.me_microcode_fingerprint,
               "Original guest microcode fingerprint and callback captured");
+        // Original PPC video scaling notification has a packed 8-byte BE
+        // payload. Preserve the real dimensions for native presentation.
+        constexpr std::uint32_t scaling = image + 0x180U;
+        const std::uint8_t payload[8] = {0x05, 0x00, 0x02, 0xD0,
+                                         0x05, 0x00, 0x02, 0xD0};
+        for (unsigned i = 0; i < 8; ++i)
+            memory.address(scaling)[i] = payload[i];
+        ctx.r3.u32 = 1U; ctx.r4.u32 = scaling;
+        __imp__VdCallGraphicsNotificationRoutines(ctx, memory.base());
+        state = dotm::vd_bound_gpu_snapshot();
+        check(ctx.r3.u32 == 0U && state.graphics_notifications == 1 &&
+              state.last_graphics_notification == 1U &&
+              state.frontbuffer_width == 1280 && state.frontbuffer_height == 720 &&
+              state.backbuffer_width == 1280 && state.backbuffer_height == 720,
+              "Xbox graphics notification preserves real BE scaling dimensions");
+        ctx.r3.u32 = 2U; ctx.r4.u32 = scaling;
+        expect_throw([&] { __imp__VdCallGraphicsNotificationRoutines(ctx, memory.base()); },
+                     "Unknown graphics notification rejected");
+        check(dotm::vd_bound_gpu_snapshot().graphics_notifications == 1,
+              "Invalid graphics notification leaves GPU state unchanged");
         // Original DOTM's xboxkrnl ordinal 0x1DF call passes 19 words
         // starting with PM4_ME_INIT (0xC0114800).
         constexpr std::uint32_t me_command = image + 256;
