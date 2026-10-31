@@ -12,3 +12,7 @@ constexpr std::uint32_t encode_xam_dashboard_version(
 std::uint32_t parse_xam_dashboard_version(std::string_view text);
 std::uint32_t xam_system_version();
 }
+
+// Xbox 360 XGetLanguage returns a console language ID, not a locale string.
+std::uint32_t parse_xam_console_language(std::string_view locale) noexcept;
+std::uint32_t xam_console_language() noexcept;

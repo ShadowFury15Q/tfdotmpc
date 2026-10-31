@@ -11,6 +11,7 @@
 PPC_EXTERN_FUNC(__imp__XamInputGetState);
 PPC_EXTERN_FUNC(__imp__XamInputGetCapabilities);
 PPC_EXTERN_FUNC(__imp__XamGetSystemVersion);
+PPC_EXTERN_FUNC(__imp__XGetLanguage);
 
 namespace {
 void require(bool pass,const char* message){if(!pass)throw std::runtime_error(message);}
@@ -30,6 +31,10 @@ int main(){
     __imp__XamGetSystemVersion(ctx,memory.base());
     require(ctx.r3.u64==dotm::xam_system_version(),
             "Original PPC XamGetSystemVersion returns retail dashboard version in r3");
+    ctx.r3.u64=0xDEADBEEFU;
+    __imp__XGetLanguage(ctx,memory.base());
+    require(ctx.r3.u64==dotm::xam_console_language(),
+            "Original _xstart XGetLanguage PPC ABI returns console language in r3");
     ctx.r3.u64=0; // controller user
     ctx.r4.u64=1; // GAMEPAD
     ctx.r5.u64=guest_ptr;

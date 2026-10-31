@@ -27,3 +27,9 @@ PPC_FUNC(__imp__XamGetSystemVersion) {
     (void)base;
     ctx.r3.u64 = dotm::xam_system_version();
 }
+
+// XGetLanguage is called during the original DOTM _xstart configuration path.
+PPC_FUNC(__imp__XGetLanguage) {
+    (void)base;
+    ctx.r3.u64 = dotm::xam_console_language();
+}
