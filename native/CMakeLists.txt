@@ -170,7 +170,7 @@ add_test(NAME xbox360_original_xex_privilege_ppc_abi
 add_library(dotm_xex_title_boot STATIC xex_title_boot.cpp)
 target_link_libraries(dotm_xex_title_boot PUBLIC dotm_xex_optional_header)
 add_executable(dotm_xex_title_boot_test test_xex_title_boot.cpp)
-target_link_libraries(dotm_xex_title_boot_test PRIVATE dotm_xex_title_boot)
+target_link_libraries(dotm_xex_title_boot_test PRIVATE dotm_xex_title_boot dotm_kernel_critical_sections)
 add_test(NAME xbox360_original_xex_title_module_boot COMMAND dotm_xex_title_boot_test)
 
 add_library(dotm_recomp_bridge STATIC recomp_bridge.cpp)
