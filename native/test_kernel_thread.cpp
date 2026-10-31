@@ -122,6 +122,17 @@ int main() {
     c.r3.u64 = 0x78001000U;
     __imp__KeQueryBasePriorityThread(c, memory.base());
     check(c.r3.u32 == 12U);
+    c.r3.u64 = 0x78001000U; c.r4.u64 = 17U;
+    __imp__KeSetBasePriorityThread(c, memory.base());
+    check(c.r3.u32 == 12U);
+    c.r3.u64 = 0x78001000U;
+    __imp__KeQueryBasePriorityThread(c, memory.base());
+    check(c.r3.u32 == 17U);
+    c.r3.u64 = 0x78001000U; c.r4.u64 = 32U;
+    bool rejected_priority = false;
+    try { __imp__KeSetBasePriorityThread(c, memory.base()); }
+    catch (const std::runtime_error&) { rejected_priority = true; }
+    check(rejected_priority);
     c.r3.u64 = 0x78001000U;
     __imp__ObDereferenceObject(c, memory.base());
     c.r3.u64 = handle; c.r4.u64 = 0x70100020U;

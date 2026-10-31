@@ -521,7 +521,9 @@ std::uint32_t nt_bound_query_base_priority_thread(std::uint32_t object_pointer) 
 
 std::uint32_t nt_bound_set_base_priority_thread(std::uint32_t object_pointer,
     std::int32_t priority) {
-    if (priority < -16 || priority > 16)
+    // Original DOTM sub_8251DDxx sets base priority 17 for worker threads.
+    // Xbox KPRIORITY includes 0..31; do not reject legitimate game threads.
+    if (priority < -16 || priority > 31)
         throw std::runtime_error("KeSetBasePriorityThread: invalid priority");
     std::lock_guard lock(registry_mutex);
     for (const auto& state : all_threads) {
