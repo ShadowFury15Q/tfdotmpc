@@ -22,6 +22,9 @@ std::uint32_t nt_bound_read_file(std::uint32_t handle, std::uint32_t event,
     std::uint32_t io_status, std::uint32_t buffer,
     std::uint32_t length, std::uint32_t offset,
     std::uint32_t guest_stack);
+// Query FILE_NETWORK_OPEN_INFORMATION (56 bytes) for a guest D: path.
+std::uint32_t nt_bound_query_full_attributes_file(
+    std::uint32_t attributes, std::uint32_t output);
 std::uint32_t nt_bound_query_information_file(std::uint32_t handle,
     std::uint32_t io_status, std::uint32_t output,
     std::uint32_t length, std::uint32_t info_class);
