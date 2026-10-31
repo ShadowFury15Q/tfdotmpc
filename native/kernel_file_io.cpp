@@ -110,6 +110,42 @@ std::optional<std::filesystem::path> resolve_disc_path(const std::string& guest)
     }
     return current;
 }
+// Call only while holding the file registry mutex. Both NT open APIs share
+// the same validated read-only host handle and Xbox IO_STATUS_BLOCK behavior.
+std::uint32_t open_existing_file_locked(std::uint32_t handle_out,
+    std::uint32_t attributes, std::uint32_t io_status) {
+    const auto root = read32(attributes);
+    const auto name = read32(attributes + 4);
+    const auto flags = read32(attributes + 8);
+    if ((root != 0 && root != 0xFFFFFFFDU && root != 0xFFFFFFFCU) ||
+        (flags & ~0xC0U) || !name || !valid(name, 8, false) || (name & 3U))
+        return kInvalidParameter;
+    const auto length = read16(name);
+    const auto capacity = read16(name + 2);
+    const auto text = read32(name + 4);
+    if (!length || length > capacity || length > 4096 || !valid(text, length, false))
+        return kInvalidParameter;
+    const std::string guest_path(reinterpret_cast<const char*>(memory->address(text)), length);
+    if (guest_path.find('\0') != std::string::npos) return kInvalidParameter;
+    if (mount_root.empty())
+        throw std::runtime_error("Original Xbox D: title file requested without a mounted game directory: " +
+                                 guest_path + " (set DOTM_GAME_ROOT to extracted disc contents)");
+    const auto resolved = resolve_disc_path(guest_path);
+    if (!resolved) return kNameNotFound;
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(*resolved, ec) || ec) return kAccessDenied;
+    if (next_handle >= 0xF9FFFFFCU) return kNotSupported;
+    auto file = std::make_shared<FileState>();
+    file->path = *resolved;
+    file->stream.open(*resolved, std::ios::binary);
+    if (!file->stream.is_open()) return kAccessDenied;
+    const auto handle = next_handle;
+    files.emplace(handle, std::move(file));
+    next_handle += 4;
+    write32(handle_out, handle);
+    set_io_status(io_status, kSuccess, 1U); // FILE_OPENED
+    return kSuccess;
+}
 }
 void bind_kernel_file_io(GuestMemory* bound, const std::filesystem::path& root) noexcept {
     std::lock_guard lock(mutex);
@@ -144,37 +180,31 @@ std::uint32_t nt_bound_create_file(std::uint32_t handle_out,
     if (access & (0x40000000U | 0x10000000U | 0x00010000U |
                   0x00040000U | 0x00080000U | 0x00000116U))
         return kAccessDenied;
-    const auto root = read32(attributes);
-    const auto name = read32(attributes + 4);
-    const auto flags = read32(attributes + 8);
-    if ((root != 0 && root != 0xFFFFFFFDU && root != 0xFFFFFFFCU) ||
-        (flags & ~0xC0U) || !name || !valid(name, 8, false) || (name & 3U))
+    return open_existing_file_locked(handle_out, attributes, io_status);
+}
+// Xbox NtOpenFile(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES,
+// PIO_STATUS_BLOCK, ULONG ShareAccess, ULONG OpenOptions).
+// The original DOTM filesystem callers use 0x4020 or 0x4040: backup-intent
+// plus one synchronous I/O mode. No host file mutation is permitted.
+std::uint32_t nt_bound_open_file(std::uint32_t handle_out,
+    std::uint32_t access, std::uint32_t attributes, std::uint32_t io_status,
+    std::uint32_t share_access, std::uint32_t open_options) {
+    std::lock_guard lock(mutex);
+    if (!valid(handle_out, 4, true) || (handle_out & 3U) ||
+        !valid(io_status, 8, true) || (io_status & 3U) ||
+        !valid(attributes, 12, false) || (attributes & 3U) ||
+        share_access > 7U)
         return kInvalidParameter;
-    const auto length = read16(name);
-    const auto capacity = read16(name + 2);
-    const auto text = read32(name + 4);
-    if (!length || length > capacity || length > 4096 || !valid(text, length, false))
-        return kInvalidParameter;
-    const std::string guest_path(reinterpret_cast<const char*>(memory->address(text)), length);
-    if (guest_path.find('\0') != std::string::npos) return kInvalidParameter;
-    if (mount_root.empty())
-        throw std::runtime_error("Original Xbox D: title file requested without a mounted game directory: " +
-                                 guest_path + " (set DOTM_GAME_ROOT to extracted disc contents)");
-    const auto resolved = resolve_disc_path(guest_path);
-    if (!resolved) return kNameNotFound;
-    std::error_code ec;
-    if (!std::filesystem::is_regular_file(*resolved, ec) || ec) return kAccessDenied;
-    if (next_handle >= 0xF9FFFFFCU) return kNotSupported;
-    auto file = std::make_shared<FileState>();
-    file->path = *resolved;
-    file->stream.open(*resolved, std::ios::binary);
-    if (!file->stream.is_open()) return kAccessDenied;
-    const auto handle = next_handle;
-    files.emplace(handle, std::move(file));
-    next_handle += 4;
-    write32(handle_out, handle);
-    set_io_status(io_status, kSuccess, 1U); // FILE_OPENED
-    return kSuccess;
+    constexpr std::uint32_t kSupportedOptions = 0x00004064U;
+    constexpr std::uint32_t kSynchronousModes = 0x00000060U;
+    const auto sync = open_options & kSynchronousModes;
+    if ((open_options & ~kSupportedOptions) ||
+        (sync != 0x20U && sync != 0x40U))
+        return kNotSupported;
+    if (access & (0x40000000U | 0x10000000U | 0x00010000U |
+                  0x00040000U | 0x00080000U | 0x00000116U))
+        return kAccessDenied;
+    return open_existing_file_locked(handle_out, attributes, io_status);
 }
 std::uint32_t nt_bound_read_file(std::uint32_t handle, std::uint32_t event,
     std::uint32_t apc_routine, std::uint32_t apc_context,
