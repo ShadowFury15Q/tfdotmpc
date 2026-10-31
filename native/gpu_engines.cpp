@@ -12,6 +12,8 @@ std::mutex gpu_mutex;
 GuestMemory* guest_memory = nullptr;
 GpuEngineSnapshot engine;
 std::array<std::uint32_t, 0x5000> gpu_registers{};
+constexpr std::uint32_t kXenosMmioBase = 0x7FC80000U;
+constexpr std::uint32_t kXenosMmioBytes = 0x00080000U;
 
 bool readable(std::uint32_t address, std::size_t size) {
     return guest_memory && address >= 0x10000U &&
@@ -46,6 +48,18 @@ void write_be32(std::uint32_t address, std::uint32_t value) {
     p[2] = static_cast<std::uint8_t>(value >> 8);
     p[3] = static_cast<std::uint8_t>(value);
 }
+// CPU-side Xenos MMIO and PM4 packet writes address the same register file.
+// Guest PPC accesses the MMIO pages directly, so the guest bytes are the
+// authoritative register state whenever the aperture has been mapped.
+std::uint32_t read_gpu_register(std::uint32_t index) {
+    const auto address = kXenosMmioBase + index * 4U;
+    return readable(address, 4U) ? read_be32(address) : gpu_registers[index];
+}
+void write_gpu_register(std::uint32_t index, std::uint32_t value) {
+    gpu_registers[index] = value;
+    const auto address = kXenosMmioBase + index * 4U;
+    if (readable(address, 4U)) write_be32(address, value);
+}
 // Hash the actual big-endian packet words, including the type-3 header.
 // This also works for a packet wrapped around the physical GPU ring.
 constexpr std::uint64_t kPacketHashOffset = 14695981039346656037ULL;
@@ -62,8 +76,6 @@ std::uint64_t hash_guest_packet(std::uint32_t address, std::uint32_t words) {
     return hash;
 }
 }
-constexpr std::uint32_t kXenosMmioBase = 0x7FC80000U;
-constexpr std::uint32_t kXenosMmioBytes = 0x00080000U;
 void vd_bound_map_gpu_mmio() {
     std::lock_guard lock(gpu_mutex);
     if (!guest_memory)
@@ -259,14 +271,14 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 (!repeat && std::uint64_t(base) + payload > gpu_registers.size()))
                 throw std::runtime_error("Xenos PM4 type-0 register out of range");
             for (std::uint32_t i = 0; i < payload; ++i) {
-                gpu_registers[base + (repeat ? 0 : i)] = at(first + i);
+                write_gpu_register(base + (repeat ? 0 : i), at(first + i));
             }
             engine.register_writes += payload;
         } else if (type == 1) {
             const auto r0 = header & 0x7FFU;
             const auto r1 = (header >> 11) & 0x7FFU;
-            gpu_registers[r0] = at(first);
-            gpu_registers[r1] = at(first + 1);
+            write_gpu_register(r0, at(first));
+            write_gpu_register(r1, at(first + 1));
             engine.register_writes += 2;
         } else if (type == 3) {
             const auto opcode = (header >> 8) & 0x7FU;
@@ -296,7 +308,7 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                     throw std::runtime_error("Xenos PM4 REG_RMW register out of range");
                 const auto and_mask = at(first + 1);
                 const auto or_mask = at(first + 2);
-                gpu_registers[index] = (gpu_registers[index] & and_mask) | or_mask;
+                write_gpu_register(index, (read_gpu_register(index) & and_mask) | or_mask);
                 ++engine.register_writes;
             } else if (opcode == 0x55U || opcode == 0x56U || opcode == 0x2DU) {
                 const auto offset_type = at(first);
@@ -316,7 +328,7 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                     std::uint64_t(index) + payload - 1 > gpu_registers.size())
                     throw std::runtime_error("Xenos PM4 constant register overflow");
                 for (std::uint32_t i = 1; i < payload; ++i)
-                    gpu_registers[index + i - 1] = at(first + i);
+                    write_gpu_register(index + i - 1, at(first + i));
                 engine.register_writes += payload - 1;
             } else {
                 throw std::runtime_error("Unsupported Xenos PM4 type-3 operation");
@@ -336,7 +348,7 @@ std::uint32_t vd_bound_read_gpu_register(std::uint32_t index) {
     std::lock_guard lock(gpu_mutex);
     if (index >= gpu_registers.size())
         throw std::runtime_error("Xenos register index out of range");
-    return gpu_registers[index];
+    return read_gpu_register(index);
 }
 GpuEngineSnapshot vd_bound_gpu_snapshot() {
     std::lock_guard lock(gpu_mutex);
