@@ -286,6 +286,9 @@ int main(int argc, char** argv) {
         execute_guest_entry(memory, result.guest_entry);
         std::puts("Guest entry returned to host. This does not establish playable gameplay.");
         return 0;
+    } catch (const dotm::TitleTerminated& e) {
+        std::fprintf(stderr, "Original PPC title shutdown: %s (not evidence of playable gameplay)\n", e.what());
+        return 3;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "Private native PPC boot probe failed: %s\n", e.what());
         return 1;
