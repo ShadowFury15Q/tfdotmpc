@@ -46,6 +46,21 @@ void write_be32(std::uint32_t address, std::uint32_t value) {
     p[2] = static_cast<std::uint8_t>(value >> 8);
     p[3] = static_cast<std::uint8_t>(value);
 }
+// Hash the actual big-endian packet words, including the type-3 header.
+// This also works for a packet wrapped around the physical GPU ring.
+constexpr std::uint64_t kPacketHashOffset = 14695981039346656037ULL;
+constexpr std::uint64_t kPacketHashPrime = 1099511628211ULL;
+std::uint64_t hash_packet_word(std::uint64_t hash, std::uint32_t word) {
+    for (unsigned shift : {24U, 16U, 8U, 0U})
+        hash = (hash ^ ((word >> shift) & 0xFFU)) * kPacketHashPrime;
+    return hash;
+}
+std::uint64_t hash_guest_packet(std::uint32_t address, std::uint32_t words) {
+    auto hash = kPacketHashOffset;
+    for (std::uint32_t i = 0; i < words; ++i)
+        hash = hash_packet_word(hash, read_be32(address + i * 4));
+    return hash;
+}
 }
 void bind_gpu_engines(GuestMemory* memory) noexcept {
     std::lock_guard lock(gpu_mutex);
@@ -100,6 +115,26 @@ void vd_bound_set_system_command_buffer_gpu_identifier_address(std::uint32_t add
     if (address && ((address & 3U) || !guest_memory->committed_range(address, 4)))
         throw std::runtime_error("Invalid Xbox GPU command-buffer identifier address");
     engine.system_command_buffer_gpu_identifier_address = address;
+}
+void vd_bound_verify_me_init_command(std::uint32_t address,
+                                     std::uint32_t word_count) {
+    std::lock_guard lock(gpu_mutex);
+    // The original DOTM PPC call at 0x82518534 passes 19 DWORDs, with
+    // 0xC0114800 (PM4_ME_INIT, 18 payload words) at its start.
+    if (!engine.initialized || word_count != 19U || (address & 3U) ||
+        !readable(address, std::size_t(word_count) * 4))
+        throw std::runtime_error("Invalid Xbox VdVerifyMEInitCommand guest buffer");
+    const auto header = read_be32(address);
+    if ((header >> 30) != 3U || ((header >> 8) & 0x7FU) != 0x48U ||
+        (header & 1U) || (((header >> 16) & 0x3FFFU) + 2U) != word_count)
+        throw std::runtime_error("Invalid Xenos PM4_ME_INIT packet header");
+    // Preserve the exact command fingerprint for matching the command later
+    // submitted through the GPU ring. This is structural validation, not
+    // a claim that the Xenos micro-engine has actually executed microcode.
+    engine.me_init_command_word_count = word_count;
+    engine.me_init_command_fingerprint = hash_guest_packet(address, word_count);
+    engine.me_init_command_verified = true;
+    engine.me_init_packet_submitted = false;
 }
 void vd_bound_initialize_ring_buffer(
     std::uint32_t physical_address, std::uint32_t size_log2) {
@@ -195,7 +230,19 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
             const auto opcode = (header >> 8) & 0x7FU;
             if (header & 1U)
                 throw std::runtime_error("Predicated Xenos PM4 packet requires bin state");
-            if (opcode == 0x10U) {
+            if (opcode == 0x48U) {
+                // Submit the exact ME_INIT packet that the title previously
+                // passed to xboxkrnl ordinal 0x1DF for verification.
+                if (!engine.me_init_command_verified ||
+                    payload + 1 != engine.me_init_command_word_count)
+                    throw std::runtime_error("Unverified Xenos PM4_ME_INIT packet");
+                auto hash = kPacketHashOffset;
+                for (std::uint32_t i = 0; i <= payload; ++i)
+                    hash = hash_packet_word(hash, at(start + i));
+                if (hash != engine.me_init_command_fingerprint)
+                    throw std::runtime_error("Xenos PM4_ME_INIT differs from verified command");
+                engine.me_init_packet_submitted = true;
+            } else if (opcode == 0x10U) {
                 // PM4_NOP has payload but does not change GPU state.
             } else if (opcode == 0x21U) {
                 // PM4_REG_RMW: register index, AND mask, OR mask.
