@@ -27,3 +27,12 @@ PPC_FUNC(__imp__VdSetSystemCommandBufferGpuIdentifierAddress) {
     (void)base;
     dotm::vd_bound_set_system_command_buffer_gpu_identifier_address(ctx.r3.u32);
 }
+
+// The private XenonRecomp import name is wrong: xboxkrnl ordinal 0x1DF
+// is VdVerifyMEInitCommand, not KiApcNormalRoutineNop (ordinal 0x19D).
+// Keep the generated symbol for ABI compatibility without changing or
+// publishing any original recompiled game code.
+PPC_FUNC(__imp__KiApcNormalRoutineNop) {
+    (void)base;
+    dotm::vd_bound_verify_me_init_command(ctx.r3.u32, ctx.r4.u32);
+}
