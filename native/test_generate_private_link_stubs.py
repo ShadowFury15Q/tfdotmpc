@@ -41,6 +41,9 @@ class PrivateLinkStubsTests(unittest.TestCase):
             self.assertNotIn("PPC_FUNC(__imp__NtAllocateVirtualMemory)", source)
             self.assertNotIn("PPC_FUNC(__imp__NtFreeVirtualMemory)", source)
             self.assertIn("throw std::runtime_error(", source)
+            self.assertIn('fail_unresolved("__imp__KeInitializeApc", ctx)', source)
+            self.assertIn("LR=0x%08X", source)
+            self.assertIn("r8=0x%08X", source)
             self.assertNotIn("synthetic mapping", source)
 
     def test_xenonrecomp_alias_backed_game_functions_are_not_stubs(self):
