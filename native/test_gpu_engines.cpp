@@ -171,6 +171,14 @@ int main() {
               dotm::vd_bound_read_gpu_register(0x151) == 0xCAFE4567U &&
               memory.address(writeback)[3] == 2,
               "PM4 payload wraps across physical ring boundary");
+        // A zero header is TYPE0, count=1, register=0; it is not padding.
+        put(2, 0);
+        put(3, 0x13572468U);
+        check(dotm::vd_bound_execute_ring(4) == 1 &&
+              dotm::vd_bound_read_gpu_register(0) == 0x13572468U &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 4 &&
+              memory.address(writeback)[3] == 4,
+              "Zero-header PM4 type-0 writes register zero and advances by two dwords");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
