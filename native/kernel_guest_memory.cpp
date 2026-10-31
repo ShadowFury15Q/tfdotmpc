@@ -458,6 +458,22 @@ std::uint32_t mm_bound_get_physical_address(std::uint32_t guest_address) {
     return 0;
 }
 
+std::optional<std::uint32_t> mm_bound_resolve_physical_range(
+    std::uint32_t physical_address, std::uint32_t length) {
+    std::lock_guard lock(binding_mutex);
+    if (!bound_memory || !length ||
+        std::uint64_t(physical_address) + length > kPhysicalBytes)
+        return std::nullopt;
+    auto it = physical_blocks.upper_bound(physical_address);
+    if (it == physical_blocks.begin()) return std::nullopt;
+    --it;
+    const auto delta = std::uint64_t(physical_address) - it->first;
+    if (delta + length > it->second.length) return std::nullopt;
+    const auto guest = it->second.guest_address + static_cast<std::uint32_t>(delta);
+    if (!bound_memory->committed_range(guest, length)) return std::nullopt;
+    return guest;
+}
+
 std::uint32_t nt_bound_allocate_virtual_memory(
     std::uint32_t base_pointer, std::uint32_t size_pointer,
     std::uint32_t allocation_type, std::uint32_t protect,
