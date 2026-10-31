@@ -191,6 +191,65 @@ std::uint32_t mm_bound_query_statistics(std::uint32_t output_pointer) {
     if (!bound_memory || !bound_allocator) return kNtNotSupported;
     return mm_query_statistics_guest(*bound_memory, *bound_allocator, output_pointer);
 }
+namespace {
+bool valid_xconfig_write(const GuestMemory& memory, std::uint32_t address,
+                         std::size_t size) noexcept {
+    const auto begin = std::uint64_t(address);
+    const auto end = begin + size;
+    const auto table = GuestMemory::kFunctionTableOffset;
+    return begin >= 0x10000U && end <= GuestMemory::kAddressSpaceSize &&
+           !(begin < table + GuestMemory::kFunctionTableSize && end > table) &&
+           memory.committed_range(begin, size);
+}
+void write_xconfig_be16(GuestMemory& memory, std::uint32_t address,
+                        std::uint16_t value) noexcept {
+    auto* p = memory.address(address);
+    p[0] = std::uint8_t(value >> 8);
+    p[1] = std::uint8_t(value);
+}
+}
+std::uint32_t ex_get_xconfig_setting_guest(GuestMemory& memory,
+    std::uint16_t category, std::uint16_t setting, std::uint32_t buffer,
+    std::uint16_t buffer_size, std::uint32_t required_size) {
+    constexpr std::uint32_t invalid_category = 0xC00000EFU;
+    constexpr std::uint32_t invalid_setting = 0xC00000F0U;
+    constexpr std::uint32_t invalid_buffer = 0xC00000F1U;
+    constexpr std::uint32_t buffer_too_small = 0xC0000023U;
+    if (required_size && !valid_xconfig_write(memory, required_size, 2))
+        return invalid_buffer;
+    std::uint32_t value = 0;
+    std::uint16_t bytes = 0;
+    if (category == 2) {
+        if (setting != 2) return invalid_setting;
+        value = 0x00001000U; // Retail North America XCONFIG_SECURED_AV_REGION.
+        bytes = 4;
+    } else if (category == 3) {
+        switch (setting) {
+        case 9: value = 1; bytes = 4; break; // English XCONFIG_USER_LANGUAGE.
+        case 10: value = 0x00040000U; bytes = 4; break; // HD widescreen video flags.
+        case 12: value = 0; bytes = 4; break; // Retail flags.
+        case 14: value = 103; bytes = 1; break; // US XCONFIG_USER_COUNTRY.
+        default: return invalid_setting;
+        }
+    } else {
+        return invalid_category;
+    }
+    if (required_size) write_xconfig_be16(memory, required_size, bytes);
+    if (!buffer) return buffer_size ? invalid_buffer : kNtSuccess;
+    if (buffer_size < bytes) return buffer_too_small;
+    if (!valid_xconfig_write(memory, buffer, bytes)) return invalid_buffer;
+    if (bytes == 1) memory.address(buffer)[0] = std::uint8_t(value);
+    else write_be32(memory, buffer, value);
+    return kNtSuccess;
+}
+std::uint32_t ex_bound_get_xconfig_setting(std::uint16_t category,
+    std::uint16_t setting, std::uint32_t buffer, std::uint16_t buffer_size,
+    std::uint32_t required_size) {
+    std::lock_guard lock(binding_mutex);
+    if (!bound_memory) return kNtNotSupported;
+    return ex_get_xconfig_setting_guest(*bound_memory, category, setting,
+        buffer, buffer_size, required_size);
+}
 std::uint32_t nt_free_virtual_memory_guest(
     GuestMemory& memory, GuestVirtualAllocator& allocator,
     std::uint32_t base_pointer, std::uint32_t size_pointer,

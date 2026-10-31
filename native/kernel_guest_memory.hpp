@@ -24,6 +24,13 @@ std::uint32_t mm_query_statistics_guest(
     GuestMemory& memory, const GuestVirtualAllocator& allocator,
     std::uint32_t output_pointer);
 std::uint32_t mm_bound_query_statistics(std::uint32_t output_pointer);
+// Xbox 360 ExGetXConfigSetting with 16-bit big-endian required-size output.
+std::uint32_t ex_get_xconfig_setting_guest(GuestMemory& memory,
+    std::uint16_t category, std::uint16_t setting, std::uint32_t buffer,
+    std::uint16_t buffer_size, std::uint32_t required_size);
+std::uint32_t ex_bound_get_xconfig_setting(std::uint16_t category,
+    std::uint16_t setting, std::uint32_t buffer, std::uint16_t buffer_size,
+    std::uint32_t required_size);
 std::uint32_t nt_free_virtual_memory_guest(
     GuestMemory& memory, GuestVirtualAllocator& allocator,
     std::uint32_t base_pointer, std::uint32_t size_pointer,

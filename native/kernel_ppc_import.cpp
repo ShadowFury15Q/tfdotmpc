@@ -82,3 +82,12 @@ PPC_FUNC(__imp__KeQueryPerformanceFrequency) {
     static const std::uint64_t frequency = host_timebase_frequency();
     ctx.r3.u64 = frequency;
 }
+
+// Xbox 360 ExGetXConfigSetting(category, setting, buffer, size, required_size).
+PPC_FUNC(__imp__ExGetXConfigSetting) {
+    (void)base;
+    ctx.r3.u64 = dotm::ex_bound_get_xconfig_setting(
+        static_cast<std::uint16_t>(ctx.r3.u32),
+        static_cast<std::uint16_t>(ctx.r4.u32), ctx.r5.u32,
+        static_cast<std::uint16_t>(ctx.r6.u32), ctx.r7.u32);
+}

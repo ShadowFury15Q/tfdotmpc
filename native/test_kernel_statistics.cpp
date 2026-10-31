@@ -4,6 +4,7 @@
 #include <iostream>
 #include <stdexcept>
 PPC_EXTERN_FUNC(__imp__MmQueryStatistics);
+PPC_EXTERN_FUNC(__imp__ExGetXConfigSetting);
 namespace {
 void check(bool ok, const char* msg) { if (!ok) throw std::runtime_error(msg); }
 void put32(dotm::GuestMemory& m, std::uint32_t a, std::uint32_t v) {
@@ -60,6 +61,34 @@ int main() {
         __imp__MmQueryStatistics(ctx, memory.base());
         check(ctx.r3.u32 == dotm::kNtInvalidParameter,
               "Native PPC dispatch table protected");
+        ctx.r3.u64 = 3; ctx.r4.u64 = 10; ctx.r5.u64 = output + 0x100;
+        ctx.r6.u64 = 4; ctx.r7.u64 = output + 0x110;
+        __imp__ExGetXConfigSetting(ctx, memory.base());
+        check(ctx.r3.u32 == 0 && get32(memory, output + 0x100) == 0x00040000U &&
+              memory.address(output + 0x110)[0] == 0 &&
+              memory.address(output + 0x110)[1] == 4,
+              "XCONFIG user video flags and required-size endian");
+        ctx.r3.u64 = 2; ctx.r4.u64 = 2;
+        __imp__ExGetXConfigSetting(ctx, memory.base());
+        check(ctx.r3.u32 == 0 && get32(memory, output + 0x100) == 0x1000U,
+              "XCONFIG retail North American AV region");
+        ctx.r3.u64 = 3; ctx.r4.u64 = 14; ctx.r6.u64 = 1;
+        __imp__ExGetXConfigSetting(ctx, memory.base());
+        check(ctx.r3.u32 == 0 && memory.address(output + 0x100)[0] == 103 &&
+              memory.address(output + 0x110)[1] == 1,
+              "XCONFIG user country byte");
+        ctx.r3.u64 = 3; ctx.r4.u64 = 9; ctx.r6.u64 = 2;
+        __imp__ExGetXConfigSetting(ctx, memory.base());
+        check(ctx.r3.u32 == 0xC0000023U && memory.address(output + 0x110)[1] == 4,
+              "XCONFIG short buffer returns size and NTSTATUS");
+        ctx.r3.u64 = 99; ctx.r4.u64 = 9; ctx.r6.u64 = 4;
+        __imp__ExGetXConfigSetting(ctx, memory.base());
+        check(ctx.r3.u32 == 0xC00000EFU, "XCONFIG unknown category rejected");
+        ctx.r3.u64 = 3; ctx.r4.u64 = 10;
+        ctx.r7.u64 = dotm::GuestMemory::kFunctionTableOffset;
+        __imp__ExGetXConfigSetting(ctx, memory.base());
+        check(ctx.r3.u32 == 0xC00000F1U,
+              "XCONFIG rejects host dispatch table output pointer");
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
         ctx.r3.u64 = output;
         __imp__MmQueryStatistics(ctx, memory.base());
