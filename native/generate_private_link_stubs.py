@@ -47,6 +47,9 @@ NATIVE = {"__imp__ExRegisterTitleTerminateNotification", "__imp__XGetAVPack", "_
           "__imp__VdInitializeEngines", "__imp__VdShutdownEngines",
           "__imp__VdSetGraphicsInterruptCallback",
           "__imp__VdSetSystemCommandBufferGpuIdentifierAddress",
+          # Private import mislabeled by an old xboxkrnl ordinal table: 0x1DF
+          # is VdVerifyMEInitCommand, implemented by gpu_engines_ppc.cpp.
+          "__imp__KiApcNormalRoutineNop",
           "__imp__VdInitializeRingBuffer",
           "__imp__VdEnableRingBufferRPtrWriteBack",
           "__imp__NtCreateFile", "__imp__NtReadFile",
