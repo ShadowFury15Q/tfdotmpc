@@ -391,6 +391,7 @@ std::uint32_t mm_bound_allocate_physical_memory_ex(
         (protect & k16mPages) ? 0x1000000ULL : 0x1000ULL;
     const std::uint32_t view = (protect & k64kPages) ? kPhysical64kView :
         (protect & k16mPages) ? kPhysical16mView : kPhysical4kView;
+    if (alignment && (alignment & (alignment - 1))) return 0;
     const std::uint64_t effective_alignment =
         std::max<std::uint64_t>(alignment, page);
     if ((effective_alignment & (effective_alignment - 1)) != 0 ||
