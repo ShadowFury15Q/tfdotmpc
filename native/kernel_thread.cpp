@@ -381,6 +381,8 @@ std::uint32_t nt_bound_close_thread(std::uint32_t handle) {
     return handles.erase(handle) ? kSuccess : kInvalidHandle;
 }
 
+bool kernel_guest_thread_active() noexcept { return executing_guest_thread; }
+
 [[noreturn]] void nt_bound_terminate_thread(std::uint32_t exit_code) {
     if (!executing_guest_thread)
         throw std::runtime_error("ExTerminateThread called outside a guest worker");

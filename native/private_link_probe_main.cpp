@@ -60,14 +60,18 @@ struct ScopedHostBindings {
         dotm::bind_xam_launch_data(&launch_data, &memory);
     }
     ~ScopedHostBindings() {
+        // The original title starts background PPC workers. If _xstart throws,
+        // cancel their blocking NT waits before joining them, while all other
+        // Xbox runtime bindings and the guest address space are still valid.
+        dotm::cancel_kernel_mutant_waiters();
+        dotm::bind_kernel_threads(nullptr);
+        dotm::bind_kernel_mutants(nullptr);
         dotm::bind_xam_launch_data(nullptr, nullptr);
         dotm::bind_xam_guest_input(nullptr, nullptr);
         dotm::bind_xex_system_modules(nullptr);
         dotm::bind_xex_optional_header(nullptr);
         dotm::bind_kernel_rtl_memory(nullptr);
         dotm::bind_kernel_file_cache(nullptr);
-        dotm::bind_kernel_threads(nullptr);
-        dotm::bind_kernel_mutants(nullptr);
         dotm::bind_kernel_critical_sections(nullptr);
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
     }

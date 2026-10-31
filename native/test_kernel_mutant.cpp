@@ -2,6 +2,7 @@
 #include "kernel_mutant.hpp"
 #include "ppc_recomp_shared.h"
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <stdexcept>
 #include <thread>
@@ -150,6 +151,24 @@ int main() {
     c.r3.u64 = base + 36; c.r4.u64 = 0; c.r5.u64 = 2; c.r6.u64 = 0;
     __imp__NtCreateEvent(c, m.base());
     check(c.r3.u32 == 0xC000000DU);
+    // Cancelling a live Xbox event wait must wake the host waiter instead
+    // of leaving native PPC teardown blocked forever on an infinite wait.
+    c.r3.u64 = base + 40; c.r4.u64 = 0; c.r5.u64 = 1; c.r6.u64 = 0;
+    __imp__NtCreateEvent(c, m.base());
+    check(c.r3.u32 == 0);
+    const auto shutdown_event = read32(m, base + 40);
+    std::atomic<bool> entered{false};
+    std::atomic<std::uint32_t> cancelled_status{0};
+    std::thread blocked_waiter([&] {
+        PPCContext worker{};
+        entered.store(true);
+        wait(worker, m, shutdown_event);
+        cancelled_status.store(worker.r3.u32);
+    });
+    while (!entered.load()) std::this_thread::yield();
+    dotm::cancel_kernel_mutant_waiters();
+    blocked_waiter.join();
+    check(cancelled_status.load() == 0xC0000120U);
     dotm::bind_kernel_mutants(nullptr);
     return 0;
 }

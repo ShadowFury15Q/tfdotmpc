@@ -2,6 +2,7 @@
 #include "kernel_thread.hpp"
 #include "guest_memory.hpp"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -25,6 +26,7 @@ constexpr std::uint32_t kTypeMismatch = 0xC0000024U;
 constexpr std::uint32_t kMutantNotOwned = 0xC0000046U;
 constexpr std::uint32_t kNotSupported = 0xC00000BBU;
 constexpr std::uint32_t kTimeout = 0x00000102U;
+constexpr std::uint32_t kCancelled = 0xC0000120U;
 constexpr std::uint32_t kNameExists = 0x40000000U;
 constexpr std::uint32_t kMutantLimitExceeded = 0xC0000191U;
 constexpr std::uint32_t kFirstHandle = 0xF8000000U;
@@ -33,12 +35,14 @@ struct Mutant {
     std::condition_variable ready;
     std::thread::id owner{};
     std::uint32_t depth = 0;
+    std::atomic<bool> closing{false};
 };
 struct Event {
     std::mutex mutex;
     std::condition_variable ready;
     bool manual_reset = false;
     bool signaled = false;
+    std::atomic<bool> closing{false};
     std::uint64_t pulse_epoch = 0;
     std::uint32_t pulse_tokens = 0;
     std::uint32_t waiters = 0;
@@ -122,6 +126,21 @@ std::shared_ptr<Mutant> find_mutant(std::uint32_t handle) {
     return it == handles.end() ? nullptr : it->second;
 }
 }
+// A guest worker may be blocked in an infinite NtWait when the main PPC
+// entry throws. Wake these waits before joining the workers: otherwise the
+// host cannot report the original error and hangs during stack unwinding.
+void cancel_kernel_mutant_waiters() noexcept {
+    std::lock_guard lock(registry_mutex);
+    for (auto& [handle, object] : handles) {
+        object->closing.store(true, std::memory_order_release);
+        object->ready.notify_all();
+    }
+    for (auto& [handle, object] : event_handles) {
+        object->closing.store(true, std::memory_order_release);
+        object->ready.notify_all();
+    }
+}
+
 void bind_kernel_mutants(GuestMemory* memory) noexcept {
     std::lock_guard lock(registry_mutex);
     handles.clear();
@@ -341,13 +360,19 @@ std::uint32_t nt_bound_wait_for_single_object_ex(std::uint32_t handle,
         const auto pulse_at_start = event->pulse_epoch;
         ++event->waiters;
         const auto available = [&] {
-            return event->signaled ||
+            return event->closing.load(std::memory_order_acquire) ||
+                event->signaled ||
                 (event->pulse_epoch != pulse_at_start && event->pulse_tokens != 0);
         };
         bool awakened = true;
         if (duration) awakened = event->ready.wait_for(lock, *duration, available);
         else event->ready.wait(lock, available);
         --event->waiters;
+        if (event->closing.load(std::memory_order_acquire)) {
+            lock.unlock();
+            if (kernel_guest_thread_active()) nt_bound_terminate_thread(kCancelled);
+            return kCancelled;
+        }
         if (!awakened) return kTimeout;
         if (event->pulse_epoch != pulse_at_start && event->pulse_tokens) {
             --event->pulse_tokens;
@@ -358,11 +383,19 @@ std::uint32_t nt_bound_wait_for_single_object_ex(std::uint32_t handle,
     }
     std::unique_lock lock(object->mutex);
     const auto current = std::this_thread::get_id();
-    const auto available = [&] { return !object->depth || object->owner == current; };
+    const auto available = [&] {
+        return object->closing.load(std::memory_order_acquire) ||
+            !object->depth || object->owner == current;
+    };
     if (duration) {
         if (!object->ready.wait_for(lock, *duration, available)) return kTimeout;
     } else {
         object->ready.wait(lock, available);
+    }
+    if (object->closing.load(std::memory_order_acquire)) {
+        lock.unlock();
+        if (kernel_guest_thread_active()) nt_bound_terminate_thread(kCancelled);
+        return kCancelled;
     }
     if (object->depth == 0x7FFFFFFFU) return kMutantLimitExceeded;
     object->owner = current;

@@ -3,6 +3,7 @@
 namespace dotm {
 class GuestMemory;
 void bind_kernel_mutants(GuestMemory* memory) noexcept;
+void cancel_kernel_mutant_waiters() noexcept;
 std::uint32_t nt_bound_create_event(std::uint32_t output_handle,
                                      std::uint32_t object_attributes,
                                      std::uint32_t event_type,
