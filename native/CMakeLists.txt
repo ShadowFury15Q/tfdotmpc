@@ -237,8 +237,11 @@ find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
   add_test(NAME xenonrecomp_ppc_update_semantics
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_repair_ppc_updates.py")
+  add_test(NAME xenonrecomp_private_bctr_jump_table_semantics
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_repair_ppc_jump_tables.py")
 endif()
 set(DOTM_PRIVATE_PPC_DIR "" CACHE PATH "Private XenonRecomp C++ directory (never commit it)")
+set(DOTM_PRIVATE_PE_FILE "" CACHE FILEPATH "Private original decrypted PPC PE for intra-function bctr repair")
 if(DOTM_PRIVATE_PPC_DIR)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   # The original XenonRecomp output uses Clang builtins and SIMDe x86 headers.
@@ -280,6 +283,21 @@ if(DOTM_PRIVATE_PPC_DIR)
     message(FATAL_ERROR "Private PPC update repair failed: ${DOTM_PPC_REPAIR_ERROR}")
   endif()
   message(STATUS "${DOTM_PPC_REPAIR_LOG}")
+  if(DOTM_PRIVATE_PE_FILE)
+    if(NOT EXISTS "${DOTM_PRIVATE_PE_FILE}")
+      message(FATAL_ERROR "Private original decrypted PPC PE not found")
+    endif()
+    execute_process(
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/repair_ppc_jump_tables.py"
+        --dir "${DOTM_PRIVATE_PPC_DIR}" --pe "${DOTM_PRIVATE_PE_FILE}"
+      RESULT_VARIABLE DOTM_PPC_JUMP_RESULT
+      OUTPUT_VARIABLE DOTM_PPC_JUMP_LOG
+      ERROR_VARIABLE DOTM_PPC_JUMP_ERROR)
+    if(NOT DOTM_PPC_JUMP_RESULT EQUAL 0)
+      message(FATAL_ERROR "Private PPC bctr repair failed: ${DOTM_PPC_JUMP_ERROR}")
+    endif()
+    message(STATUS "${DOTM_PPC_JUMP_LOG}")
+  endif()
   set(DOTM_PRIVATE_PPC_UNITS "")
   foreach(unit_index RANGE 0 696)
     list(APPEND DOTM_PRIVATE_PPC_UNITS
