@@ -13,6 +13,10 @@ std::uint32_t nt_bound_create_file(std::uint32_t handle_out,
     std::uint32_t allocation_size, std::uint32_t file_attributes,
     std::uint32_t share_access, std::uint32_t disposition,
     std::uint32_t guest_stack);
+// Xbox NtOpenFile: six PPC register arguments, existing read-only title files.
+std::uint32_t nt_bound_open_file(std::uint32_t handle_out,
+    std::uint32_t access, std::uint32_t attributes, std::uint32_t io_status,
+    std::uint32_t share_access, std::uint32_t open_options);
 std::uint32_t nt_bound_read_file(std::uint32_t handle, std::uint32_t event,
     std::uint32_t apc_routine, std::uint32_t apc_context,
     std::uint32_t io_status, std::uint32_t buffer,
