@@ -316,11 +316,21 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 // Apply the update only after validating the complete packet.
                 if (payload != 3U)
                     throw std::runtime_error("Invalid Xenos PM4 REG_RMW payload size");
-                const auto index = at(first);
+                // Bits 31 and 30 select GPU register operands for the AND
+                // and OR inputs. The destination and register operands use
+                // 13-bit register indices; the flags are not part of the index.
+                // These forms are used by the original Xenos driver during
+                // shader upload and EDRAM setup.
+                const auto rmw_info = at(first);
+                const auto index = rmw_info & 0x1FFFU;
+                const auto and_operand = at(first + 1);
+                const auto or_operand = at(first + 2);
                 if (index >= gpu_registers.size())
                     throw std::runtime_error("Xenos PM4 REG_RMW register out of range");
-                const auto and_mask = at(first + 1);
-                const auto or_mask = at(first + 2);
+                const auto and_mask = (rmw_info & 0x80000000U)
+                    ? read_gpu_register(and_operand & 0x1FFFU) : and_operand;
+                const auto or_mask = (rmw_info & 0x40000000U)
+                    ? read_gpu_register(or_operand & 0x1FFFU) : or_operand;
                 write_gpu_register(index, (read_gpu_register(index) & and_mask) | or_mask);
                 ++engine.register_writes;
             } else if (opcode == 0x50U || opcode == 0x51U) {
