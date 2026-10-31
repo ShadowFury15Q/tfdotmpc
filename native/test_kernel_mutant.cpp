@@ -14,6 +14,9 @@ PPC_EXTERN_FUNC(__imp__NtCreateEvent);
 PPC_EXTERN_FUNC(__imp__NtSetEvent);
 PPC_EXTERN_FUNC(__imp__NtClearEvent);
 PPC_EXTERN_FUNC(__imp__NtPulseEvent);
+PPC_EXTERN_FUNC(__imp__KeSetEvent);
+PPC_EXTERN_FUNC(__imp__KeResetEvent);
+PPC_EXTERN_FUNC(__imp__KeWaitForSingleObject);
 namespace {
 void check(bool value) { if (!value) throw std::runtime_error("Xbox mutant PPC ABI failure"); }
 void write32(dotm::GuestMemory& m, std::uint32_t a, std::uint32_t v) {
@@ -151,6 +154,31 @@ int main() {
     c.r3.u64 = base + 36; c.r4.u64 = 0; c.r5.u64 = 2; c.r6.u64 = 0;
     __imp__NtCreateEvent(c, m.base());
     check(c.r3.u32 == 0xC000000DU);
+    // Original game workers use pointer-based KEVENTs, not NtCreateEvent
+    // handles. Test PPC r3-r7, big-endian SignalState and auto-reset.
+    constexpr std::uint32_t ke_event = base + 0x200U;
+    m.address(ke_event)[0] = 1U; // SynchronizationEvent
+    write32(m, ke_event + 4U, 0U);
+    c.r3.u32 = ke_event; c.r4.u32 = 3U; c.r5.u32 = 1U;
+    c.r6.u32 = 0U; c.r7.u32 = base + 8U;
+    __imp__KeWaitForSingleObject(c, m.base());
+    check(c.r3.u32 == 0x102U);
+    c.r3.u32 = ke_event; c.r4.u32 = 1U; c.r5.u32 = 0U;
+    __imp__KeSetEvent(c, m.base());
+    check(c.r3.u32 == 0U && read32(m, ke_event + 4U) == 1U);
+    c.r3.u32 = ke_event; c.r4.u32 = 3U; c.r5.u32 = 1U;
+    c.r6.u32 = 0U; c.r7.u32 = base + 8U;
+    __imp__KeWaitForSingleObject(c, m.base());
+    check(c.r3.u32 == 0U && read32(m, ke_event + 4U) == 0U);
+    c.r3.u32 = ke_event; c.r4.u32 = 3U; c.r5.u32 = 1U;
+    c.r6.u32 = 0U; c.r7.u32 = base + 8U;
+    __imp__KeWaitForSingleObject(c, m.base());
+    check(c.r3.u32 == 0x102U);
+    c.r3.u32 = ke_event; c.r4.u32 = 0U; c.r5.u32 = 0U;
+    __imp__KeSetEvent(c, m.base());
+    c.r3.u32 = ke_event;
+    __imp__KeResetEvent(c, m.base());
+    check(c.r3.u32 == 1U && read32(m, ke_event + 4U) == 0U);
     // Cancelling a live Xbox event wait must wake the host waiter instead
     // of leaving native PPC teardown blocked forever on an infinite wait.
     c.r3.u64 = base + 40; c.r4.u64 = 0; c.r5.u64 = 1; c.r6.u64 = 0;

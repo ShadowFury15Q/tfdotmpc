@@ -17,7 +17,7 @@ PPC_EXTERN_FUNC(__imp__XamLoaderGetLaunchDataSize);
 PPC_EXTERN_FUNC(__imp__XamLoaderGetLaunchData);
 PPC_EXTERN_FUNC(__imp__NtAllocateVirtualMemory);
 PPC_EXTERN_FUNC(__imp__NtFreeVirtualMemory);
-PPC_EXTERN_FUNC(__imp__KeWaitForSingleObject);
+PPC_EXTERN_FUNC(__imp__KeEnterCriticalRegion);
 PPC_EXTERN_FUNC(__imp__KeTlsAlloc);
 PPC_EXTERN_FUNC(__imp__KeTlsFree);
 PPC_EXTERN_FUNC(__imp__KeTlsGetValue);

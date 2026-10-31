@@ -54,6 +54,7 @@ std::uint32_t next_handle = kFirstHandle;
 std::unordered_map<std::uint32_t, std::shared_ptr<Mutant>> handles;
 std::unordered_map<std::string, std::weak_ptr<Mutant>> named;
 std::unordered_map<std::uint32_t, std::shared_ptr<Event>> event_handles;
+std::unordered_map<std::uint32_t, std::shared_ptr<Event>> kernel_events;
 std::unordered_map<std::string, std::weak_ptr<Event>> named_events;
 
 bool valid_guest(const GuestMemory& memory, std::uint32_t addr,
@@ -119,7 +120,25 @@ std::uint32_t parse_name(const GuestMemory& m, std::uint32_t attributes,
 std::shared_ptr<Event> find_event(std::uint32_t handle) {
     std::lock_guard lock(registry_mutex);
     const auto it = event_handles.find(handle);
-    return it == event_handles.end() ? nullptr : it->second;
+    if (it != event_handles.end()) return it->second;
+    const auto kernel_it = kernel_events.find(handle);
+    return kernel_it == kernel_events.end() ? nullptr : kernel_it->second;
+}
+std::shared_ptr<Event> get_kernel_event(std::uint32_t address) {
+    std::lock_guard lock(registry_mutex);
+    if (!bound_memory || (address & 3U) ||
+        !valid_guest(*bound_memory, address, 0x10U, true))
+        throw std::runtime_error("Invalid Xbox KEVENT guest pointer");
+    const auto type = bound_memory->address(address)[0];
+    if (type > 1U)
+        throw std::runtime_error("Unsupported Xbox KEVENT dispatcher type");
+    const auto it = kernel_events.find(address);
+    if (it != kernel_events.end()) return it->second;
+    auto event = std::make_shared<Event>();
+    event->manual_reset = type == 0;
+    event->signaled = read32(*bound_memory, address + 4U) != 0;
+    kernel_events.emplace(address, event);
+    return event;
 }
 std::shared_ptr<Mutant> find_mutant(std::uint32_t handle) {
     std::lock_guard lock(registry_mutex);
@@ -172,6 +191,24 @@ void cancel_kernel_mutant_waiters() noexcept {
         }
         object->ready.notify_all();
     }
+    for (;;) {
+        std::shared_ptr<Event> object;
+        {
+            std::lock_guard lock(registry_mutex);
+            for (const auto& [address, candidate] : kernel_events) {
+                if (!candidate->closing.load(std::memory_order_acquire)) {
+                    object = candidate;
+                    break;
+                }
+            }
+        }
+        if (!object) break;
+        {
+            std::lock_guard lock(object->mutex);
+            object->closing.store(true, std::memory_order_release);
+        }
+        object->ready.notify_all();
+    }
 }
 
 void bind_kernel_mutants(GuestMemory* memory) noexcept {
@@ -179,10 +216,60 @@ void bind_kernel_mutants(GuestMemory* memory) noexcept {
     handles.clear();
     named.clear();
     event_handles.clear();
+    kernel_events.clear();
     named_events.clear();
     next_handle = kFirstHandle;
     bound_memory = memory;
 }
+std::uint32_t ke_bound_set_event(std::uint32_t address,
+                                 std::uint32_t increment, std::uint32_t wait) {
+    // The increment is a scheduler priority hint. Wait=TRUE requires an
+    // atomic following kernel wait; do not pretend that path is supported.
+    (void)increment;
+    if (wait) throw std::runtime_error("KeSetEvent: Wait=TRUE not supported");
+    auto event = get_kernel_event(address);
+    std::unique_lock lock(event->mutex);
+    const auto previous = event->signaled ? 1U : 0U;
+    event->signaled = true;
+    {
+        std::lock_guard registry_lock(registry_mutex);
+        if (!bound_memory || !valid_guest(*bound_memory, address + 4U, 4, true))
+            throw std::runtime_error("KeSetEvent: guest object unmapped");
+        write32(*bound_memory, address + 4U, 1U);
+    }
+    lock.unlock();
+    if (event->manual_reset) event->ready.notify_all();
+    else event->ready.notify_one();
+    return previous;
+}
+std::uint32_t ke_bound_reset_event(std::uint32_t address) {
+    auto event = get_kernel_event(address);
+    std::lock_guard lock(event->mutex);
+    const auto previous = event->signaled ? 1U : 0U;
+    event->signaled = false;
+    std::lock_guard registry_lock(registry_mutex);
+    if (!bound_memory || !valid_guest(*bound_memory, address + 4U, 4, true))
+        throw std::runtime_error("KeResetEvent: guest object unmapped");
+    write32(*bound_memory, address + 4U, 0U);
+    return previous;
+}
+std::uint32_t ke_bound_wait_for_single_object(std::uint32_t address,
+    std::uint32_t reason, std::uint32_t mode, std::uint32_t alertable,
+    std::uint32_t timeout) {
+    (void)reason; // WaitReason only affects kernel scheduling policy.
+    auto event = get_kernel_event(address);
+    const auto status = nt_bound_wait_for_single_object_ex(
+        address, mode, alertable, timeout);
+    if (status == kSuccess) {
+        std::lock_guard lock(event->mutex);
+        std::lock_guard registry_lock(registry_mutex);
+        if (!bound_memory || !valid_guest(*bound_memory, address + 4U, 4, true))
+            throw std::runtime_error("KeWaitForSingleObject: guest object unmapped");
+        write32(*bound_memory, address + 4U, event->signaled ? 1U : 0U);
+    }
+    return status;
+}
+
 std::uint32_t nt_bound_create_mutant(std::uint32_t output_handle,
                                      std::uint32_t object_attributes,
                                      std::uint32_t initial_owner) {
