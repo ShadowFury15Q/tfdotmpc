@@ -6,6 +6,8 @@
 #include <exception>
 #include <stdexcept>
 #include <thread>
+PPC_EXTERN_FUNC(__imp__KeEnterCriticalRegion);
+PPC_EXTERN_FUNC(__imp__KeLeaveCriticalRegion);
 namespace {
 void check(bool b) { if (!b) throw std::runtime_error("critical-section ABI failure"); }
 std::uint32_t read32(const dotm::GuestMemory& m, std::uint32_t a) {
@@ -20,6 +22,28 @@ int main() {
     memory.commit(address, 4096);
     dotm::bind_kernel_critical_sections(&memory);
     PPCContext c{};
+    c.r3.u32 = 0xABCD1234U;
+    __imp__KeEnterCriticalRegion(c, memory.base());
+    __imp__KeEnterCriticalRegion(c, memory.base());
+    check(c.r3.u32 == 0xABCD1234U && dotm::kernel_critical_region_depth() == 2U);
+    std::atomic<bool> isolated{false};
+    std::thread region_worker([&] {
+        check(dotm::kernel_critical_region_depth() == 0U);
+        dotm::kernel_enter_critical_region();
+        check(dotm::kernel_critical_region_depth() == 1U);
+        dotm::kernel_leave_critical_region();
+        isolated = true;
+    });
+    region_worker.join();
+    check(isolated && dotm::kernel_critical_region_depth() == 2U);
+    __imp__KeLeaveCriticalRegion(c, memory.base());
+    __imp__KeLeaveCriticalRegion(c, memory.base());
+    check(c.r3.u32 == 0xABCD1234U && dotm::kernel_critical_region_depth() == 0U);
+    bool region_underflow = false;
+    try { __imp__KeLeaveCriticalRegion(c, memory.base()); }
+    catch (const std::runtime_error&) { region_underflow = true; }
+    check(region_underflow);
+
     c.r3.u32 = address;
     c.r4.u32 = 300;
     __imp__RtlInitializeCriticalSectionAndSpinCount(c, memory.base());

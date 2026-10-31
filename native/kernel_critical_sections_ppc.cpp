@@ -9,6 +9,14 @@ PPC_FUNC(__imp__RtlInitializeCriticalSectionAndSpinCount) {
     dotm::kernel_initialize_critical_section(ctx.r3.u32, ctx.r4.u32);
     ctx.r3.u64 = 0;
 }
+PPC_FUNC(__imp__KeEnterCriticalRegion) {
+    (void)base;
+    dotm::kernel_enter_critical_region();
+}
+PPC_FUNC(__imp__KeLeaveCriticalRegion) {
+    (void)base;
+    dotm::kernel_leave_critical_region();
+}
 PPC_FUNC(__imp__RtlEnterCriticalSection) {
     (void)base;
     dotm::kernel_enter_critical_section(ctx.r3.u32);

@@ -19,7 +19,7 @@ ALIAS = re.compile(
 )
 MAPPING = re.compile(r"\{\s*(0x[0-9A-Fa-f]+)\s*,\s*([A-Za-z_]\w*)\s*\}")
 HELPER = re.compile(r"__?(?:save|rest)(?:gprlr|fpr|vmx)_\d+")
-NATIVE = {"__imp__KeSetEvent", "__imp__KeResetEvent", "__imp__KeWaitForSingleObject", "__imp__KeInitializeDpc", "__imp__ExAllocatePool", "__imp__ExAllocatePoolWithTag", "__imp__ExFreePool", "__imp__HalReturnToFirmware", "__imp__ExRegisterTitleTerminateNotification", "__imp__XamLoaderTerminateTitle", "__imp__XGetAVPack", "__imp__XGetLanguage", "__imp__KeGetCurrentProcessType", "__imp__DbgPrint",
+NATIVE = {"__imp__KeEnterCriticalRegion", "__imp__KeLeaveCriticalRegion", "__imp__KeSetEvent", "__imp__KeResetEvent", "__imp__KeWaitForSingleObject", "__imp__KeInitializeDpc", "__imp__ExAllocatePool", "__imp__ExAllocatePoolWithTag", "__imp__ExFreePool", "__imp__HalReturnToFirmware", "__imp__ExRegisterTitleTerminateNotification", "__imp__XamLoaderTerminateTitle", "__imp__XGetAVPack", "__imp__XGetLanguage", "__imp__KeGetCurrentProcessType", "__imp__DbgPrint",
           "__imp__RtlFillMemoryUlong",
           "__imp__RtlInitAnsiString", "__imp__RtlInitUnicodeString",
           "__imp__RtlMultiByteToUnicodeN", "__imp__RtlUnicodeToMultiByteN", "__imp__RtlCompareMemoryUlong",

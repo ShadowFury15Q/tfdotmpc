@@ -20,12 +20,12 @@ class PrivateLinkStubsTests(unittest.TestCase):
                 "PPC_EXTERN_FUNC(__imp__XamInputGetCapabilities);\n"
                 "PPC_EXTERN_FUNC(__imp__NtAllocateVirtualMemory);\n"
                 "PPC_EXTERN_FUNC(__imp__NtFreeVirtualMemory);\n"
-                "PPC_EXTERN_FUNC(__imp__KeEnterCriticalRegion);\n"
+                "PPC_EXTERN_FUNC(__imp__KeInitializeApc);\n"
                 "PPC_EXTERN_FUNC(__savefpr_14);\n"
                 "PPC_EXTERN_FUNC(_xstart);\n", encoding="utf-8")
             (root / "ppc_func_mapping.cpp").write_text(
                 "{0x8277F670, _xstart},\n"
-                "{0x82500000, __imp__KeEnterCriticalRegion},\n",
+                "{0x82500000, __imp__KeInitializeApc},\n",
                 encoding="utf-8")
             (root / "ppc_recomp.0.cpp").write_text(
                 "PPC_FUNC_IMPL(_xstart) { /* synthetic */ }\n", encoding="utf-8")
@@ -33,7 +33,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
                 generate(root, 2)
             source, units, unresolved = generate(root, 1)
             self.assertEqual((units, unresolved), (1, 1))
-            self.assertIn("PPC_FUNC(__imp__KeEnterCriticalRegion)", source)
+            self.assertIn("PPC_FUNC(__imp__KeInitializeApc)", source)
             self.assertNotIn("PPC_FUNC(__savefpr_14)", source)
             self.assertNotIn("PPC_FUNC(_xstart)", source)
             self.assertNotIn("PPC_FUNC(__imp__XamInputGetState)", source)
@@ -148,19 +148,19 @@ class PrivateLinkStubsTests(unittest.TestCase):
             root = Path(tmp)
             (root / "ppc_recomp_shared.h").write_text(
                 "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n"
-                "PPC_EXTERN_FUNC(__imp__KeEnterCriticalRegion);\n",
+                "PPC_EXTERN_FUNC(__imp__KeInitializeApc);\n",
                 encoding="utf-8")
             (root / "ppc_func_mapping.cpp").write_text(
                 "{0x8277F670, _xstart},\n", encoding="utf-8")
             (root / "ppc_recomp.0.cpp").write_text(
                 "PPC_FUNC_IMPL(_xstart) {}\n"
-                "PPC_FUNC(__imp__KeEnterCriticalRegion);\n", encoding="utf-8")
+                "PPC_FUNC(__imp__KeInitializeApc);\n", encoding="utf-8")
             source, count, unresolved = generate(root, 1)
             self.assertEqual((count, unresolved), (1, 1))
-            self.assertIn("PPC_FUNC(__imp__KeEnterCriticalRegion)", source)
+            self.assertIn("PPC_FUNC(__imp__KeInitializeApc)", source)
 
     def test_undeclared_mapped_platform_import_is_rejected(self):
-        for name in ("__imp__KeEnterCriticalRegion",
+        for name in ("__imp__KeInitializeApc",
                      "__imp__XamInputGetCapabilities"):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -254,7 +254,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
             root = Path(tmp)
             (root / "ppc_recomp_shared.h").write_text(
                 'PPC_EXTERN_FUNC(__imp__XamInputGetState);\n'
-                'const char* sample = "PPC_EXTERN_FUNC(__imp__KeEnterCriticalRegion);";\n',
+                'const char* sample = "PPC_EXTERN_FUNC(__imp__KeInitializeApc);";\n',
                 encoding="utf-8")
             (root / "ppc_func_mapping.cpp").write_text(
                 "{0x8277F670, _xstart},\n", encoding="utf-8")
@@ -262,7 +262,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
                 "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
             source, count, unresolved = generate(root, 1)
             self.assertEqual((count, unresolved), (1, 0))
-            self.assertNotIn("PPC_FUNC(__imp__KeEnterCriticalRegion)", source)
+            self.assertNotIn("PPC_FUNC(__imp__KeInitializeApc)", source)
 
     def test_raw_string_mapping_does_not_create_invalid_address(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -313,7 +313,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
                 (root / "ppc_recomp_shared.h").write_text(
                     "PPC_EXTERN_FUNC(__imp__XamInputGetState);" + newline +
                     "// commented out \\" + newline +
-                    "PPC_EXTERN_FUNC(__imp__KeEnterCriticalRegion);" + newline,
+                    "PPC_EXTERN_FUNC(__imp__KeInitializeApc);" + newline,
                     encoding="utf-8", newline="")
                 (root / "ppc_func_mapping.cpp").write_text(
                     "{0x8277F670, _xstart},\n", encoding="utf-8", newline="")
@@ -321,7 +321,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
                     "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8", newline="")
                 source, count, unresolved = generate(root, 1)
                 self.assertEqual((count, unresolved), (1, 0))
-                self.assertNotIn("PPC_FUNC(__imp__KeEnterCriticalRegion)", source)
+                self.assertNotIn("PPC_FUNC(__imp__KeInitializeApc)", source)
 
     def test_disabled_preprocessor_definition_cannot_satisfy_mapping(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -519,7 +519,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
                     root = Path(tmp)
                     (root / "ppc_recomp_shared.h").write_text(
                         "#if " + condition + newline +
-                        "PPC_EXTERN_FUNC(__imp__KeEnterCriticalRegion);" + newline +
+                        "PPC_EXTERN_FUNC(__imp__KeInitializeApc);" + newline +
                         "#endif" + newline +
                         "PPC_EXTERN_FUNC(__imp__XamInputGetState);" + newline,
                         encoding="utf-8", newline="")
@@ -533,7 +533,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
                         "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
                     source, units, unresolved = generate(root, 1)
                     self.assertEqual((units, unresolved), (1, 0))
-                    self.assertNotIn("KeEnterCriticalRegion", source)
+                    self.assertNotIn("KeInitializeApc", source)
 
     def test_default_requires_all_697_private_units(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -592,7 +592,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "ppc_recomp_shared.h").write_text(
-                "PPC_EXTERN_FUNC(__imp__KeEnterCriticalRegion);", encoding="utf-8")
+                "PPC_EXTERN_FUNC(__imp__KeInitializeApc);", encoding="utf-8")
             (root / "ppc_func_mapping.cpp").write_text("", encoding="utf-8")
             (root / "ppc_recomp.0.cpp").write_text("", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "lacks expected"):
@@ -605,7 +605,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
                 root = Path(tmp)
                 (root / "ppc_recomp_shared.h").write_text(
                     "PPC_EXTERN_FUNC(__imp__XamInputGetState);" + newline +
-                    "#pragma vendor PPC_EXTERN_FUNC(__imp__KeEnterCriticalRegion);" + newline,
+                    "#pragma vendor PPC_EXTERN_FUNC(__imp__KeInitializeApc);" + newline,
                     encoding="utf-8", newline="")
                 (root / "ppc_func_mapping.cpp").write_text(
                     "#pragma vendor {0x82500000, sub_82500000}," + newline +
@@ -618,7 +618,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
                     encoding="utf-8", newline="")
                 source, units, unresolved = generate(root, 1)
                 self.assertEqual((units, unresolved), (1, 0))
-                self.assertNotIn("KeEnterCriticalRegion", source)
+                self.assertNotIn("KeInitializeApc", source)
 
     def test_pragma_body_cannot_satisfy_xstart_mapping(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -664,7 +664,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
                     root = Path(tmp)
                     (root / "ppc_recomp_shared.h").write_text(
                         "#if " + condition + newline +
-                        "PPC_EXTERN_FUNC(__imp__KeEnterCriticalRegion);" + newline +
+                        "PPC_EXTERN_FUNC(__imp__KeInitializeApc);" + newline +
                         "#endif" + newline +
                         "PPC_EXTERN_FUNC(__imp__XamInputGetState);" + newline,
                         encoding="utf-8", newline="")
@@ -678,7 +678,7 @@ class PrivateLinkStubsTests(unittest.TestCase):
                         "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
                     source, units, unresolved = generate(root, 1)
                     self.assertEqual((units, unresolved), (1, 0))
-                    self.assertNotIn("KeEnterCriticalRegion", source)
+                    self.assertNotIn("KeInitializeApc", source)
 
 
 

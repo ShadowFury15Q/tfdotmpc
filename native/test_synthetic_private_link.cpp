@@ -39,7 +39,7 @@ int main() {
             memory.find_function(0x82500004U)(context, memory.base());
         } catch (const std::runtime_error& error) {
             unresolved_import_reported =
-                std::string(error.what()).find("__imp__KeEnterCriticalRegion")
+                std::string(error.what()).find("__imp__KeInitializeApc")
                 != std::string::npos;
         }
         fail_if(!unresolved_import_reported,

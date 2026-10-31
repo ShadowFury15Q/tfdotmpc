@@ -22,6 +22,7 @@ GuestMemory* guest_memory = nullptr;
 std::unordered_map<std::uint32_t, std::shared_ptr<Section>> registry;
 std::atomic<std::uint32_t> next_thread_token{1};
 thread_local std::uint32_t thread_token = next_thread_token.fetch_add(1);
+thread_local std::uint32_t critical_region_depth = 0;
 constexpr std::uint32_t kSectionBytes = 28;
 void validate(std::uint32_t addr) {
     if (!guest_memory || !addr || (addr & 3) ||
@@ -62,9 +63,23 @@ std::shared_ptr<Section> get(std::uint32_t addr) {
     return section;
 }
 }
+void kernel_enter_critical_region() {
+    if (critical_region_depth == 0xFFFFFFFFU)
+        throw std::runtime_error("Xbox critical region nesting overflow");
+    ++critical_region_depth;
+}
+void kernel_leave_critical_region() {
+    if (!critical_region_depth)
+        throw std::runtime_error("Xbox KeLeaveCriticalRegion without matching enter");
+    --critical_region_depth;
+}
+std::uint32_t kernel_critical_region_depth() {
+    return critical_region_depth;
+}
 void bind_kernel_critical_sections(GuestMemory* memory) {
     std::lock_guard lock(registry_mutex);
     registry.clear();
+    critical_region_depth = 0;
     guest_memory = memory;
 }
 void kernel_initialize_critical_section(std::uint32_t addr, std::uint32_t spin_count) {
