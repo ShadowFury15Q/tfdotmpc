@@ -13,3 +13,14 @@ PPC_FUNC(__imp__NetDll_XNetCleanup) {
     (void)base;
     ctx.r3.u64 = dotm::xnet_bound_cleanup(ctx.r3.u32);
 }
+
+// Xbox 360 NetDll_WSAStartup(caller, requested_version, X_WSADATA*).
+PPC_FUNC(__imp__NetDll_WSAStartup) {
+    (void)base;
+    ctx.r3.u64 = dotm::xnet_bound_wsa_startup(ctx.r3.u32,
+        static_cast<std::uint16_t>(ctx.r4.u32), ctx.r5.u32);
+}
+PPC_FUNC(__imp__NetDll_WSACleanup) {
+    (void)base;
+    ctx.r3.u64 = dotm::xnet_bound_wsa_cleanup(ctx.r3.u32);
+}

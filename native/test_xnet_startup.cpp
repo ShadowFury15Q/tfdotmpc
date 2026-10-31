@@ -7,6 +7,8 @@
 
 PPC_EXTERN_FUNC(__imp__NetDll_XNetStartup);
 PPC_EXTERN_FUNC(__imp__NetDll_XNetCleanup);
+PPC_EXTERN_FUNC(__imp__NetDll_WSAStartup);
+PPC_EXTERN_FUNC(__imp__NetDll_WSACleanup);
 namespace {
 void require(bool ok, const char* message) {
     if (!ok) throw std::runtime_error(message);
@@ -65,6 +67,39 @@ int main() {
     __imp__NetDll_XNetStartup(ctx, memory.base());
     require(ctx.r3.u32 == dotm::kXNetSuccess && host.reference_count() == 1 &&
             host.configuration()[0] == 0, "Null params select Xbox defaults");
+    constexpr std::uint32_t wsadata = ptr + 0x100U;
+    ctx.r3.u64 = 1;
+    ctx.r4.u64 = 0x0202;
+    ctx.r5.u64 = wsadata;
+    __imp__NetDll_WSAStartup(ctx, memory.base());
+    require(ctx.r3.u32 == dotm::kXNetSuccess && host.wsa_reference_count() == 1,
+            "Host Winsock 2.2 initialization failed");
+    const auto* out = memory.address(wsadata);
+    require(out[0] == 2 && out[1] == 2 && out[2] == 2 && out[3] == 2,
+            "Xbox WSADATA versions must be big-endian 2.2");
+    require(out[4] != 0 && out[396] == 0 && out[397] == 0 &&
+            out[398] == 0 && out[399] == 0,
+            "Xbox WSADATA description and vendor pointer");
+    ctx.r3.u64 = 1;
+    ctx.r4.u64 = 0x0202;
+    ctx.r5.u64 = ptr + 4096 - 16;
+    __imp__NetDll_WSAStartup(ctx, memory.base());
+    require(ctx.r3.u32 == dotm::kXNetFault && host.wsa_reference_count() == 1,
+            "WSAStartup rejects uncommitted guest WSADATA span");
+    ctx.r3.u64 = 1;
+    ctx.r4.u64 = 0;
+    ctx.r5.u64 = wsadata;
+    __imp__NetDll_WSAStartup(ctx, memory.base());
+    require(ctx.r3.u32 == dotm::kXNetVersionNotSupported && host.wsa_reference_count() == 1,
+            "WSAStartup rejects unsupported socket API version");
+    ctx.r3.u64 = 1;
+    __imp__NetDll_WSACleanup(ctx, memory.base());
+    require(ctx.r3.u32 == dotm::kXNetSuccess && host.wsa_reference_count() == 0,
+            "WSACleanup releases host network reference");
+    ctx.r3.u64 = 1;
+    __imp__NetDll_WSACleanup(ctx, memory.base());
+    require(ctx.r3.u32 == dotm::kXNetNotInitialized,
+            "WSACleanup rejects unmatched calls");
     dotm::bind_xnet_startup(nullptr, nullptr);
     ctx.r3.u64 = 1;
     ctx.r4.u64 = ptr;

@@ -219,6 +219,9 @@ endif()
 # Xbox 360 XNet configuration and initialization are independent of host sockets.
 add_library(dotm_xnet_startup STATIC xnet_startup.cpp)
 target_link_libraries(dotm_xnet_startup PUBLIC dotm_guest_memory Threads::Threads)
+if(WIN32)
+  target_link_libraries(dotm_xnet_startup PUBLIC ws2_32)
+endif()
 add_executable(dotm_xnet_startup_ppc_test test_xnet_startup.cpp xnet_ppc_import.cpp)
 target_include_directories(dotm_xnet_startup_ppc_test PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures/private_link
