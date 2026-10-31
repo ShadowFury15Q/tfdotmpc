@@ -133,7 +133,7 @@ int main() {
         // Original DOTM also calls NtOpenFile with FILE_OPEN_FOR_BACKUP_INTENT
         // and synchronous options 0x4020 / 0x4040. These must use the real
         // title file, not a fail-fast unresolved PPC import.
-        ctx.r3.u64 = handle_out; ctx.r4.u64 = 0x00100100U;
+        ctx.r3.u64 = handle_out; ctx.r4.u64 = 0x00100080U;
         ctx.r5.u64 = attrs; ctx.r6.u64 = iosb;
         ctx.r7.u64 = 7; ctx.r8.u64 = 0x4020U;
         __imp__NtOpenFile(ctx, m.base());
@@ -154,7 +154,7 @@ int main() {
         ctx.r3.u64 = opened;
         __imp__NtClose(ctx, m.base());
         check(ctx.r3.u32 == 0, "NtOpenFile handle closes through NtClose");
-        ctx.r3.u64 = handle_out; ctx.r4.u64 = 0x00100100U;
+        ctx.r3.u64 = handle_out; ctx.r4.u64 = 0x00100080U;
         ctx.r5.u64 = attrs; ctx.r6.u64 = iosb;
         ctx.r7.u64 = 7; ctx.r8.u64 = 0x4040U;
         __imp__NtOpenFile(ctx, m.base());
@@ -169,7 +169,7 @@ int main() {
         __imp__NtOpenFile(ctx, m.base());
         check(ctx.r3.u32 == 0xC0000022U,
               "NtOpenFile must deny host write access");
-        ctx.r4.u64 = 0x00100100U; ctx.r8.u64 = 0x4060U;
+        ctx.r4.u64 = 0x00100080U; ctx.r8.u64 = 0x4060U;
         __imp__NtOpenFile(ctx, m.base());
         check(ctx.r3.u32 == 0xC00000BBU,
               "NtOpenFile rejects conflicting synchronous options");
