@@ -2,6 +2,7 @@
 #include "guest_memory.hpp"
 #include "guest_virtual_allocator.hpp"
 #include "kernel_guest_memory.hpp"
+#include "gpu_engines.hpp"
 #include "kernel_critical_sections.hpp"
 #include "kernel_mutant.hpp"
 #include "kernel_thread.hpp"
@@ -59,6 +60,7 @@ struct ScopedHostBindings {
                        dotm::XamInputHost& input,
                        dotm::XamLaunchDataHost& launch_data) {
         dotm::bind_kernel_guest_memory(&memory, &allocator);
+        dotm::bind_gpu_engines(&memory);
         dotm::bind_kernel_critical_sections(&memory);
         dotm::bind_kernel_mutants(&memory);
         dotm::bind_kernel_threads(&memory);
@@ -78,6 +80,7 @@ struct ScopedHostBindings {
         // Xbox runtime bindings and the guest address space are still valid.
         dotm::cancel_kernel_mutant_waiters();
         dotm::bind_kernel_threads(nullptr);
+        dotm::bind_gpu_engines(nullptr);
         dotm::bind_kernel_mutants(nullptr);
         dotm::bind_xam_launch_data(nullptr, nullptr);
         dotm::bind_xnet_startup(nullptr, nullptr);
