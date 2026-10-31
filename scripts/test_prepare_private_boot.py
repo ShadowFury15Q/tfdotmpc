@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """No proprietary files: validate safe staging and original-entry checks."""
 import sys
+import hashlib
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import struct
@@ -90,6 +92,30 @@ class PrivateBootTests(unittest.TestCase):
             # No original binary or PPC translation unit is copied into repo.
             self.assertEqual(list((repo / "native").iterdir()),
                              [repo / "native" / "CMakeLists.txt"])
+
+    def test_private_original_boot_zip_sha256_and_no_overwrite(self):
+        with TemporaryDirectory() as t:
+            root = Path(t)
+            content = b"synthetic-only TOC test bytes"
+            name = "TransGame/Xbox360TOC.txt"
+            manifest = {"files": [{"path": name, "bytes": len(content),
+                                   "sha256": hashlib.sha256(content).hexdigest()}]}
+            with zipfile.ZipFile(root / "DOTM_BOOT_RESOURCES.zip", "w") as z:
+                z.writestr(name, content)
+                z.writestr("DOTM_BOOT_RESOURCES_HASHES.json", json.dumps(manifest))
+            output = root / "private" / "native_boot"
+            staged = p.staged_boot_resources(root, output)
+            self.assertEqual((staged / name).read_bytes(), content)
+            self.assertEqual(p.staged_boot_resources(root, output), staged)
+            (staged / name).write_bytes(b"modified")
+            with self.assertRaisesRegex(ValueError, "Refusing to overwrite"):
+                p.staged_boot_resources(root, output)
+            (staged / name).unlink()
+            with zipfile.ZipFile(root / "DOTM_BOOT_RESOURCES.zip", "w") as z:
+                z.writestr(name, b"corrupted bytes")
+                z.writestr("DOTM_BOOT_RESOURCES_HASHES.json", json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "SHA256 mismatch"):
+                p.staged_boot_resources(root, output)
 
     def test_invalid_original_xex_refused(self):
         with TemporaryDirectory() as t:
