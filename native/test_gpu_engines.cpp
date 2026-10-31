@@ -57,6 +57,9 @@ int main() {
         ctx.r7.u64 = image + 64;
         __imp__VdInitializeEngines(ctx, memory.base());
         check(ctx.r3.u32 == 1, "PPC r3-r7 GPU initialization ABI");
+        check(dotm::vd_bound_read_gpu_register(0x714U / 4U) == 0U &&
+              dotm::vd_bound_read_gpu_mmio_register(0x714U / 4U) == 0U,
+              "GPU initialization clears prior direct PPC MMIO register writes");
         auto state = dotm::vd_bound_gpu_snapshot();
         check(state.initialized && state.startup_callback == image + 128 &&
               state.startup_context == 0xCAFE &&
@@ -316,6 +319,10 @@ int main() {
         __imp__VdShutdownEngines(ctx, memory.base());
         check(!dotm::vd_bound_gpu_snapshot().initialized,
               "VdShutdownEngines clears real command processor state");
+        check(dotm::vd_bound_read_gpu_register(0x123U) == 0U &&
+              dotm::vd_bound_read_gpu_mmio_register(0x123U) == 0U &&
+              memory.committed_range(0x7FC80000U, 0x80000U),
+              "GPU shutdown clears both register views without unmapping PPC MMIO");
         ctx.r3.u64 = 0x4F810001U;
         ctx.r4.u64 = image + 128;
         ctx.r5.u64 = 0;
