@@ -326,13 +326,25 @@ def generate(directory: Path, minimum_units: int = 697) -> tuple[str, int, int]:
     lines = [
         '#include "ppc_recomp_shared.h"',
         '#include <stdexcept>',
+        '#include <cstdio>',
         '// PRIVATE LINK PROBE ONLY: unresolved PPC imports throw diagnostic errors.',
         '// These are not implemented Xbox kernel, XAM or register-save semantics.',
+        'namespace {',
+        '[[noreturn]] void fail_unresolved(const char* name, const PPCContext& ctx) {',
+        '    char message[320]{};',
+        '    std::snprintf(message, sizeof(message),',
+        '        "Unimplemented PPC external: %s (LR=0x%08X, r3=0x%08X, r4=0x%08X, r5=0x%08X, r6=0x%08X, r7=0x%08X, r8=0x%08X)",',
+        '        name, static_cast<unsigned>(ctx.lr),',
+        '        ctx.r3.u32, ctx.r4.u32, ctx.r5.u32,',
+        '        ctx.r6.u32, ctx.r7.u32, ctx.r8.u32);',
+        '    throw std::runtime_error(message);',
+        '}',
+        '}',
     ]
     for name in unresolved:
         lines.extend([
             f"PPC_FUNC({name}) {{",
-            f'    throw std::runtime_error("Unimplemented PPC external: {name}");',
+            f'    fail_unresolved("{name}", ctx);',
             "}",
         ])
     return "\n".join(lines) + "\n", len(units), len(unresolved)
