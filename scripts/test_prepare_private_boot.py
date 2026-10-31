@@ -70,11 +70,18 @@ class PrivateBootTests(unittest.TestCase):
             pe = output / "original_title.pe"
             xex = output / "default.xex"
             commands = []
+            def record(command, env=None):
+                commands.append((command, env))
+            (root / "TransGame").mkdir()
+            (root / "TransGame" / "Xbox360TOC.txt").write_text("synthetic TOC")
             with patch.object(p.shutil, "which", return_value="/mock/tool"), \
-                 patch.object(p, "checked", side_effect=commands.append):
-                p.boot(repo, output, ppc, pe, xex, root / "simde")
+                 patch.object(p, "checked", side_effect=record):
+                p.boot(repo, root, output, ppc, pe, xex, root / "simde", None)
             self.assertEqual(len(commands), 3)
-            configure, build, run = commands
+            (configure, config_env), (build, build_env), (run, run_env) = commands
+            self.assertIsNone(config_env)
+            self.assertIsNone(build_env)
+            self.assertEqual(run_env["DOTM_GAME_ROOT"], str(root.resolve()))
             self.assertIn("-DDOTM_PRIVATE_PPC_DIR=" + str(ppc), configure)
             self.assertIn("-DDOTM_PRIVATE_PE_FILE=" + str(pe), configure)
             self.assertIn("-DDOTM_SIMDE_INCLUDE_DIR=" + str(root / "simde"), configure)
