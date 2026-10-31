@@ -6,6 +6,7 @@
 #include "kernel_mutant.hpp"
 #include "kernel_thread.hpp"
 #include "kernel_file_cache.hpp"
+#include "kernel_file_io.hpp"
 #include "kernel_rtl_memory.hpp"
 #include "xex_optional_header.hpp"
 #include "xex_title_boot.hpp"
@@ -61,6 +62,8 @@ struct ScopedHostBindings {
         dotm::bind_kernel_mutants(&memory);
         dotm::bind_kernel_threads(&memory);
         dotm::bind_kernel_file_cache(&file_cache_);
+        const char* game_root = std::getenv("DOTM_GAME_ROOT");
+        dotm::bind_kernel_file_io(&memory, game_root ? game_root : "");
         dotm::bind_kernel_rtl_memory(&memory);
         dotm::bind_xex_optional_header(&memory);
         dotm::bind_xex_system_modules(&memory);
@@ -79,6 +82,7 @@ struct ScopedHostBindings {
         dotm::bind_xex_system_modules(nullptr);
         dotm::bind_xex_optional_header(nullptr);
         dotm::bind_kernel_rtl_memory(nullptr);
+        dotm::bind_kernel_file_io(nullptr, "");
         dotm::bind_kernel_file_cache(nullptr);
         dotm::bind_kernel_critical_sections(nullptr);
         dotm::bind_kernel_guest_memory(nullptr, nullptr);

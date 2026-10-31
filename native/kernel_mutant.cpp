@@ -1,5 +1,6 @@
 #include "kernel_mutant.hpp"
 #include "kernel_thread.hpp"
+#include "kernel_file_io.hpp"
 #include "guest_memory.hpp"
 #include <algorithm>
 #include <atomic>
@@ -439,6 +440,8 @@ std::uint32_t nt_bound_close_mutant(std::uint32_t handle) {
         std::lock_guard lock(registry_mutex);
         if (handles.erase(handle) || event_handles.erase(handle)) return kSuccess;
     }
+    if (handle >= 0xF9000000U && handle < 0xFA000000U)
+        return nt_bound_close_file(handle);
     return nt_bound_close_thread(handle);
 }
 }
