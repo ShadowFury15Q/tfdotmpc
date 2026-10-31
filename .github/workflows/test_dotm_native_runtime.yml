@@ -48,7 +48,7 @@ jobs:
       - name: Run host unit tests
         shell: pwsh
         run: |
-          ctest --test-dir native-build --output-on-failure
+          ctest --test-dir native-build --output-on-failure --timeout 60
           if ($LASTEXITCODE -ne 0) { throw "Native runtime tests failed" }
 
       - name: Test private link stub generator (synthetic sources only)
