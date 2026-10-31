@@ -24,6 +24,18 @@ std::uint32_t mm_query_statistics_guest(
     GuestMemory& memory, const GuestVirtualAllocator& allocator,
     std::uint32_t output_pointer);
 std::uint32_t mm_bound_query_statistics(std::uint32_t output_pointer);
+// Xbox 360 physical allocation ABI: six PPC register arguments r3-r8.
+// Physical offsets share one 512 MiB budget; distinct guest views are
+// currently host-backed independently (GPU alias coherence is still pending).
+std::uint32_t mm_bound_allocate_physical_memory_ex(
+    std::uint32_t flags, std::uint32_t bytes, std::uint32_t protect,
+    std::uint32_t min_address, std::uint32_t max_address,
+    std::uint32_t alignment);
+void mm_bound_free_physical_memory(std::uint32_t type,
+                                   std::uint32_t guest_address);
+std::uint32_t mm_bound_query_physical_allocation_size(
+    std::uint32_t guest_address);
+std::uint32_t mm_bound_get_physical_address(std::uint32_t guest_address);
 // Xbox 360 ExGetXConfigSetting with 16-bit big-endian required-size output.
 std::uint32_t ex_get_xconfig_setting_guest(GuestMemory& memory,
     std::uint16_t category, std::uint16_t setting, std::uint32_t buffer,
