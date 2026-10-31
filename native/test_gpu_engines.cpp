@@ -11,6 +11,7 @@ PPC_EXTERN_FUNC(__imp__VdSetGraphicsInterruptCallback);
 PPC_EXTERN_FUNC(__imp__VdInitializeRingBuffer);
 PPC_EXTERN_FUNC(__imp__VdEnableRingBufferRPtrWriteBack);
 PPC_EXTERN_FUNC(__imp__VdSetSystemCommandBufferGpuIdentifierAddress);
+PPC_EXTERN_FUNC(__imp__KiApcNormalRoutineNop);
 
 namespace {
 void check(bool condition, const char* message) {
@@ -46,6 +47,44 @@ int main() {
               state.pfp_microcode_fingerprint && state.me_microcode_fingerprint &&
               state.pfp_microcode_fingerprint != state.me_microcode_fingerprint,
               "Original guest microcode fingerprint and callback captured");
+        // Original DOTM's xboxkrnl ordinal 0x1DF call passes 19 words
+        // starting with PM4_ME_INIT (0xC0114800).
+        constexpr std::uint32_t me_command = image + 256;
+        auto me_word = [](std::uint32_t i) -> std::uint32_t {
+            return i == 0 ? 0xC0114800U : 0xA5A5A5A5U + i * 0x10203U;
+        };
+        for (std::uint32_t i = 0; i < 19; ++i) {
+            const auto word = me_word(i);
+            auto* b = memory.address(me_command + i * 4);
+            b[0] = static_cast<std::uint8_t>(word >> 24);
+            b[1] = static_cast<std::uint8_t>(word >> 16);
+            b[2] = static_cast<std::uint8_t>(word >> 8);
+            b[3] = static_cast<std::uint8_t>(word);
+        }
+        ctx.r3.u64 = me_command;
+        ctx.r4.u64 = 19;
+        __imp__KiApcNormalRoutineNop(ctx, memory.base());
+        state = dotm::vd_bound_gpu_snapshot();
+        check(state.me_init_command_verified &&
+              state.me_init_command_word_count == 19 &&
+              state.me_init_command_fingerprint != 0 &&
+              !state.me_init_packet_submitted &&
+              ctx.r3.u32 == me_command,
+              "Ordinal 0x1DF verifies actual guest ME_INIT without clobbering PPC r3");
+        const auto verified_hash = state.me_init_command_fingerprint;
+        memory.address(me_command)[2] = 0x38; // corrupt PM4 opcode 0x48
+        expect_throw([&] { __imp__KiApcNormalRoutineNop(ctx, memory.base()); },
+                     "Wrong PM4 opcode rejected by Xbox ME_INIT verifier");
+        memory.address(me_command)[2] = 0x48;
+        check(dotm::vd_bound_gpu_snapshot().me_init_command_fingerprint == verified_hash,
+              "Rejected ME_INIT packet preserves previously verified state");
+        ctx.r4.u64 = 18;
+        expect_throw([&] { __imp__KiApcNormalRoutineNop(ctx, memory.base()); },
+                     "Wrong ME_INIT word count rejected");
+        ctx.r3.u64 = image + 4092;
+        ctx.r4.u64 = 19;
+        expect_throw([&] { __imp__KiApcNormalRoutineNop(ctx, memory.base()); },
+                     "ME_INIT command cannot read past committed guest memory");
         ctx.r3.u64 = image + 132;
         ctx.r4.u64 = 0xF00DU;
         __imp__VdSetGraphicsInterruptCallback(ctx, memory.base());
@@ -197,6 +236,21 @@ int main() {
                      "Malformed REG_RMW must not be accepted");
         check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 8,
               "Malformed REG_RMW leaves GPU read pointer unchanged");
+        // The physical GPU ring must receive the same 19-word ME_INIT packet.
+        for (std::uint32_t i = 0; i < 19; ++i)
+            put(8 + i, me_word(i));
+        check(dotm::vd_bound_execute_ring(27) == 1 &&
+              dotm::vd_bound_gpu_snapshot().me_init_packet_submitted &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 27 &&
+              memory.address(writeback)[3] == 27,
+              "Verified original ME_INIT packet submitted through physical GPU ring");
+        for (std::uint32_t i = 0; i < 19; ++i)
+            put(27 + i, me_word(i));
+        put(28, 0xDEADBEEFU);
+        expect_throw([&] { dotm::vd_bound_execute_ring(46); },
+                     "Altered ME_INIT packet must fail before GPU read pointer advances");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 27,
+              "Unverified ME_INIT DMA packet remains pending");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
