@@ -1,0 +1,71 @@
+name: Build XenonRecomp tools (Windows)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'patches/**'
+      - 'scripts/**'
+      - '.github/workflows/build_xenon_tools.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  windows_tools:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - name: Checkout DOTM open-source patches
+        uses: actions/checkout@v4
+
+      - name: Enable MSVC environment on cloud runner
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - name: Get sources and build XenonRecomp in cloud
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $llvmDir = 'C:\Program Files\LLVM\bin'
+          if (Test-Path "$llvmDir\clang-cl.exe") {
+            $env:PATH = "$llvmDir;$env:PATH"
+          }
+          $clang = Get-Command clang-cl.exe -ErrorAction SilentlyContinue
+          if (-not $clang) {
+            throw 'clang-cl.exe is not installed on the hosted Windows runner'
+          }
+          $v = (& clang-cl --version | Select-Object -First 1)
+          Write-Host "Compiler: $v"
+          if ($v -match 'version\s+(\d+)' -and [int]$Matches[1] -lt 18) {
+            throw 'Hosted LLVM is older than 18; use a newer runner or install LLVM on the runner'
+          }
+          cmake --version
+          ninja --version
+          git clone --depth 1 --recurse-submodules https://github.com/hedge-dev/XenonRecomp.git XenonRecomp
+          if ($LASTEXITCODE -ne 0) { throw 'git clone failed' }
+          python scripts/apply_xenon_patch.py XenonRecomp
+          if ($LASTEXITCODE -ne 0) { throw 'DOTM instruction patch failed' }
+          cmake -S XenonRecomp -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed' }
+          cmake --build build --config Release --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw 'CMake build failed' }
+          New-Item -ItemType Directory -Force dist\bin | Out-Null
+          foreach ($n in @('XenonRecomp.exe', 'XenonAnalyse.exe')) {
+            $f = Get-ChildItem build -Recurse -File -Filter $n | Select-Object -First 1
+            if (-not $f) { throw "$n missing after build" }
+            Copy-Item $f.FullName "dist\bin\$n"
+          }
+          $header = Get-ChildItem XenonRecomp -Recurse -File -Filter 'ppc_context.h' | Select-Object -First 1
+          if (-not $header) { throw 'ppc_context.h not found' }
+          Copy-Item $header.FullName 'dist\bin\ppc_context.h'
+          Compress-Archive -Path 'dist\bin\*' -DestinationPath 'dist\XenonRecomp_Windows_Tools_DOTM_Patched.zip' -Force
+
+      - name: Upload compiled Windows tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: XenonRecomp-Windows-Tools-DOTM-PATCHED
+          path: dist/XenonRecomp_Windows_Tools_DOTM_Patched.zip
+          if-no-files-found: error

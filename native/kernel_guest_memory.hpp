@@ -1,0 +1,50 @@
+#pragma once
+#include "guest_virtual_allocator.hpp"
+#include <cstdint>
+
+namespace dotm {
+// Restricted Xbox 360 kernel virtual-memory bridge. All guest pointers and
+// pointed-to 32-bit values are big-endian. Unsupported flags fail closed.
+inline constexpr std::uint32_t kNtSuccess = 0x00000000U;
+inline constexpr std::uint32_t kNtInvalidParameter = 0xC000000DU;
+inline constexpr std::uint32_t kNtNoMemory = 0xC0000017U;
+inline constexpr std::uint32_t kNtNotSupported = 0xC00000BBU;
+inline constexpr std::uint32_t kNtMemoryNotAllocated = 0xC00000A0U;
+
+std::uint32_t nt_allocate_virtual_memory_guest(
+    GuestMemory& memory, GuestVirtualAllocator& allocator,
+    std::uint32_t base_pointer, std::uint32_t size_pointer,
+    std::uint32_t allocation_type, std::uint32_t protect,
+    std::uint32_t debug_memory);
+std::uint32_t nt_query_virtual_memory_guest(
+    GuestMemory& memory, const GuestVirtualAllocator& allocator,
+    std::uint32_t address, std::uint32_t output_pointer);
+// Xbox 360 MM_STATISTICS: 104 bytes, big-endian words.
+std::uint32_t mm_query_statistics_guest(
+    GuestMemory& memory, const GuestVirtualAllocator& allocator,
+    std::uint32_t output_pointer);
+std::uint32_t mm_bound_query_statistics(std::uint32_t output_pointer);
+std::uint32_t nt_free_virtual_memory_guest(
+    GuestMemory& memory, GuestVirtualAllocator& allocator,
+    std::uint32_t base_pointer, std::uint32_t size_pointer,
+    std::uint32_t free_type, std::uint32_t debug_memory);
+
+// Host service binding for recompiled PowerPC imports. Caller must unbind
+// before destroying either object; no ownership is transferred.
+// Xbox KeQuerySystemTime: 64-bit UTC FILETIME (100 ns since 1601), big-endian.
+// The explicit-value overload supports deterministic PPC ABI regression tests.
+void ke_query_system_time_guest(GuestMemory& memory, std::uint32_t output,
+                                std::uint64_t filetime);
+void ke_bound_query_system_time(std::uint32_t output);
+void bind_kernel_guest_memory(GuestMemory* memory,
+                              GuestVirtualAllocator* allocator) noexcept;
+std::uint32_t nt_bound_allocate_virtual_memory(
+    std::uint32_t base_pointer, std::uint32_t size_pointer,
+    std::uint32_t allocation_type, std::uint32_t protect,
+    std::uint32_t debug_memory);
+std::uint32_t nt_bound_query_virtual_memory(
+    std::uint32_t address, std::uint32_t output_pointer);
+std::uint32_t nt_bound_free_virtual_memory(
+    std::uint32_t base_pointer, std::uint32_t size_pointer,
+    std::uint32_t free_type, std::uint32_t debug_memory);
+}
