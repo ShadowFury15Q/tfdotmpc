@@ -1,6 +1,7 @@
 #pragma once
 #include "guest_virtual_allocator.hpp"
 #include <cstdint>
+#include <optional>
 
 namespace dotm {
 // Restricted Xbox 360 kernel virtual-memory bridge. All guest pointers and
@@ -36,6 +37,9 @@ void mm_bound_free_physical_memory(std::uint32_t type,
 std::uint32_t mm_bound_query_physical_allocation_size(
     std::uint32_t guest_address);
 std::uint32_t mm_bound_get_physical_address(std::uint32_t guest_address);
+// Resolve GPU DMA offsets only within a real physical allocation.
+std::optional<std::uint32_t> mm_bound_resolve_physical_range(
+    std::uint32_t physical_address, std::uint32_t length);
 // Xbox 360 ExGetXConfigSetting with 16-bit big-endian required-size output.
 std::uint32_t ex_get_xconfig_setting_guest(GuestMemory& memory,
     std::uint16_t category, std::uint16_t setting, std::uint32_t buffer,
