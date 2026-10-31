@@ -10,6 +10,7 @@
 #include <string>
 
 PPC_EXTERN_FUNC(__imp__NtCreateFile);
+PPC_EXTERN_FUNC(__imp__NtOpenFile);
 PPC_EXTERN_FUNC(__imp__NtReadFile);
 PPC_EXTERN_FUNC(__imp__NtQueryInformationFile);
 PPC_EXTERN_FUNC(__imp__NtClose);
@@ -129,6 +130,49 @@ int main() {
         ctx.r3.u64 = handle; ctx.r9.u64 = 1;
         __imp__NtReadFile(ctx, m.base());
         check(ctx.r3.u32 == 0xC0000008U, "Closed handle rejected");
+        // Original DOTM also calls NtOpenFile with FILE_OPEN_FOR_BACKUP_INTENT
+        // and synchronous options 0x4020 / 0x4040. These must use the real
+        // title file, not a fail-fast unresolved PPC import.
+        ctx.r3.u64 = handle_out; ctx.r4.u64 = 0x00100100U;
+        ctx.r5.u64 = attrs; ctx.r6.u64 = iosb;
+        ctx.r7.u64 = 7; ctx.r8.u64 = 0x4020U;
+        __imp__NtOpenFile(ctx, m.base());
+        check(ctx.r3.u32 == 0 && get32(m, iosb) == 0 &&
+              get32(m, iosb + 4) == 1,
+              "NtOpenFile 0x4020 opens original title file read-only");
+        const auto opened = get32(m, handle_out);
+        check(opened != handle && opened >= 0xF9000000U,
+              "NtOpenFile allocates independent host-backed handle");
+        ctx.r3.u64 = opened; ctx.r4.u64 = 0; ctx.r5.u64 = 0;
+        ctx.r6.u64 = 0; ctx.r7.u64 = iosb; ctx.r8.u64 = buffer;
+        ctx.r9.u64 = 8; ctx.r10.u64 = 0;
+        put32(m, stack + 84, 0);
+        __imp__NtReadFile(ctx, m.base());
+        check(ctx.r3.u32 == 0 && get32(m, iosb + 4) == 8 &&
+              std::string(reinterpret_cast<char*>(m.address(buffer)), 8) == "Original",
+              "NtOpenFile handle reads original host file bytes");
+        ctx.r3.u64 = opened;
+        __imp__NtClose(ctx, m.base());
+        check(ctx.r3.u32 == 0, "NtOpenFile handle closes through NtClose");
+        ctx.r3.u64 = handle_out; ctx.r4.u64 = 0x00100100U;
+        ctx.r5.u64 = attrs; ctx.r6.u64 = iosb;
+        ctx.r7.u64 = 7; ctx.r8.u64 = 0x4040U;
+        __imp__NtOpenFile(ctx, m.base());
+        check(ctx.r3.u32 == 0, "NtOpenFile 0x4040 supported");
+        const auto opened_second = get32(m, handle_out);
+        ctx.r3.u64 = opened_second;
+        __imp__NtClose(ctx, m.base());
+        check(ctx.r3.u32 == 0, "NtOpenFile 0x4040 handle closed");
+        ctx.r3.u64 = handle_out; ctx.r4.u64 = 0x40000000U;
+        ctx.r5.u64 = attrs; ctx.r6.u64 = iosb;
+        ctx.r7.u64 = 7; ctx.r8.u64 = 0x4020U;
+        __imp__NtOpenFile(ctx, m.base());
+        check(ctx.r3.u32 == 0xC0000022U,
+              "NtOpenFile must deny host write access");
+        ctx.r4.u64 = 0x00100100U; ctx.r8.u64 = 0x4060U;
+        __imp__NtOpenFile(ctx, m.base());
+        check(ctx.r3.u32 == 0xC00000BBU,
+              "NtOpenFile rejects conflicting synchronous options");
         // Traversal must not allow access outside the mounted title directory.
         const std::string escape = "D:\\..\\outside.txt";
         m.address(str)[1] = std::uint8_t(escape.size());
