@@ -27,6 +27,11 @@ struct GpuEngineSnapshot {
     std::uint32_t ring_read_pointer_dwords = 0;
     std::uint64_t packets_executed = 0;
     std::uint64_t register_writes = 0;
+    // ME_INIT command (PM4 opcode 0x48) verified from original guest memory.
+    bool me_init_command_verified = false;
+    bool me_init_packet_submitted = false;
+    std::uint32_t me_init_command_word_count = 0;
+    std::uint64_t me_init_command_fingerprint = 0;
     std::uint32_t system_command_buffer_gpu_identifier_address = 0;
 };
 
@@ -41,6 +46,11 @@ void vd_bound_shutdown_engines() noexcept;
 void vd_bound_set_graphics_interrupt_callback(
     std::uint32_t callback, std::uint32_t context);
 void vd_bound_set_system_command_buffer_gpu_identifier_address(std::uint32_t address);
+// xboxkrnl ordinal 0x1DF: VdVerifyMEInitCommand, mislabeled as
+// KiApcNormalRoutineNop in some Xbox 360 export name tables.
+// Validate the original big-endian PM4_ME_INIT command in guest memory.
+void vd_bound_verify_me_init_command(std::uint32_t guest_address,
+                                     std::uint32_t word_count);
 void vd_bound_initialize_ring_buffer(
     std::uint32_t physical_address, std::uint32_t size_log2);
 void vd_bound_enable_ring_buffer_read_pointer_writeback(
