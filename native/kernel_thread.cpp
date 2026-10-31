@@ -56,6 +56,7 @@ GuestMemory* bound_memory = nullptr;
 std::unordered_map<std::uint32_t, std::shared_ptr<ThreadState>> handles;
 std::vector<std::shared_ptr<ThreadState>> all_threads;
 thread_local bool executing_guest_thread = false;
+thread_local std::weak_ptr<ThreadState> active_guest_thread;
 
 // Xenon hardware-thread affinity is encoded in creation flags bits 24..29.
 // Map each requested logical Xenon CPU to a CPU permitted by the host process.
@@ -239,6 +240,7 @@ std::uint32_t nt_bound_create_thread(std::uint32_t handle_output,
                     }
                     if (!cancelled_before_start) {
                     executing_guest_thread = true;
+                    active_guest_thread = state;
                     try {
                         exit_code = entry(*memory, pcr, top - 0x100U,
                                           api_startup, start_address, parameter);
@@ -253,6 +255,7 @@ std::uint32_t nt_bound_create_thread(std::uint32_t handle_output,
                                      state->thread_id);
                         exit_code = 0xC0000005U;
                     }
+                    active_guest_thread.reset();
                     executing_guest_thread = false;
                     }
                     {
@@ -363,13 +366,29 @@ std::uint32_t nt_bound_delay_execution_thread(std::uint32_t wait_mode,
     // therefore completes normally rather than fabricating an APC wakeup.
     // Split extremely long waits to avoid steady_clock::now() overflow in
     // implementations of sleep_for; this remains an actual blocking delay.
+    // Guest workers must be interruptible on failed _xstart teardown.
+    // A 24-hour sleep_for would otherwise keep bind_kernel_threads(nullptr)
+    // blocked on join, even though its stop flag has been set.
     constexpr auto kMaxChunk = std::chrono::hours(24);
+    constexpr std::uint32_t kCancelled = 0xC0000120U;
+    const auto active = active_guest_thread.lock();
     auto remaining = *duration;
     while (remaining > std::chrono::nanoseconds::zero()) {
         const auto chunk = std::min(remaining,
             std::chrono::duration_cast<std::chrono::nanoseconds>(kMaxChunk));
-        std::this_thread::sleep_for(chunk);
+        if (active) {
+            std::unique_lock lock(active->mutex);
+            if (active->cv.wait_for(lock, chunk,
+                    [&] { return active->stop_requested; }))
+                throw ThreadExit{kCancelled};
+        } else {
+            std::this_thread::sleep_for(chunk);
+        }
         remaining -= chunk;
+    }
+    if (active) {
+        std::lock_guard lock(active->mutex);
+        if (active->stop_requested) throw ThreadExit{kCancelled};
     }
     if (*duration == std::chrono::nanoseconds::zero())
         std::this_thread::yield();
