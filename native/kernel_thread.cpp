@@ -344,6 +344,38 @@ std::uint32_t nt_bound_wait_thread(std::uint32_t handle, std::uint32_t timeout) 
     return kSuccess;
 }
 
+// Xbox 360 KeDelayExecutionThread consumes a signed, big-endian 100 ns
+// interval. Negative values are relative; positive values are absolute
+// NT system timestamps (100 ns since 1601-01-01 UTC).
+std::uint32_t nt_bound_delay_execution_thread(std::uint32_t wait_mode,
+    std::uint32_t alertable, std::uint32_t interval) {
+    if (wait_mode > 1U || alertable > 1U || (interval & 7U))
+        return kInvalidParameter;
+    std::optional<std::chrono::nanoseconds> duration;
+    {
+        std::lock_guard lock(registry_mutex);
+        if (!bound_memory || !interval ||
+            !valid_guest(*bound_memory, interval, 8, false))
+            return kInvalidParameter;
+        duration = read_timeout(*bound_memory, interval);
+    }
+    // The current runtime has no queued guest APCs. An alertable delay
+    // therefore completes normally rather than fabricating an APC wakeup.
+    // Split extremely long waits to avoid steady_clock::now() overflow in
+    // implementations of sleep_for; this remains an actual blocking delay.
+    constexpr auto kMaxChunk = std::chrono::hours(24);
+    auto remaining = *duration;
+    while (remaining > std::chrono::nanoseconds::zero()) {
+        const auto chunk = std::min(remaining,
+            std::chrono::duration_cast<std::chrono::nanoseconds>(kMaxChunk));
+        std::this_thread::sleep_for(chunk);
+        remaining -= chunk;
+    }
+    if (*duration == std::chrono::nanoseconds::zero())
+        std::this_thread::yield();
+    return kSuccess;
+}
+
 std::uint32_t nt_bound_close_thread(std::uint32_t handle) {
     std::lock_guard lock(registry_mutex);
     return handles.erase(handle) ? kSuccess : kInvalidHandle;

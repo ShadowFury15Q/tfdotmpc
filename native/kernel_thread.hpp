@@ -16,5 +16,7 @@ std::uint32_t nt_bound_resume_thread(std::uint32_t handle,
 std::uint32_t nt_bound_wait_thread(std::uint32_t handle,
     std::uint32_t timeout);
 std::uint32_t nt_bound_close_thread(std::uint32_t handle);
+std::uint32_t nt_bound_delay_execution_thread(std::uint32_t wait_mode,
+    std::uint32_t alertable, std::uint32_t interval);
 [[noreturn]] void nt_bound_terminate_thread(std::uint32_t exit_code);
 }

@@ -8,6 +8,7 @@
 #include <stdexcept>
 PPC_EXTERN_FUNC(__imp__ExCreateThread);
 PPC_EXTERN_FUNC(__imp__NtResumeThread);
+PPC_EXTERN_FUNC(__imp__KeDelayExecutionThread);
 PPC_EXTERN_FUNC(__imp__ExTerminateThread);
 PPC_EXTERN_FUNC(__imp__NtWaitForSingleObjectEx);
 PPC_EXTERN_FUNC(__imp__NtClose);
@@ -88,6 +89,27 @@ int main() {
     // wake and join it rather than deadlock on its initial suspend gate.
     create(c, memory, 1U);
     check(c.r3.u32 == 0);
+    // Original CRT sub_8351EE58 calls this kernel delay with a signed
+    // big-endian relative timeout. Verify the PPC register ABI directly.
+    write32(memory, 0x70100030U, 0xFFFFFFFFU);
+    write32(memory, 0x70100034U, 0xFFFFB1E0U); // -20000 x 100 ns = 2 ms
+    c.r3.u64 = 1; c.r4.u64 = 0; c.r5.u64 = 0x70100030U;
+    __imp__KeDelayExecutionThread(c, memory.base());
+    check(c.r3.u32 == 0);
+    write32(memory, 0x70100030U, 0);
+    write32(memory, 0x70100034U, 0); // expired absolute timestamp
+    c.r3.u64 = 0; c.r4.u64 = 1; c.r5.u64 = 0x70100030U;
+    __imp__KeDelayExecutionThread(c, memory.base());
+    check(c.r3.u32 == 0);
+    c.r3.u64 = 2; c.r4.u64 = 0; c.r5.u64 = 0x70100030U;
+    __imp__KeDelayExecutionThread(c, memory.base());
+    check(c.r3.u32 == 0xC000000DU);
+    c.r3.u64 = 1; c.r4.u64 = 2; c.r5.u64 = 0x70100030U;
+    __imp__KeDelayExecutionThread(c, memory.base());
+    check(c.r3.u32 == 0xC000000DU);
+    c.r3.u64 = 1; c.r4.u64 = 0; c.r5.u64 = 0x70100031U;
+    __imp__KeDelayExecutionThread(c, memory.base());
+    check(c.r3.u32 == 0xC000000DU);
     dotm::bind_kernel_mutants(nullptr);
     dotm::bind_kernel_threads(nullptr);
     check(calls.load() == 1);

@@ -29,6 +29,11 @@ PPC_FUNC(__imp__NtResumeThread) {
     (void)base;
     ctx.r3.u64 = dotm::nt_bound_resume_thread(ctx.r3.u32, ctx.r4.u32);
 }
+PPC_FUNC(__imp__KeDelayExecutionThread) {
+    (void)base;
+    ctx.r3.u64 = dotm::nt_bound_delay_execution_thread(ctx.r3.u32,
+        ctx.r4.u32, ctx.r5.u32);
+}
 PPC_FUNC(__imp__ExTerminateThread) {
     (void)base;
     dotm::nt_bound_terminate_thread(ctx.r3.u32);
