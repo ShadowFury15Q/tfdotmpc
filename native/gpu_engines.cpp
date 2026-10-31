@@ -292,9 +292,12 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
             engine.register_writes += 2;
         } else if (type == 3) {
             const auto opcode = (header >> 8) & 0x7FU;
-            if (header & 1U)
-                throw std::runtime_error("Predicated Xenos PM4 packet requires bin state");
-            if (opcode == 0x48U) {
+            // Type-3 predicate bit gates execution by the Xenos tile-bin
+            // selection, but the packet itself must still be consumed.
+            // A masked-out draw must not be mistaken for an executed draw.
+            if ((header & 1U) && !(engine.bin_mask & engine.bin_select)) {
+                // Predicate false: leave all GPU state and guest memory intact.
+            } else if (opcode == 0x48U) {
                 // Submit the exact ME_INIT packet that the title previously
                 // passed to xboxkrnl ordinal 0x1DF for verification.
                 if (!engine.me_init_command_verified ||
@@ -320,6 +323,29 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 const auto or_mask = at(first + 2);
                 write_gpu_register(index, (read_gpu_register(index) & and_mask) | or_mask);
                 ++engine.register_writes;
+            } else if (opcode == 0x50U || opcode == 0x51U) {
+                // SET_BIN_MASK / SET_BIN_SELECT: high dword followed by low.
+                if (payload != 2U)
+                    throw std::runtime_error("Invalid Xenos PM4 bin-mask packet size");
+                const auto value = (std::uint64_t(at(first)) << 32) | at(first + 1);
+                if (opcode == 0x50U) engine.bin_mask = value;
+                else engine.bin_select = value;
+            } else if (opcode >= 0x60U && opcode <= 0x63U) {
+                // Per-half updates preserve the other 32 bits of the bin mask
+                // or selection, as required by tiled rendering.
+                if (payload != 1U)
+                    throw std::runtime_error("Invalid Xenos PM4 bin-half packet size");
+                const auto value = std::uint64_t(at(first));
+                switch (opcode) {
+                case 0x60U: engine.bin_mask =
+                    (engine.bin_mask & 0xFFFFFFFF00000000ULL) | value; break;
+                case 0x61U: engine.bin_mask =
+                    (engine.bin_mask & 0xFFFFFFFFULL) | (value << 32); break;
+                case 0x62U: engine.bin_select =
+                    (engine.bin_select & 0xFFFFFFFF00000000ULL) | value; break;
+                case 0x63U: engine.bin_select =
+                    (engine.bin_select & 0xFFFFFFFFULL) | (value << 32); break;
+                }
             } else if (opcode == 0x55U || opcode == 0x56U || opcode == 0x2DU) {
                 const auto offset_type = at(first);
                 std::uint32_t index = offset_type & 0xFFFFU;
