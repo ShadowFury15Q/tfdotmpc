@@ -67,6 +67,10 @@ std::uint32_t ke_bound_dbg_print(std::uint32_t format,
     const std::array<std::uint32_t, 7>& args);
 void bind_kernel_guest_memory(GuestMemory* memory,
                               GuestVirtualAllocator* allocator) noexcept;
+// Xbox 360 KeInitializeDpc: initialize a 32-byte PPC KDPC with the
+// deferred routine and context in big-endian guest memory.
+void ke_bound_initialize_dpc(std::uint32_t dpc, std::uint32_t routine,
+                             std::uint32_t context);
 // Xbox 360 ExAllocatePool/ExAllocatePoolWithTag/ExFreePool: page-backed
 // guest allocations with exact-pointer ownership and synchronized release.
 std::uint32_t ex_bound_allocate_pool(std::uint32_t pool_type,

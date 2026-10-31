@@ -485,6 +485,29 @@ std::optional<std::uint32_t> mm_bound_resolve_physical_range(
     return guest;
 }
 
+void ke_bound_initialize_dpc(std::uint32_t dpc, std::uint32_t routine,
+                             std::uint32_t context) {
+    std::lock_guard lock(binding_mutex);
+    constexpr std::uint32_t kDpcSize = 0x20U;
+    const std::uint64_t begin = dpc;
+    const std::uint64_t end = begin + kDpcSize;
+    const std::uint64_t table = GuestMemory::kFunctionTableOffset;
+    if (!bound_memory || (dpc & 3U) || begin < 0x10000U ||
+        end > GuestMemory::kAddressSpaceSize ||
+        (begin < table + GuestMemory::kFunctionTableSize && end > table) ||
+        !bound_memory->committed_range(dpc, kDpcSize) ||
+        !routine || (routine & 3U) || routine < GuestMemory::kCodeBase ||
+        std::uint64_t(routine) >= std::uint64_t(GuestMemory::kCodeBase) +
+            GuestMemory::kCodeSize)
+        throw std::runtime_error("KeInitializeDpc: invalid guest DPC or PPC routine");
+    auto* data = bound_memory->address(dpc);
+    std::memset(data, 0, kDpcSize);
+    data[0] = 0x13U; // DpcObject
+    data[1] = 1U;    // MediumImportance
+    write_be32(*bound_memory, dpc + 0x0CU, routine);
+    write_be32(*bound_memory, dpc + 0x10U, context);
+}
+
 std::uint32_t ex_bound_allocate_pool(std::uint32_t pool_type,
                                      std::uint32_t bytes, std::uint32_t tag) {
     std::lock_guard lock(binding_mutex);

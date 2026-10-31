@@ -7,6 +7,7 @@
 
 PPC_EXTERN_FUNC(__imp__NtAllocateVirtualMemory);
 PPC_EXTERN_FUNC(__imp__ExAllocatePool);
+PPC_EXTERN_FUNC(__imp__KeInitializeDpc);
 PPC_EXTERN_FUNC(__imp__ExAllocatePoolWithTag);
 PPC_EXTERN_FUNC(__imp__ExFreePool);
 PPC_EXTERN_FUNC(__imp__NtFreeVirtualMemory);
@@ -39,6 +40,32 @@ int main() {
         memory.commit(ptr, 4096);
         dotm::bind_kernel_guest_memory(&memory, &heap);
         PPCContext ctx{};
+        // The original startup calls KeInitializeDpc before creating workers.
+        // Validate its PPC register ABI and 32-bit big-endian KDPC layout.
+        constexpr std::uint32_t dpc = ptr + 0x200U;
+        constexpr std::uint32_t routine = 0x8251D7B8U;
+        std::memset(memory.address(dpc), 0xCD, 32);
+        ctx.r3.u32 = dpc; ctx.r4.u32 = routine; ctx.r5.u32 = ptr + 0x80U;
+        __imp__KeInitializeDpc(ctx, memory.base());
+        check(ctx.r3.u32 == dpc && memory.address(dpc)[0] == 0x13U &&
+              memory.address(dpc)[1] == 1U && read32(memory, dpc + 4U) == 0U &&
+              read32(memory, dpc + 0x0CU) == routine &&
+              read32(memory, dpc + 0x10U) == ptr + 0x80U &&
+              read32(memory, dpc + 0x1CU) == 0U,
+              "KeInitializeDpc writes a real big-endian KDPC and preserves void ABI");
+        bool bad_dpc = false;
+        try {
+            ctx.r3.u32 = dpc + 1U;
+            __imp__KeInitializeDpc(ctx, memory.base());
+        } catch (const std::runtime_error&) { bad_dpc = true; }
+        check(bad_dpc, "KeInitializeDpc rejects misaligned guest objects");
+        bad_dpc = false;
+        try {
+            ctx.r3.u32 = dpc; ctx.r4.u32 = 0xDEADBEEFU;
+            __imp__KeInitializeDpc(ctx, memory.base());
+        } catch (const std::runtime_error&) { bad_dpc = true; }
+        check(bad_dpc && read32(memory, dpc + 0x0CU) == routine,
+              "KeInitializeDpc rejects invalid callbacks without mutation");
         // Original kernel pool imports return guest pointers, with a real
         // page-backed allocation, writable bytes and exact-pointer free.
         ctx.r3.u32 = 0; ctx.r4.u32 = 37;

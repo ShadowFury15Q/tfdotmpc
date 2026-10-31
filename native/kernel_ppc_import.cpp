@@ -11,6 +11,12 @@
 #include <x86intrin.h>
 #endif
 
+// KeInitializeDpc(PKDPC, PKDEFERRED_ROUTINE, DeferredContext) is void.
+PPC_FUNC(__imp__KeInitializeDpc) {
+    (void)base;
+    dotm::ke_bound_initialize_dpc(ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
+}
+
 // Xbox 360 pool allocations are guest-addressed, not host malloc pointers.
 // ExFreePool is void: the original PPC caller retains r3.
 PPC_FUNC(__imp__ExAllocatePool) {
