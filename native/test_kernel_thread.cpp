@@ -17,6 +17,8 @@ PPC_EXTERN_FUNC(__imp__NtClose);
 namespace {
 std::atomic<unsigned> calls{0};
 std::atomic<bool> delay_entered{false};
+std::atomic<bool> wait_entered{false};
+std::atomic<std::uint32_t> blocked_handle{0};
 void check(bool condition) { if (!condition) throw std::runtime_error("Xbox guest thread ABI regression"); }
 void write32(dotm::GuestMemory& m, std::uint32_t a, std::uint32_t v) {
     for (int i = 0; i < 4; ++i) m.address(a)[i] = std::uint8_t(v >> (24 - 8 * i));
@@ -28,6 +30,7 @@ std::uint32_t read32(const std::uint8_t* p) {
 constexpr std::uint32_t kStartup = 0x82501000U;
 constexpr std::uint32_t kEntry = 0x82501100U;
 constexpr std::uint32_t kDelayEntry = 0x82501200U;
+constexpr std::uint32_t kWaitEntry = 0x82501300U;
 PPC_FUNC(test_thread_entry) {
     check(ctx.r13.u32 >= 0x78000000U && ctx.r1.u32 >= 0x72000000U);
     check(ctx.r3.u32 == 0x12345678U);
@@ -35,6 +38,14 @@ PPC_FUNC(test_thread_entry) {
     check(read32(base + kthread + 0x14CU) == 2U);
     calls.fetch_add(1);
     ctx.r3.u64 = 0x55;
+}
+PPC_FUNC(test_thread_wait_entry) {
+    wait_entered.store(true, std::memory_order_release);
+    ctx.r3.u64 = blocked_handle.load(std::memory_order_acquire);
+    ctx.r4.u64 = 1;
+    ctx.r5.u64 = 0;
+    ctx.r6.u64 = 0;
+    __imp__NtWaitForSingleObjectEx(ctx, base);
 }
 PPC_FUNC(test_thread_delay_entry) {
     delay_entered.store(true, std::memory_order_release);
@@ -64,9 +75,9 @@ int main() {
     dotm::GuestMemory memory;
     memory.commit(0x70100000U, 4096);
     memory.initialize_function_table(test_thread_entry);
-    const std::array<dotm::FunctionEntry, 3> mapping{{
+    const std::array<dotm::FunctionEntry, 4> mapping{{
         {kStartup, test_thread_startup}, {kEntry, test_thread_entry},
-        {kDelayEntry, test_thread_delay_entry}}};
+        {kDelayEntry, test_thread_delay_entry}, {kWaitEntry, test_thread_wait_entry}}};
     memory.install_functions(mapping);
     dotm::bind_kernel_threads(&memory);
     dotm::bind_kernel_mutants(&memory);
@@ -101,6 +112,7 @@ int main() {
     // wake and join it rather than deadlock on its initial suspend gate.
     create(c, memory, 1U);
     check(c.r3.u32 == 0);
+    blocked_handle.store(read32(memory.address(0x70100000U)), std::memory_order_release);
     // Original CRT sub_8351EE58 calls this kernel delay with a signed
     // big-endian relative timeout. Verify the PPC register ABI directly.
     write32(memory, 0x70100030U, 0xFFFFFFFFU);
@@ -135,8 +147,20 @@ int main() {
     c.r9.u64 = 0;
     __imp__ExCreateThread(c, memory.base());
     check(c.r3.u32 == 0);
+    // A second worker waits forever on the suspended thread handle.
+    // Both the delay and the thread-handle wait must be cancelled on unbind.
+    c.r3.u64 = 0x70100058U;
+    c.r4.u64 = 0x20000U;
+    c.r5.u64 = 0x7010005CU;
+    c.r6.u64 = 0;
+    c.r7.u64 = kWaitEntry;
+    c.r8.u64 = 0;
+    c.r9.u64 = 0;
+    __imp__ExCreateThread(c, memory.base());
+    check(c.r3.u32 == 0);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (!delay_entered.load(std::memory_order_acquire)) {
+    while (!delay_entered.load(std::memory_order_acquire) ||
+           !wait_entered.load(std::memory_order_acquire)) {
         check(std::chrono::steady_clock::now() < deadline);
         std::this_thread::yield();
     }
