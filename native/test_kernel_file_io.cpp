@@ -13,6 +13,7 @@ PPC_EXTERN_FUNC(__imp__NtCreateFile);
 PPC_EXTERN_FUNC(__imp__NtOpenFile);
 PPC_EXTERN_FUNC(__imp__NtReadFile);
 PPC_EXTERN_FUNC(__imp__NtQueryInformationFile);
+PPC_EXTERN_FUNC(__imp__NtQueryFullAttributesFile);
 PPC_EXTERN_FUNC(__imp__NtClose);
 namespace {
 void check(bool ok, const char* message) {
@@ -62,6 +63,43 @@ int main() {
         dotm::bind_kernel_file_io(&m, root);
         PPCContext ctx{};
         ctx.r1.u64 = stack;
+        // Original sub_8351DB28 queries attributes without opening a handle.
+        ctx.r3.u64 = attrs;
+        ctx.r4.u64 = buffer;
+        __imp__NtQueryFullAttributesFile(ctx, m.base());
+        check(ctx.r3.u32 == 0 && get32(m, buffer + 44) == 22 &&
+              get32(m, buffer + 48) == 0x80U &&
+              get32(m, buffer + 36) == 4096U &&
+              get32(m, buffer + 52) == 0U,
+              "NtQueryFullAttributesFile returns original title size and attributes");
+        const std::string directory = "D:\\TRANSGAME";
+        m.address(str)[1] = std::uint8_t(directory.size());
+        m.address(str)[3] = std::uint8_t(directory.size() + 1);
+        for (std::size_t i = 0; i < directory.size(); ++i)
+            m.address(name)[i] = directory[i];
+        ctx.r3.u64 = attrs; ctx.r4.u64 = buffer;
+        __imp__NtQueryFullAttributesFile(ctx, m.base());
+        check(ctx.r3.u32 == 0 && get32(m, buffer + 48) == 0x10U &&
+              get32(m, buffer + 44) == 0U,
+              "NtQueryFullAttributesFile identifies original title directories");
+        const std::string absent = "D:\\transgame\\missing.txt";
+        m.address(str)[1] = std::uint8_t(absent.size());
+        m.address(str)[3] = std::uint8_t(absent.size() + 1);
+        for (std::size_t i = 0; i < absent.size(); ++i)
+            m.address(name)[i] = absent[i];
+        ctx.r3.u64 = attrs; ctx.r4.u64 = buffer;
+        __imp__NtQueryFullAttributesFile(ctx, m.base());
+        check(ctx.r3.u32 == 0xC0000034U,
+              "NtQueryFullAttributesFile rejects missing original files");
+        m.address(str)[1] = std::uint8_t(guest.size());
+        m.address(str)[3] = std::uint8_t(guest.size() + 1);
+        for (std::size_t i = 0; i < guest.size(); ++i)
+            m.address(name)[i] = guest[i];
+        ctx.r3.u64 = attrs; ctx.r4.u64 = 0x3000U;
+        __imp__NtQueryFullAttributesFile(ctx, m.base());
+        check(ctx.r3.u32 == 0xC000000DU,
+              "NtQueryFullAttributesFile rejects unmapped output");
+
         ctx.r3.u64 = handle_out; ctx.r4.u64 = 0x80100080U;
         ctx.r5.u64 = attrs; ctx.r6.u64 = iosb; ctx.r7.u64 = 0;
         ctx.r8.u64 = 1; ctx.r9.u64 = 1; ctx.r10.u64 = 1;
