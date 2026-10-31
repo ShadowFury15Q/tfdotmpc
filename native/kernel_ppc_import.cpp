@@ -11,6 +11,21 @@
 #include <x86intrin.h>
 #endif
 
+// Xbox 360 pool allocations are guest-addressed, not host malloc pointers.
+// ExFreePool is void: the original PPC caller retains r3.
+PPC_FUNC(__imp__ExAllocatePool) {
+    (void)base;
+    ctx.r3.u64 = dotm::ex_bound_allocate_pool(ctx.r3.u32, ctx.r4.u32, 0U);
+}
+PPC_FUNC(__imp__ExAllocatePoolWithTag) {
+    (void)base;
+    ctx.r3.u64 = dotm::ex_bound_allocate_pool(ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
+}
+PPC_FUNC(__imp__ExFreePool) {
+    (void)base;
+    dotm::ex_bound_free_pool(ctx.r3.u32);
+}
+
 // Xbox 360 kernel ABI: five 32-bit PPC register arguments, NTSTATUS in r3.
 PPC_FUNC(__imp__NtAllocateVirtualMemory) {
     ctx.r3.u64 = dotm::nt_bound_allocate_virtual_memory(

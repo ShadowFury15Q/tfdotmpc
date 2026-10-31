@@ -67,6 +67,11 @@ std::uint32_t ke_bound_dbg_print(std::uint32_t format,
     const std::array<std::uint32_t, 7>& args);
 void bind_kernel_guest_memory(GuestMemory* memory,
                               GuestVirtualAllocator* allocator) noexcept;
+// Xbox 360 ExAllocatePool/ExAllocatePoolWithTag/ExFreePool: page-backed
+// guest allocations with exact-pointer ownership and synchronized release.
+std::uint32_t ex_bound_allocate_pool(std::uint32_t pool_type,
+                                     std::uint32_t bytes, std::uint32_t tag);
+void ex_bound_free_pool(std::uint32_t address);
 std::uint32_t nt_bound_allocate_virtual_memory(
     std::uint32_t base_pointer, std::uint32_t size_pointer,
     std::uint32_t allocation_type, std::uint32_t protect,

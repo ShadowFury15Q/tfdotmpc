@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstring>
 #include <map>
+#include <unordered_map>
 #include <mutex>
 #include <new>
 #include <stdexcept>
@@ -28,6 +29,12 @@ constexpr std::uint64_t kXboxLargePageSize = 0x10000ULL;
 std::mutex binding_mutex;
 GuestMemory* bound_memory = nullptr;
 GuestVirtualAllocator* bound_allocator = nullptr;
+struct PoolAllocation {
+    std::uint32_t requested_bytes;
+    std::uint32_t tag;
+};
+std::unordered_map<std::uint32_t, PoolAllocation> pool_allocations;
+
 // Physical allocations are keyed by the 512 MiB physical offset. The three
 // Xbox physical views use different page granularities but share this budget.
 constexpr std::uint64_t kPhysicalBytes = 0x20000000ULL;
@@ -371,6 +378,7 @@ void bind_kernel_guest_memory(GuestMemory* memory,
         }
         physical_blocks.clear();
     }
+    pool_allocations.clear();
     bound_memory = memory && allocator ? memory : nullptr;
     bound_allocator = memory && allocator ? allocator : nullptr;
 }
@@ -475,6 +483,43 @@ std::optional<std::uint32_t> mm_bound_resolve_physical_range(
     const auto guest = it->second.guest_address + static_cast<std::uint32_t>(delta);
     if (!bound_memory->committed_range(guest, length)) return std::nullopt;
     return guest;
+}
+
+std::uint32_t ex_bound_allocate_pool(std::uint32_t pool_type,
+                                     std::uint32_t bytes, std::uint32_t tag) {
+    std::lock_guard lock(binding_mutex);
+    // Windows/Xbox POOL_TYPE: nonpaged/paged and cache-aligned variants.
+    // Types 2/6 require a fatal allocation on exhaustion; reject these until
+    // the kernel bugcheck path is available rather than silently returning 0.
+    if (!bound_allocator || pool_type == 2U || pool_type == 3U ||
+        pool_type == 6U || pool_type > 6U)
+        return 0;
+    try {
+        const auto address = bound_allocator->allocate(bytes ? bytes : 1U);
+        if (!address) return 0;
+        try {
+            const auto [it, inserted] = pool_allocations.emplace(
+                *address, PoolAllocation{bytes, tag});
+            if (!inserted) throw std::runtime_error("Duplicate Xbox pool address");
+        } catch (...) {
+            bound_allocator->release(*address);
+            throw;
+        }
+        return *address;
+    } catch (const std::bad_alloc&) {
+        return 0;
+    }
+}
+void ex_bound_free_pool(std::uint32_t address) {
+    std::lock_guard lock(binding_mutex);
+    if (!bound_allocator)
+        throw std::runtime_error("ExFreePool: guest allocator not bound");
+    const auto it = pool_allocations.find(address);
+    if (it == pool_allocations.end())
+        throw std::runtime_error("ExFreePool: invalid or already freed guest pointer");
+    if (!bound_allocator->release(address))
+        throw std::runtime_error("ExFreePool: guest release failed");
+    pool_allocations.erase(it);
 }
 
 std::uint32_t nt_bound_allocate_virtual_memory(

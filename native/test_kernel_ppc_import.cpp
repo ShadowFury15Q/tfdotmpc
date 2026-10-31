@@ -6,6 +6,9 @@
 #include <stdexcept>
 
 PPC_EXTERN_FUNC(__imp__NtAllocateVirtualMemory);
+PPC_EXTERN_FUNC(__imp__ExAllocatePool);
+PPC_EXTERN_FUNC(__imp__ExAllocatePoolWithTag);
+PPC_EXTERN_FUNC(__imp__ExFreePool);
 PPC_EXTERN_FUNC(__imp__NtFreeVirtualMemory);
 PPC_EXTERN_FUNC(__imp__NtQueryVirtualMemory);
 PPC_EXTERN_FUNC(__imp__KeGetCurrentProcessType);
@@ -36,6 +39,36 @@ int main() {
         memory.commit(ptr, 4096);
         dotm::bind_kernel_guest_memory(&memory, &heap);
         PPCContext ctx{};
+        // Original kernel pool imports return guest pointers, with a real
+        // page-backed allocation, writable bytes and exact-pointer free.
+        ctx.r3.u32 = 0; ctx.r4.u32 = 37;
+        __imp__ExAllocatePool(ctx, memory.base());
+        const auto pool_a = ctx.r3.u32;
+        check(pool_a == 0x40000000U && heap.allocation_count() == 1,
+              "ExAllocatePool allocates real guest memory");
+        memory.address(pool_a)[36] = 0xA5;
+        ctx.r3.u32 = 4; ctx.r4.u32 = 5000; ctx.r5.u32 = 0x54455354U;
+        __imp__ExAllocatePoolWithTag(ctx, memory.base());
+        const auto pool_b = ctx.r3.u32;
+        check(pool_b == 0x40001000U && heap.allocated_bytes() == 12288U,
+              "ExAllocatePoolWithTag tracks page-rounded allocation");
+        memory.address(pool_b)[4999] = 0x5A;
+        ctx.r3.u32 = pool_a;
+        __imp__ExFreePool(ctx, memory.base());
+        check(ctx.r3.u32 == pool_a && !memory.committed_range(pool_a, 1),
+              "ExFreePool preserves void ABI and revokes guest pages");
+        bool rejected_pool_double_free = false;
+        try { __imp__ExFreePool(ctx, memory.base()); }
+        catch (const std::runtime_error&) { rejected_pool_double_free = true; }
+        check(rejected_pool_double_free, "ExFreePool rejects double free");
+        ctx.r3.u32 = pool_b;
+        __imp__ExFreePool(ctx, memory.base());
+        check(heap.allocation_count() == 0, "Tagged pool pages released");
+        ctx.r3.u32 = 3; ctx.r4.u32 = 16;
+        __imp__ExAllocatePool(ctx, memory.base());
+        check(ctx.r3.u32 == 0 && heap.allocation_count() == 0,
+              "Unsupported Xbox pool type fails without allocation");
+
 
         // _xstart calls DbgPrint with a guest format pointer and r4
         // containing a guest string pointer; host printf must never see
