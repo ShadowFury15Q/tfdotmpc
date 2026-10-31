@@ -10,6 +10,7 @@ PPC_EXTERN_FUNC(__imp__VdShutdownEngines);
 PPC_EXTERN_FUNC(__imp__VdSetGraphicsInterruptCallback);
 PPC_EXTERN_FUNC(__imp__VdInitializeRingBuffer);
 PPC_EXTERN_FUNC(__imp__VdEnableRingBufferRPtrWriteBack);
+PPC_EXTERN_FUNC(__imp__VdSetSystemCommandBufferGpuIdentifierAddress);
 
 namespace {
 void check(bool condition, const char* message) {
@@ -81,6 +82,20 @@ int main() {
               state.read_pointer_writeback_block_log2 == 6 &&
               memory.address(writeback)[0] == 0,
               "GPU read pointer writeback uses real guest physical memory");
+        // Retail driver registers the guest address of its GPU command ID.
+        ctx.r3.u64 = 0;
+        __imp__VdSetSystemCommandBufferGpuIdentifierAddress(ctx, memory.base());
+        check(dotm::vd_bound_gpu_snapshot().system_command_buffer_gpu_identifier_address == 0,
+              "Zero detaches system command-buffer GPU identifier");
+        ctx.r3.u64 = writeback;
+        __imp__VdSetSystemCommandBufferGpuIdentifierAddress(ctx, memory.base());
+        check(dotm::vd_bound_gpu_snapshot().system_command_buffer_gpu_identifier_address == writeback,
+              "Original PPC r3 registers writable guest GPU identifier address");
+        ctx.r3.u64 = 0xFFFFFFFFU;
+        expect_throw([&] { __imp__VdSetSystemCommandBufferGpuIdentifierAddress(ctx, memory.base()); },
+                     "Unmapped GPU identifier address rejected");
+        check(dotm::vd_bound_gpu_snapshot().system_command_buffer_gpu_identifier_address == writeback,
+              "Invalid GPU identifier registration leaves previous address intact");
         // Exercise actual big-endian PM4 packets from the allocated DMA ring.
         auto put = [&](std::uint32_t index, std::uint32_t value) {
             auto* b = memory.address(ring) + index * 4;

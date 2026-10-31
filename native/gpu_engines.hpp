@@ -27,6 +27,7 @@ struct GpuEngineSnapshot {
     std::uint32_t ring_read_pointer_dwords = 0;
     std::uint64_t packets_executed = 0;
     std::uint64_t register_writes = 0;
+    std::uint32_t system_command_buffer_gpu_identifier_address = 0;
 };
 
 // The binding must be removed before the guest address space is destroyed.
@@ -39,6 +40,7 @@ std::uint32_t vd_bound_initialize_engines(
 void vd_bound_shutdown_engines() noexcept;
 void vd_bound_set_graphics_interrupt_callback(
     std::uint32_t callback, std::uint32_t context);
+void vd_bound_set_system_command_buffer_gpu_identifier_address(std::uint32_t address);
 void vd_bound_initialize_ring_buffer(
     std::uint32_t physical_address, std::uint32_t size_log2);
 void vd_bound_enable_ring_buffer_read_pointer_writeback(

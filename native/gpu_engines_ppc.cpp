@@ -23,3 +23,7 @@ PPC_FUNC(__imp__VdEnableRingBufferRPtrWriteBack) {
     dotm::vd_bound_enable_ring_buffer_read_pointer_writeback(
         ctx.r3.u32, ctx.r4.u32);
 }
+PPC_FUNC(__imp__VdSetSystemCommandBufferGpuIdentifierAddress) {
+    (void)base;
+    dotm::vd_bound_set_system_command_buffer_gpu_identifier_address(ctx.r3.u32);
+}

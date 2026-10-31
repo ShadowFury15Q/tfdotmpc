@@ -46,6 +46,7 @@ NATIVE = {"__imp__ExRegisterTitleTerminateNotification", "__imp__XGetAVPack", "_
           "__imp__XGetVideoMode", "__imp__VdQueryVideoMode", "__imp__KeQueryPerformanceFrequency",
           "__imp__VdInitializeEngines", "__imp__VdShutdownEngines",
           "__imp__VdSetGraphicsInterruptCallback",
+          "__imp__VdSetSystemCommandBufferGpuIdentifierAddress",
           "__imp__VdInitializeRingBuffer",
           "__imp__VdEnableRingBufferRPtrWriteBack",
           "__imp__NtCreateFile", "__imp__NtReadFile",

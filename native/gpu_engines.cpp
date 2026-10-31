@@ -91,6 +91,16 @@ void vd_bound_set_graphics_interrupt_callback(
     engine.interrupt_callback = callback;
     engine.interrupt_context = callback ? context : 0;
 }
+void vd_bound_set_system_command_buffer_gpu_identifier_address(std::uint32_t address) {
+    std::lock_guard lock(gpu_mutex);
+    if (!engine.initialized || !guest_memory)
+        throw std::runtime_error("Xbox GPU engines are not initialized");
+    // The retail driver registers a writable guest dword, or zero to detach.
+    // Keep the address for the command processor; do not fabricate GPU IDs.
+    if (address && ((address & 3U) || !guest_memory->committed_range(address, 4)))
+        throw std::runtime_error("Invalid Xbox GPU command-buffer identifier address");
+    engine.system_command_buffer_gpu_identifier_address = address;
+}
 void vd_bound_initialize_ring_buffer(
     std::uint32_t physical_address, std::uint32_t size_log2) {
     std::lock_guard lock(gpu_mutex);
