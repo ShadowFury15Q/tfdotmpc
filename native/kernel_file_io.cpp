@@ -187,7 +187,12 @@ std::uint32_t nt_bound_read_file(std::uint32_t handle, std::uint32_t event,
     if (event || apc_routine || apc_context) return kNotSupported;
     if (guest_stack > 0xFFFFFFABU || !valid(io_status, 8, true) || (io_status & 3U) ||
         (length && !valid(buffer, length, true)) ||
-        !valid(guest_stack + 84U, 4, false) || read32(guest_stack + 84U))
+        !valid(guest_stack + 84U, 4, false))
+        return kInvalidParameter;
+    // The ninth NtReadFile argument is an optional PULONG Key, not a value.
+    // Original DOTM passes a valid non-null pointer on synchronous reads.
+    const auto key_pointer = read32(guest_stack + 84U);
+    if (key_pointer && ((key_pointer & 3U) || !valid(key_pointer, 4, false)))
         return kInvalidParameter;
     if (offset && (!valid(offset, 8, false) || (offset & 7U)))
         return kInvalidParameter;

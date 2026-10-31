@@ -92,6 +92,25 @@ int main() {
         check(ctx.r3.u32 == 0 && get32(m, iosb+4) == 8 &&
               std::string(reinterpret_cast<char*>(m.address(buffer)), 8) == "Original",
               "NtReadFile transfers actual bytes and advances position");
+        // The ninth NtReadFile argument is a PULONG Key. Original DOTM
+        // supplies a non-null pointer for synchronous file reads.
+        put32(m, stack + 84, a + 0x90);
+        put32(m, a + 0x90, 0x83940000U);
+        put32(m, a + 0xA0, 0);
+        put32(m, a + 0xA4, 0);
+        ctx.r3.u64 = handle; ctx.r9.u64 = 8; ctx.r10.u64 = a + 0xA0;
+        __imp__NtReadFile(ctx, m.base());
+        check(ctx.r3.u32 == 0 && get32(m, iosb + 4) == 8 &&
+              get32(m, a + 0x90) == 0x83940000U &&
+              std::string(reinterpret_cast<char*>(m.address(buffer)), 8) == "Original",
+              "NtReadFile accepts a valid non-null PPC Key pointer");
+        put32(m, stack + 84, 0x3000U);
+        ctx.r3.u64 = handle;
+        __imp__NtReadFile(ctx, m.base());
+        check(ctx.r3.u32 == 0xC000000DU,
+              "NtReadFile rejects an unmapped Key pointer");
+        put32(m, stack + 84, 0);
+        ctx.r10.u64 = 0;
         ctx.r3.u64 = handle; ctx.r9.u64 = 0;
         __imp__NtReadFile(ctx, m.base());
         check(ctx.r3.u32 == 0 && get32(m, iosb+4) == 0,

@@ -10,8 +10,14 @@ import re
 
 # Table metadata, not proprietary game bytes. Every target is read from the
 # owner's private PE at build time; no jump targets are baked into this tool.
-DOTM_TABLES = ((425, '__imp__sub_83294628', 0x83294628,
-                0x823C0730, 56, 0x83294970),)
+# (unit, function, start, table address, entries, branch base,
+#  entry width, branch offset multiplier). Original PPC uses halfword offsets
+#  and byte-indexed, four-byte-aligned switch tables.
+DOTM_TABLES = (
+    (425, '__imp__sub_83294628', 0x83294628, 0x823C0730, 56, 0x83294970, 2, 1),
+    (426, '__imp__sub_83298400', 0x83298400, 0x823C09D8, 25, 0x832987D8, 2, 1),
+    (426, '__imp__sub_83296E98', 0x83296E98, 0x823C0920, 12, 0x83296F70, 1, 4),
+)
 
 
 def read_pe_guest(pe: bytes, address: int, size: int) -> bytes:
@@ -42,6 +48,13 @@ def read_pe_guest(pe: bytes, address: int, size: int) -> bytes:
                 raise ValueError('Truncated PPC jump-table data')
             return pe[start:start + size]
     raise ValueError('PPC jump-table data not present in PE raw sections')
+
+
+def decode_table_targets(raw: bytes, base: int, width: int, scale: int) -> set[int]:
+    if width not in (1, 2) or scale not in (1, 4) or len(raw) % width:
+        raise ValueError('Invalid PPC jump-table entry format')
+    return {base + int.from_bytes(raw[i:i + width], 'big') * scale
+            for i in range(0, len(raw), width)}
 
 
 def patch_bctr_function(source: str, function: str, start_address: int,
@@ -92,10 +105,9 @@ def patch_bctr_function(source: str, function: str, start_address: int,
 def repair(directory: Path, pe_path: Path) -> tuple[int, int]:
     pe = pe_path.read_bytes()
     total_targets = total_labels = 0
-    for index, function, start, table_address, count, base in DOTM_TABLES:
-        raw = read_pe_guest(pe, table_address, count * 2)
-        targets = {base + int.from_bytes(raw[i:i + 2], 'big')
-                   for i in range(0, len(raw), 2)}
+    for index, function, start, table_address, count, base, width, scale in DOTM_TABLES:
+        raw = read_pe_guest(pe, table_address, count * width)
+        targets = decode_table_targets(raw, base, width, scale)
         file = directory / f'ppc_recomp.{index}.cpp'
         fixed, labels = patch_bctr_function(file.read_text(encoding='utf-8'),
                                             function, start, targets)
