@@ -91,3 +91,13 @@ PPC_FUNC(__imp__ExGetXConfigSetting) {
         static_cast<std::uint16_t>(ctx.r4.u32), ctx.r5.u32,
         static_cast<std::uint16_t>(ctx.r6.u32), ctx.r7.u32);
 }
+
+// XGetVideoMode and VdQueryVideoMode share the 48-byte Xbox X_VIDEO_MODE ABI.
+PPC_FUNC(__imp__XGetVideoMode) {
+    (void)base;
+    dotm::vd_bound_query_video_mode(ctx.r3.u32);
+}
+PPC_FUNC(__imp__VdQueryVideoMode) {
+    (void)base;
+    dotm::vd_bound_query_video_mode(ctx.r3.u32);
+}

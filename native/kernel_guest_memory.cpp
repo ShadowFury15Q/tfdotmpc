@@ -250,6 +250,20 @@ std::uint32_t ex_bound_get_xconfig_setting(std::uint16_t category,
     return ex_get_xconfig_setting_guest(*bound_memory, category, setting,
         buffer, buffer_size, required_size);
 }
+void vd_bound_query_video_mode(std::uint32_t output_pointer) {
+    std::lock_guard lock(binding_mutex);
+    constexpr std::size_t kXboxVideoModeBytes = 48;
+    if (!bound_memory || !valid_xconfig_write(*bound_memory,
+                                               output_pointer, kXboxVideoModeBytes))
+        throw std::runtime_error("Invalid Xbox X_VIDEO_MODE guest pointer");
+    // Xbox 360 retail 720p HDTV output. The native renderer will present
+    // this guest surface to the host monitor separately.
+    constexpr std::uint32_t words[12] = {
+        1280, 720, 0, 1, 1, 0x42700000U, 1, 0x4A, 1, 0, 0, 0
+    };
+    for (std::size_t i = 0; i < 12; ++i)
+        write_be32(*bound_memory, output_pointer + std::uint32_t(i * 4), words[i]);
+}
 std::uint32_t nt_free_virtual_memory_guest(
     GuestMemory& memory, GuestVirtualAllocator& allocator,
     std::uint32_t base_pointer, std::uint32_t size_pointer,

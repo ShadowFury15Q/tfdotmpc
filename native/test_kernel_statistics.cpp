@@ -5,6 +5,8 @@
 #include <stdexcept>
 PPC_EXTERN_FUNC(__imp__MmQueryStatistics);
 PPC_EXTERN_FUNC(__imp__ExGetXConfigSetting);
+PPC_EXTERN_FUNC(__imp__XGetVideoMode);
+PPC_EXTERN_FUNC(__imp__VdQueryVideoMode);
 namespace {
 void check(bool ok, const char* msg) { if (!ok) throw std::runtime_error(msg); }
 void put32(dotm::GuestMemory& m, std::uint32_t a, std::uint32_t v) {
@@ -89,6 +91,19 @@ int main() {
         __imp__ExGetXConfigSetting(ctx, memory.base());
         check(ctx.r3.u32 == 0xC00000F1U,
               "XCONFIG rejects host dispatch table output pointer");
+        ctx.r3.u64 = output + 0x200;
+        __imp__XGetVideoMode(ctx, memory.base());
+        check(get32(memory, output + 0x200) == 1280 &&
+              get32(memory, output + 0x204) == 720 &&
+              get32(memory, output + 0x20C) == 1 &&
+              get32(memory, output + 0x210) == 1 &&
+              get32(memory, output + 0x214) == 0x42700000U,
+              "Xbox 360 XGetVideoMode 720p 60 Hz big-endian layout");
+        ctx.r3.u64 = output + 0x240;
+        __imp__VdQueryVideoMode(ctx, memory.base());
+        check(get32(memory, output + 0x240) == 1280 &&
+              get32(memory, output + 0x244) == 720,
+              "VdQueryVideoMode uses the same Xbox output profile");
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
         ctx.r3.u64 = output;
         __imp__MmQueryStatistics(ctx, memory.base());
