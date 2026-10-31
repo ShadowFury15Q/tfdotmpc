@@ -110,10 +110,13 @@ std::optional<std::filesystem::path> resolve_disc_path(const std::string& guest)
     }
     return current;
 }
-// Call only while holding the file registry mutex. Both NT open APIs share
-// the same validated read-only host handle and Xbox IO_STATUS_BLOCK behavior.
-std::uint32_t open_existing_file_locked(std::uint32_t handle_out,
-    std::uint32_t attributes, std::uint32_t io_status) {
+// Resolve the original Xbox OBJECT_ATTRIBUTES/ANSI_STRING path without opening
+// a handle. NtQueryFullAttributesFile uses the same guest object namespace as
+// NtCreateFile and NtOpenFile, including Xbox's case-insensitive D: mount.
+std::uint32_t resolve_object_path_locked(std::uint32_t attributes,
+    std::filesystem::path& path) {
+    if (!valid(attributes, 12, false) || (attributes & 3U))
+        return kInvalidParameter;
     const auto root = read32(attributes);
     const auto name = read32(attributes + 4);
     const auto flags = read32(attributes + 8);
@@ -123,21 +126,71 @@ std::uint32_t open_existing_file_locked(std::uint32_t handle_out,
     const auto length = read16(name);
     const auto capacity = read16(name + 2);
     const auto text = read32(name + 4);
-    if (!length || length > capacity || length > 4096 || !valid(text, length, false))
+    if (!length || length > capacity || length > 4096 ||
+        !valid(text, length, false))
         return kInvalidParameter;
-    const std::string guest_path(reinterpret_cast<const char*>(memory->address(text)), length);
-    if (guest_path.find('\0') != std::string::npos) return kInvalidParameter;
+    const std::string guest_path(
+        reinterpret_cast<const char*>(memory->address(text)), length);
+    if (guest_path.find('\\0') != std::string::npos)
+        return kInvalidParameter;
     if (mount_root.empty())
-        throw std::runtime_error("Original Xbox D: title file requested without a mounted game directory: " +
-                                 guest_path + " (set DOTM_GAME_ROOT to extracted disc contents)");
+        throw std::runtime_error(
+            "Original Xbox D: title file requested without a mounted game directory: " +
+            guest_path + " (set DOTM_GAME_ROOT to extracted disc contents)");
     const auto resolved = resolve_disc_path(guest_path);
     if (!resolved) return kNameNotFound;
+    path = *resolved;
+    return kSuccess;
+}
+
+// FILE_NETWORK_OPEN_INFORMATION: four 64-bit timestamps, allocation size,
+// end-of-file, attributes and reserved ULONG, all Xbox big-endian.
+std::uint32_t write_network_open_information_locked(
+    const std::filesystem::path& path, std::uint32_t output) {
     std::error_code ec;
-    if (!std::filesystem::is_regular_file(*resolved, ec) || ec) return kAccessDenied;
+    const auto status = std::filesystem::status(path, ec);
+    if (ec) return kAccessDenied;
+    const bool directory = std::filesystem::is_directory(status);
+    if (!directory && !std::filesystem::is_regular_file(status))
+        return kAccessDenied;
+    const auto size = directory ? std::uint64_t(0) :
+        std::filesystem::file_size(path, ec);
+    if (ec) return kAccessDenied;
+    const auto mtime = std::filesystem::last_write_time(path, ec);
+    if (ec) return kAccessDenied;
+    const auto system_mtime = std::chrono::system_clock::now() +
+        std::chrono::duration_cast<std::chrono::system_clock::duration>(
+            mtime - std::filesystem::file_time_type::clock::now());
+    const auto unix_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        system_mtime.time_since_epoch()).count();
+    constexpr std::uint64_t epoch = 116444736000000000ULL;
+    const auto last_write = unix_ns >= 0 ?
+        epoch + static_cast<std::uint64_t>(unix_ns / 100) : 0U;
+    const auto allocation = (size + 4095U) & ~std::uint64_t(4095U);
+    write64(output, 0);
+    write64(output + 8, 0);
+    write64(output + 16, last_write);
+    write64(output + 24, 0);
+    write64(output + 32, allocation);
+    write64(output + 40, size);
+    write32(output + 48, directory ? 0x10U : 0x80U);
+    write32(output + 52, 0);
+    return kSuccess;
+}
+// Call only while holding the file registry mutex. Both NT open APIs share
+// the same validated read-only host handle and Xbox IO_STATUS_BLOCK behavior.
+std::uint32_t open_existing_file_locked(std::uint32_t handle_out,
+    std::uint32_t attributes, std::uint32_t io_status) {
+    std::filesystem::path resolved;
+    const auto status = resolve_object_path_locked(attributes, resolved);
+    if (status != kSuccess) return status;
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(resolved, ec) || ec)
+        return kAccessDenied;
     if (next_handle >= 0xF9FFFFFCU) return kNotSupported;
     auto file = std::make_shared<FileState>();
-    file->path = *resolved;
-    file->stream.open(*resolved, std::ios::binary);
+    file->path = resolved;
+    file->stream.open(resolved, std::ios::binary);
     if (!file->stream.is_open()) return kAccessDenied;
     const auto handle = next_handle;
     files.emplace(handle, std::move(file));
@@ -242,6 +295,18 @@ std::uint32_t nt_bound_read_file(std::uint32_t handle, std::uint32_t event,
     set_io_status(io_status, status, count);
     return status;
 }
+// Original DOTM sub_8351DB28 calls this before opening the file and reads
+// FILE_NETWORK_OPEN_INFORMATION.FileAttributes at output+48.
+std::uint32_t nt_bound_query_full_attributes_file(
+    std::uint32_t attributes, std::uint32_t output) {
+    std::lock_guard lock(mutex);
+    if ((output & 7U) || !valid(output, 56, true))
+        return kInvalidParameter;
+    std::filesystem::path resolved;
+    const auto status = resolve_object_path_locked(attributes, resolved);
+    if (status != kSuccess) return status;
+    return write_network_open_information_locked(resolved, output);
+}
 std::uint32_t nt_bound_query_information_file(std::uint32_t handle,
     std::uint32_t io_status, std::uint32_t output,
     std::uint32_t length, std::uint32_t info_class) {
@@ -269,28 +334,9 @@ std::uint32_t nt_bound_query_information_file(std::uint32_t handle,
             auto* tail = memory->address(output + 20);
             tail[0] = 0; tail[1] = 0; tail[2] = 0; tail[3] = 0;
         } else {
-            // FILE_NETWORK_OPEN_INFORMATION, 56 bytes. Portable host APIs
-            // expose modification time but not reliable creation/access/change.
-            const auto mtime = std::filesystem::last_write_time(file.path, ec);
-            if (ec) return kAccessDenied;
-            // MSVC's file_clock has no to_sys(); convert through a relative
-            // clock offset, supported by both Windows clang-cl and Linux Clang.
-            const auto system_mtime = std::chrono::system_clock::now() +
-                std::chrono::duration_cast<std::chrono::system_clock::duration>(
-                    mtime - std::filesystem::file_time_type::clock::now());
-            const auto unix_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                system_mtime.time_since_epoch()).count();
-            constexpr std::uint64_t epoch = 116444736000000000ULL;
-            const auto last_write = unix_ns >= 0 ?
-                epoch + static_cast<std::uint64_t>(unix_ns / 100) : 0U;
-            write64(output, 0); // CreationTime unknown
-            write64(output + 8, 0); // LastAccessTime unknown
-            write64(output + 16, last_write);
-            write64(output + 24, 0); // ChangeTime unknown
-            write64(output + 32, allocation);
-            write64(output + 40, size);
-            write32(output + 48, 0x80U); // FILE_ATTRIBUTE_NORMAL
-            write32(output + 52, 0);
+            // Share the exact 56-byte metadata layout with NtQueryFullAttributesFile.
+            const auto status = write_network_open_information_locked(file.path, output);
+            if (status != kSuccess) return status;
         }
     }
     set_io_status(io_status, kSuccess, expected);
