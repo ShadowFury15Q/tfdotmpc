@@ -13,6 +13,7 @@
 #include "native_input.hpp"
 #include "ppc_recomp_shared.h" // Includes the generated PPC configuration and context
 #include "xam_guest_input.hpp"
+#include "xnet_startup.hpp"
 #include "xam_launch_data.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -68,6 +69,7 @@ struct ScopedHostBindings {
         dotm::bind_xex_optional_header(&memory);
         dotm::bind_xex_system_modules(&memory);
         dotm::bind_xam_guest_input(&input, &memory);
+        dotm::bind_xnet_startup(&xnet_, &memory);
         dotm::bind_xam_launch_data(&launch_data, &memory);
     }
     ~ScopedHostBindings() {
@@ -78,6 +80,7 @@ struct ScopedHostBindings {
         dotm::bind_kernel_threads(nullptr);
         dotm::bind_kernel_mutants(nullptr);
         dotm::bind_xam_launch_data(nullptr, nullptr);
+        dotm::bind_xnet_startup(nullptr, nullptr);
         dotm::bind_xam_guest_input(nullptr, nullptr);
         dotm::bind_xex_system_modules(nullptr);
         dotm::bind_xex_optional_header(nullptr);
@@ -88,6 +91,7 @@ struct ScopedHostBindings {
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
     }
     dotm::KernelFileCache file_cache_;
+    dotm::XNetStartupHost xnet_;
     ScopedHostBindings(const ScopedHostBindings&) = delete;
     ScopedHostBindings& operator=(const ScopedHostBindings&) = delete;
 };

@@ -216,6 +216,16 @@ endif()
 
 # Xbox 360 XAM input ABI backed by native Win32 keyboard/mouse actions.
 # Public CI tests use no original game code or assets.
+# Xbox 360 XNet configuration and initialization are independent of host sockets.
+add_library(dotm_xnet_startup STATIC xnet_startup.cpp)
+target_link_libraries(dotm_xnet_startup PUBLIC dotm_guest_memory Threads::Threads)
+add_executable(dotm_xnet_startup_ppc_test test_xnet_startup.cpp xnet_ppc_import.cpp)
+target_include_directories(dotm_xnet_startup_ppc_test PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures/private_link
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures)
+target_link_libraries(dotm_xnet_startup_ppc_test PRIVATE dotm_xnet_startup)
+add_test(NAME xbox360_netdll_xnet_startup_original_ppc_abi COMMAND dotm_xnet_startup_ppc_test)
+
 add_library(dotm_xam_input STATIC xam_input.cpp xam_guest_input.cpp xam_system_version.cpp)
 target_include_directories(dotm_xam_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(dotm_xam_input PUBLIC dotm_native_input dotm_guest_memory)
@@ -334,7 +344,7 @@ if(DOTM_PRIVATE_PPC_DIR)
             ${DOTM_PRIVATE_PPC_UNITS}
     VERBATIM)
   add_executable(dotm_private_link_probe EXCLUDE_FROM_ALL
-    private_link_probe_main.cpp compiled_ppc_adapter.cpp xam_ppc_import.cpp xam_launch_data_ppc.cpp kernel_ppc_import.cpp kernel_tls_ppc_import.cpp kernel_critical_sections_ppc.cpp kernel_mutant_ppc.cpp kernel_thread_ppc.cpp kernel_file_cache_ppc.cpp kernel_file_io_ppc.cpp kernel_rtl_memory_ppc.cpp xex_optional_header_ppc.cpp xex_privilege_ppc.cpp
+    private_link_probe_main.cpp compiled_ppc_adapter.cpp xam_ppc_import.cpp xnet_ppc_import.cpp xam_launch_data_ppc.cpp kernel_ppc_import.cpp kernel_tls_ppc_import.cpp kernel_critical_sections_ppc.cpp kernel_mutant_ppc.cpp kernel_thread_ppc.cpp kernel_file_cache_ppc.cpp kernel_file_io_ppc.cpp kernel_rtl_memory_ppc.cpp xex_optional_header_ppc.cpp xex_privilege_ppc.cpp
     private_ppc_gpr_import.cpp private_ppc_fpr_import.cpp
     "${DOTM_PRIVATE_PPC_DIR}/ppc_func_mapping.cpp"
     ${DOTM_PRIVATE_PPC_UNITS} "${DOTM_PRIVATE_STUBS}")
@@ -359,7 +369,7 @@ if(DOTM_PRIVATE_PPC_DIR)
     <filesystem> <stdexcept> <string> <vector> <cstdio> <cstring>
     "${DOTM_PRIVATE_PPC_DIR}/ppc_recomp_shared.h")
   target_link_libraries(dotm_private_link_probe
-    PRIVATE dotm_recomp_bridge dotm_xam_input dotm_xam_launch_data dotm_kernel_guest_memory dotm_kernel_tls dotm_kernel_critical_sections dotm_kernel_mutant dotm_kernel_thread dotm_kernel_file_cache dotm_kernel_file_io dotm_kernel_rtl_memory dotm_xex_optional_header dotm_xex_privilege dotm_xex_title_boot)
+    PRIVATE dotm_recomp_bridge dotm_xam_input dotm_xnet_startup dotm_xam_launch_data dotm_kernel_guest_memory dotm_kernel_tls dotm_kernel_critical_sections dotm_kernel_mutant dotm_kernel_thread dotm_kernel_file_cache dotm_kernel_file_io dotm_kernel_rtl_memory dotm_xex_optional_header dotm_xex_privilege dotm_xex_title_boot)
   if(MSVC)
     target_compile_options(dotm_private_link_probe PRIVATE /bigobj)
   endif()
@@ -386,7 +396,7 @@ add_custom_command(
 add_executable(dotm_synthetic_private_link_test
   test_synthetic_private_link.cpp
   compiled_ppc_adapter.cpp
-  xam_ppc_import.cpp xam_launch_data_ppc.cpp kernel_ppc_import.cpp kernel_tls_ppc_import.cpp kernel_critical_sections_ppc.cpp kernel_mutant_ppc.cpp kernel_file_cache_ppc.cpp kernel_file_io_ppc.cpp kernel_rtl_memory_ppc.cpp xex_optional_header_ppc.cpp xex_privilege_ppc.cpp
+  xam_ppc_import.cpp xnet_ppc_import.cpp xam_launch_data_ppc.cpp kernel_ppc_import.cpp kernel_tls_ppc_import.cpp kernel_critical_sections_ppc.cpp kernel_mutant_ppc.cpp kernel_file_cache_ppc.cpp kernel_file_io_ppc.cpp kernel_rtl_memory_ppc.cpp xex_optional_header_ppc.cpp xex_privilege_ppc.cpp
   private_ppc_gpr_import.cpp private_ppc_fpr_import.cpp
   "${DOTM_SYNTHETIC_PPC_DIR}/ppc_func_mapping.cpp"
   "${DOTM_SYNTHETIC_PPC_DIR}/ppc_recomp.0.cpp"
@@ -395,7 +405,7 @@ target_include_directories(dotm_synthetic_private_link_test PRIVATE
   "${DOTM_SYNTHETIC_PPC_DIR}"
   "${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures")
 target_link_libraries(dotm_synthetic_private_link_test
-  PRIVATE dotm_recomp_bridge dotm_xam_input dotm_xam_launch_data dotm_guest_virtual_allocator dotm_kernel_guest_memory dotm_kernel_tls dotm_kernel_critical_sections dotm_kernel_mutant dotm_kernel_file_cache dotm_kernel_rtl_memory dotm_xex_optional_header dotm_xex_privilege dotm_xex_title_boot)
+  PRIVATE dotm_recomp_bridge dotm_xam_input dotm_xnet_startup dotm_xam_launch_data dotm_guest_virtual_allocator dotm_kernel_guest_memory dotm_kernel_tls dotm_kernel_critical_sections dotm_kernel_mutant dotm_kernel_file_cache dotm_kernel_rtl_memory dotm_xex_optional_header dotm_xex_privilege dotm_xex_title_boot)
 # Run endian-precise Xbox 360 FPR ABI tests without proprietary PPC units.
 add_executable(dotm_ppc_nonvolatile_fpr_test test_ppc_nonvolatile_fpr.cpp)
 add_test(NAME xbox360_original_ppc_fpr_save_restore COMMAND dotm_ppc_nonvolatile_fpr_test)
@@ -408,7 +418,7 @@ add_test(NAME synthetic_full_ppc_link_and_xam_import
 add_executable(dotm_synthetic_private_boot_probe
   private_link_probe_main.cpp
   compiled_ppc_adapter.cpp
-  xam_ppc_import.cpp xam_launch_data_ppc.cpp kernel_ppc_import.cpp kernel_tls_ppc_import.cpp kernel_critical_sections_ppc.cpp kernel_mutant_ppc.cpp kernel_file_cache_ppc.cpp kernel_file_io_ppc.cpp kernel_rtl_memory_ppc.cpp xex_optional_header_ppc.cpp xex_privilege_ppc.cpp
+  xam_ppc_import.cpp xnet_ppc_import.cpp xam_launch_data_ppc.cpp kernel_ppc_import.cpp kernel_tls_ppc_import.cpp kernel_critical_sections_ppc.cpp kernel_mutant_ppc.cpp kernel_file_cache_ppc.cpp kernel_file_io_ppc.cpp kernel_rtl_memory_ppc.cpp xex_optional_header_ppc.cpp xex_privilege_ppc.cpp
   private_ppc_gpr_import.cpp private_ppc_fpr_import.cpp
   "${DOTM_SYNTHETIC_PPC_DIR}/ppc_func_mapping.cpp"
   "${DOTM_SYNTHETIC_PPC_DIR}/ppc_recomp.0.cpp"
@@ -419,7 +429,7 @@ target_include_directories(dotm_synthetic_private_boot_probe PRIVATE
   "${DOTM_SYNTHETIC_PPC_DIR}"
   "${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures")
 target_link_libraries(dotm_synthetic_private_boot_probe PRIVATE
-  dotm_recomp_bridge dotm_xam_input dotm_xam_launch_data dotm_guest_virtual_allocator
+  dotm_recomp_bridge dotm_xam_input dotm_xnet_startup dotm_xam_launch_data dotm_guest_virtual_allocator
   dotm_kernel_guest_memory dotm_kernel_tls dotm_kernel_critical_sections dotm_kernel_mutant dotm_kernel_file_cache dotm_kernel_rtl_memory dotm_xex_optional_header dotm_xex_privilege dotm_xex_title_boot)
 add_test(NAME synthetic_private_boot_link_probe
   COMMAND dotm_synthetic_private_boot_probe)

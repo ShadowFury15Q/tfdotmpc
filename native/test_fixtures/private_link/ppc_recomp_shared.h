@@ -7,6 +7,8 @@
 PPC_EXTERN_FUNC(_xstart);
 PPC_EXTERN_FUNC(__imp__XamInputGetState);
 PPC_EXTERN_FUNC(__imp__XamInputGetCapabilities);
+PPC_EXTERN_FUNC(__imp__NetDll_XNetStartup);
+PPC_EXTERN_FUNC(__imp__NetDll_XNetCleanup);
 PPC_EXTERN_FUNC(__imp__XamLoaderSetLaunchData);
 PPC_EXTERN_FUNC(__imp__XamLoaderGetLaunchDataSize);
 PPC_EXTERN_FUNC(__imp__XamLoaderGetLaunchData);

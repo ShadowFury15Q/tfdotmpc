@@ -4,6 +4,7 @@
 #include "kernel_guest_memory.hpp"
 #include "native_input.hpp"
 #include "xam_guest_input.hpp"
+#include "xnet_startup.hpp"
 #include "ppc_recomp_shared.h"
 #include <cstdint>
 #include <cstdio>
@@ -50,6 +51,17 @@ int main() {
         fail_if(!allocated.has_value(), "Guest heap could not allocate XAM state");
         const std::uint32_t output = *allocated;
         dotm::bind_xam_guest_input(&xam, &memory);
+        dotm::XNetStartupHost xnet;
+        dotm::bind_xnet_startup(&xnet, &memory);
+        context.r3.u64 = 1;
+        context.r4.u64 = 0;
+        __imp__NetDll_XNetStartup(context, memory.base());
+        fail_if(context.r3.u32 != dotm::kXNetSuccess || xnet.reference_count() != 1,
+                "Linked NetDll_XNetStartup did not initialize network configuration");
+        context.r3.u64 = 1;
+        __imp__NetDll_XNetCleanup(context, memory.base());
+        fail_if(context.r3.u32 != dotm::kXNetSuccess || xnet.reference_count() != 0,
+                "Linked NetDll_XNetCleanup did not release network configuration");
         input.set_button('F', true);
         xam.publish(input.next_frame());
         context.r3.u64 = 0;
@@ -134,10 +146,12 @@ int main() {
                 memory.committed_range(nt_base, 1),
                 "Linked native NT free import failed to revoke pages");
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
+        dotm::bind_xnet_startup(nullptr, nullptr);
         dotm::bind_xam_guest_input(nullptr, nullptr);
         std::puts("Synthetic multi-unit PPC + XAM + fail-fast import linked and ran");
         return 0;
     } catch (const std::exception& e) {
+        dotm::bind_xnet_startup(nullptr, nullptr);
         dotm::bind_xam_guest_input(nullptr, nullptr);
         std::fprintf(stderr, "Synthetic link test failed: %s\n", e.what());
         return 1;
