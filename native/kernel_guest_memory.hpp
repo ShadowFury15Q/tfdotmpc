@@ -47,6 +47,8 @@ std::uint32_t ex_get_xconfig_setting_guest(GuestMemory& memory,
     std::uint16_t buffer_size, std::uint32_t required_size);
 void vd_bound_query_video_mode(std::uint32_t output_pointer);
 std::uint32_t vd_bound_query_video_flags();
+void vd_bound_get_current_display_gamma(std::uint32_t type_pointer,
+                                        std::uint32_t power_pointer);
 std::uint32_t ex_bound_get_xconfig_setting(std::uint16_t category,
     std::uint16_t setting, std::uint32_t buffer, std::uint16_t buffer_size,
     std::uint32_t required_size);

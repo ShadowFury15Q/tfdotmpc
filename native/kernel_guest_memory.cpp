@@ -304,6 +304,19 @@ void vd_bound_query_video_mode(std::uint32_t output_pointer) {
     for (std::size_t i = 0; i < 12; ++i)
         write_be32(*bound_memory, output_pointer + std::uint32_t(i * 4), words[i]);
 }
+void vd_bound_get_current_display_gamma(std::uint32_t type_pointer,
+                                        std::uint32_t power_pointer) {
+    std::lock_guard lock(binding_mutex);
+    if (!bound_memory || (type_pointer & 3U) || (power_pointer & 3U) ||
+        type_pointer == power_pointer ||
+        !valid_xconfig_write(*bound_memory, type_pointer, 4U) ||
+        !valid_xconfig_write(*bound_memory, power_pointer, 4U))
+        throw std::runtime_error("Invalid Xbox display gamma output pointers");
+    // The configured HDTV video output uses BT.709 gamma (type 2).
+    // Power 2.22222233 is retained for callers switching to type 3.
+    write_be32(*bound_memory, type_pointer, 2U);
+    write_be32(*bound_memory, power_pointer, 0x400E38E4U);
+}
 std::uint32_t vd_bound_query_video_flags() {
     // Xbox 360 VdQueryVideoFlags: bit 0 = widescreen, bit 1 = >=1024 px,
     // bit 2 = >=1920 px. Derive from the same video mode reported to PPC.

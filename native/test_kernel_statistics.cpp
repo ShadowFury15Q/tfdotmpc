@@ -8,6 +8,7 @@ PPC_EXTERN_FUNC(__imp__ExGetXConfigSetting);
 PPC_EXTERN_FUNC(__imp__XGetVideoMode);
 PPC_EXTERN_FUNC(__imp__VdQueryVideoMode);
 PPC_EXTERN_FUNC(__imp__VdQueryVideoFlags);
+PPC_EXTERN_FUNC(__imp__VdGetCurrentDisplayGamma);
 namespace {
 void check(bool ok, const char* msg) { if (!ok) throw std::runtime_error(msg); }
 void put32(dotm::GuestMemory& m, std::uint32_t a, std::uint32_t v) {
@@ -109,6 +110,19 @@ int main() {
         __imp__VdQueryVideoFlags(ctx, memory.base());
         check(ctx.r3.u32 == 3U,
               "VdQueryVideoFlags matches the actual 1280x720 widescreen profile");
+        ctx.r3.u32 = output + 0x280U;
+        ctx.r4.u32 = output + 0x284U;
+        __imp__VdGetCurrentDisplayGamma(ctx, memory.base());
+        check(ctx.r3.u32 == output + 0x280U &&
+              get32(memory, output + 0x280U) == 2U &&
+              get32(memory, output + 0x284U) == 0x400E38E4U,
+              "Xbox HDTV gamma reports BT.709 and BE power without clobbering PPC r3");
+        ctx.r3.u32 = dotm::GuestMemory::kFunctionTableOffset;
+        bool rejected_gamma = false;
+        try { __imp__VdGetCurrentDisplayGamma(ctx, memory.base()); }
+        catch (const std::runtime_error&) { rejected_gamma = true; }
+        check(rejected_gamma && get32(memory, output + 0x284U) == 0x400E38E4U,
+              "Gamma query rejects protected guest output without mutation");
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
         ctx.r3.u64 = output;
         __imp__MmQueryStatistics(ctx, memory.base());
