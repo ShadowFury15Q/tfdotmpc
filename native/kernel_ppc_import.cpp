@@ -35,6 +35,11 @@ PPC_FUNC(__imp__NtQueryVirtualMemory) {
         static_cast<std::uint32_t>(ctx.r4.u64));
 }
 
+// Xbox 360 MmQueryStatistics: pointer to 104-byte big-endian structure.
+PPC_FUNC(__imp__MmQueryStatistics) {
+    ctx.r3.u64 = dotm::mm_bound_query_statistics(ctx.r3.u32);
+}
+
 // Xbox 360 KeQuerySystemTime takes a pointer to a big-endian 64-bit
 // LARGE_INTEGER in r3 and returns void (preserves the PPC argument register).
 PPC_FUNC(__imp__KeQuerySystemTime) {

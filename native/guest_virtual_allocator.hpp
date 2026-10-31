@@ -52,6 +52,14 @@ public:
     std::optional<GuestVirtualRegion> query_region(std::uint32_t address) const noexcept;
     std::size_t allocation_count() const noexcept { return blocks_.size(); }
     std::uint64_t allocated_bytes() const noexcept { return allocated_bytes_; }
+    std::uint64_t reserved_bytes() const noexcept {
+        std::uint64_t total = 0;
+        for (const auto& [address, block] : blocks_) total += block.size;
+        return total;
+    }
+    std::uint64_t capacity_bytes() const noexcept {
+        return std::uint64_t(limit_) - first_;
+    }
 
 private:
     static std::uint64_t rounded_size(std::uint64_t bytes);

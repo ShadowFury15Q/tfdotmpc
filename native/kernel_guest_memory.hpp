@@ -19,6 +19,11 @@ std::uint32_t nt_allocate_virtual_memory_guest(
 std::uint32_t nt_query_virtual_memory_guest(
     GuestMemory& memory, const GuestVirtualAllocator& allocator,
     std::uint32_t address, std::uint32_t output_pointer);
+// Xbox 360 MM_STATISTICS: 104 bytes, big-endian words.
+std::uint32_t mm_query_statistics_guest(
+    GuestMemory& memory, const GuestVirtualAllocator& allocator,
+    std::uint32_t output_pointer);
+std::uint32_t mm_bound_query_statistics(std::uint32_t output_pointer);
 std::uint32_t nt_free_virtual_memory_guest(
     GuestMemory& memory, GuestVirtualAllocator& allocator,
     std::uint32_t base_pointer, std::uint32_t size_pointer,

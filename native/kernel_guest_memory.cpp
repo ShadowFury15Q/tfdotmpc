@@ -1,5 +1,6 @@
 #include "kernel_guest_memory.hpp"
 #include <cstdint>
+#include <algorithm>
 #include <chrono>
 #include <mutex>
 #include <new>
@@ -139,6 +140,56 @@ std::uint32_t nt_query_virtual_memory_guest(
     for (std::uint32_t index = 0; index < 7; ++index)
         write_be32(memory, output_pointer + index * 4, words[index]);
     return kNtSuccess;
+}
+std::uint32_t mm_query_statistics_guest(
+    GuestMemory& memory, const GuestVirtualAllocator& allocator,
+    std::uint32_t output_pointer) {
+    constexpr std::uint32_t kStatisticsBytes = 104U;
+    constexpr std::uint32_t kTotalPhysicalPages = 0x20000U;
+    constexpr std::uint32_t kXboxTitleVirtualBytes = 0x2FFF0000U;
+    const auto begin = std::uint64_t(output_pointer);
+    const auto end = begin + kStatisticsBytes;
+    const auto table = GuestMemory::kFunctionTableOffset;
+    if ((output_pointer & 3U) || begin < 0x10000U ||
+        end > GuestMemory::kAddressSpaceSize ||
+        (begin < table + GuestMemory::kFunctionTableSize && end > table) ||
+        !memory.committed_range(begin, kStatisticsBytes))
+        return kNtInvalidParameter;
+    if (read_be32(memory, output_pointer) != kStatisticsBytes)
+        return 0xC0000023U; // STATUS_BUFFER_TOO_SMALL
+    const auto image_pages = memory.has_loaded_pe() ?
+        GuestMemory::kImageSize / GuestVirtualAllocator::kPageSize : 0ULL;
+    const auto allocated_pages = allocator.allocated_bytes() /
+        GuestVirtualAllocator::kPageSize;
+    const auto used_pages = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+        kTotalPhysicalPages, image_pages + allocated_pages));
+    const auto virtual_bytes = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+        kXboxTitleVirtualBytes, allocator.capacity_bytes()));
+    const auto reserved_bytes = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+        virtual_bytes, allocator.reserved_bytes()));
+    // 26 Xbox big-endian words. Report actual NT allocations and the
+    // loaded image, excluding the host-only native PPC dispatch table.
+    // Other kernel/physical allocations are not tracked by this allocator.
+    std::uint32_t words[26]{};
+    words[0] = kStatisticsBytes;
+    words[1] = kTotalPhysicalPages;
+    words[2] = 0;
+    words[3] = kTotalPhysicalPages - used_pages;
+    words[4] = virtual_bytes;
+    words[5] = reserved_bytes;
+    words[6] = used_pages;
+    words[9] = static_cast<std::uint32_t>(image_pages);
+    words[10] = static_cast<std::uint32_t>(allocated_pages);
+    words[11] = static_cast<std::uint32_t>(allocated_pages);
+    words[25] = kTotalPhysicalPages - 1;
+    for (std::uint32_t i = 0; i < 26; ++i)
+        write_be32(memory, output_pointer + i * 4, words[i]);
+    return kNtSuccess;
+}
+std::uint32_t mm_bound_query_statistics(std::uint32_t output_pointer) {
+    std::lock_guard lock(binding_mutex);
+    if (!bound_memory || !bound_allocator) return kNtNotSupported;
+    return mm_query_statistics_guest(*bound_memory, *bound_allocator, output_pointer);
 }
 std::uint32_t nt_free_virtual_memory_guest(
     GuestMemory& memory, GuestVirtualAllocator& allocator,

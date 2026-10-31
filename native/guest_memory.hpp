@@ -30,6 +30,7 @@ public:
  // PE AddressOfEntryPoint from the last successfully loaded guest image.
  // Never infer it from a hardcoded DOTM symbol without checking the PE.
  std::uint32_t loaded_pe_entry() const;
+ bool has_loaded_pe() const noexcept {return pe_loaded_;}
  void initialize_function_table(NativeFunction fallback);
  void install_functions(std::span<const FunctionEntry> entries);
  NativeFunction find_function(std::uint32_t addr) const;
