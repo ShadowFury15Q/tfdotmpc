@@ -32,6 +32,7 @@ constexpr std::uint32_t kInvalidParameter = 0xC000000DU;
 constexpr std::uint32_t kNoMemory = 0xC0000017U;
 constexpr std::uint32_t kNotSupported = 0xC00000BBU;
 constexpr std::uint32_t kTimeout = 0x102U;
+constexpr std::uint32_t kCancelled = 0xC0000120U;
 constexpr std::uint32_t kThreadBase = 0xF7000000U;
 constexpr std::uint32_t kStackBase = 0x72000000U;
 constexpr std::uint32_t kPcrBase = 0x78000000U;
@@ -338,11 +339,18 @@ std::uint32_t nt_bound_wait_thread(std::uint32_t handle, std::uint32_t timeout) 
         state = it->second;
     }
     std::unique_lock lock(state->mutex);
-    const auto done = [&] { return state->finished; };
+    const auto done = [&] { return state->finished || state->stop_requested; };
     if (duration) {
         if (!state->cv.wait_for(lock, *duration, done)) return kTimeout;
     } else {
         state->cv.wait(lock, done);
+    }
+    if (!state->finished && state->stop_requested) {
+        lock.unlock();
+        // A guest waiting on another guest thread must not continue into
+        // decommitted memory when failed boot tears down all PPC workers.
+        if (executing_guest_thread) throw ThreadExit{kCancelled};
+        return kCancelled;
     }
     return kSuccess;
 }
@@ -370,7 +378,6 @@ std::uint32_t nt_bound_delay_execution_thread(std::uint32_t wait_mode,
     // A 24-hour sleep_for would otherwise keep bind_kernel_threads(nullptr)
     // blocked on join, even though its stop flag has been set.
     constexpr auto kMaxChunk = std::chrono::hours(24);
-    constexpr std::uint32_t kCancelled = 0xC0000120U;
     const auto active = active_guest_thread.lock();
     auto remaining = *duration;
     while (remaining > std::chrono::nanoseconds::zero()) {
