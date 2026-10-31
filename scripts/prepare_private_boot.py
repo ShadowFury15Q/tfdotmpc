@@ -5,6 +5,7 @@ Never downloads original game assets, edits default.xex, or copies assets
 into the public repository. Use --boot to build and attempt the original _xstart.
 """
 import argparse
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -19,9 +20,9 @@ from private_ppc_preflight import (
 REQUIRED = ("ppc_recomp_shared.h", "ppc_context.h", "ppc_config.h", "ppc_func_mapping.cpp")
 
 
-def checked(command):
+def checked(command, env=None):
     print("Running:", command[0], flush=True)
-    subprocess.run([str(c) for c in command], check=True)
+    subprocess.run([str(c) for c in command], check=True, env=env)
 
 
 def verify_pe(path):
@@ -115,7 +116,7 @@ def verified_or_extracted_pe(root, output, extractor):
     return verify_pe(path)
 
 
-def boot(repo, output, ppc, pe, xex, simde):
+def boot(repo, output, ppc, pe, xex, simde, game_root):
     cmake, ninja = shutil.which("cmake"), shutil.which("ninja")
     clang = shutil.which("clang++") or shutil.which("clang-cl")
     if not (cmake and ninja and clang):
@@ -138,7 +139,15 @@ def boot(repo, output, ppc, pe, xex, simde):
     binary = build_path / ("dotm_private_link_probe.exe" if sys.platform == "win32"
                            else "dotm_private_link_probe")
     print("Attempting the ORIGINAL PPC _xstart, not the synthetic test.")
-    checked([binary, "--run-entry", pe, "--xex-header", xex])
+    env = os.environ.copy()
+    if game_root is not None:
+        game_root = game_root.resolve()
+        toc = game_root / "TransGame" / "Xbox360TOC.txt"
+        if not toc.is_file():
+            raise ValueError("Original title TOC missing from --game-root: " + str(toc))
+        env["DOTM_GAME_ROOT"] = str(game_root)
+        print("Mounted private original title resources:", game_root, flush=True)
+    checked([binary, "--run-entry", pe, "--xex-header", xex], env=env)
 
 
 def main():
@@ -149,6 +158,8 @@ def main():
     parser.add_argument("--output", type=Path)
     parser.add_argument("--extractor", help="Existing xex2ool or XexTool executable")
     parser.add_argument("--simde-include", type=Path)
+    parser.add_argument("--game-root", type=Path,
+                        help="Private extracted title filesystem containing TransGame/Xbox360TOC.txt")
     parser.add_argument("--boot", action="store_true",
                         help="Compile original PPC code and attempt original game entry")
     args = parser.parse_args()
@@ -169,7 +180,7 @@ def main():
         pe = verified_or_extracted_pe(root, output, args.extractor)
         print("PRIVATE ORIGINAL INPUTS READY:", ppc, pe, xex)
         if args.boot:
-            boot(repo, output, ppc, pe, xex, args.simde_include)
+            boot(repo, output, ppc, pe, xex, args.simde_include, args.game_root)
         else:
             print("Use --boot to compile all 697 private PPC units and attempt original _xstart.")
         return 0
