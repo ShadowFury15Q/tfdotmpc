@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -150,7 +151,9 @@ std::uint32_t nt_bound_create_file(std::uint32_t handle_out,
         return kInvalidParameter;
     const std::string guest_path(reinterpret_cast<const char*>(memory->address(text)), length);
     if (guest_path.find('\0') != std::string::npos) return kInvalidParameter;
-    if (mount_root.empty()) return kPathNotFound;
+    if (mount_root.empty())
+        throw std::runtime_error("Original Xbox D: title file requested without a mounted game directory: " +
+                                 guest_path + " (set DOTM_GAME_ROOT to extracted disc contents)");
     const auto resolved = resolve_disc_path(guest_path);
     if (!resolved) return kNameNotFound;
     std::error_code ec;

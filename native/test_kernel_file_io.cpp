@@ -105,6 +105,19 @@ int main() {
         ctx.r8.u64 = 1; ctx.r9.u64 = 1; ctx.r10.u64 = 1;
         __imp__NtCreateFile(ctx, m.base());
         check(ctx.r3.u32 == 0xC0000034U, "Guest traversal rejected");
+        // An absent disc mount is a host setup error, not a successful
+        // guest file lookup. Fail with the exact original path, not a SIGSEGV.
+        dotm::bind_kernel_file_io(&m, "");
+        m.address(str)[1] = std::uint8_t(guest.size());
+        m.address(str)[3] = std::uint8_t(guest.size()+1);
+        for (std::size_t i=0;i<guest.size();++i) m.address(name)[i] = guest[i];
+        ctx.r3.u64 = handle_out;
+        bool missing_mount_reported = false;
+        try { __imp__NtCreateFile(ctx, m.base()); }
+        catch (const std::runtime_error& e) {
+            missing_mount_reported = std::string(e.what()).find("xbox360toc.TXT") != std::string::npos;
+        }
+        check(missing_mount_reported, "Unbound disc mount reports exact original title path");
         dotm::bind_kernel_file_io(nullptr, "");
         std::cout << "Xbox 360 real read-only title file I/O PPC ABI PASS\n";
         return 0;
