@@ -180,6 +180,12 @@ int main() {
     memory.commit(name_ptr, 4096);
     std::memcpy(memory.address(name_ptr), "xam.xex", 8);
     dotm::bind_xex_system_modules(&memory);
+    check(dotm::bound_xam_get_execution_id(handle_ptr + 0x18U) == 0U &&
+          get32(memory, handle_ptr + 0x18U) == 0x81000100U &&
+          get32(memory, 0x81000100U + 12U) == 0x415608A4U,
+          "XamGetExecutionId returns the original 24-byte XEX execution ID");
+    check(dotm::bound_xam_get_execution_id(0U) == 0xC000000DU,
+          "XamGetExecutionId rejects a null output pointer");
     check(dotm::bound_xex_load_image(name_ptr, 9U, 0U, handle_ptr) == 0U &&
           get32(memory, handle_ptr) == 0x81905000U &&
           memory.address(0x81905040U)[1] == 1U,

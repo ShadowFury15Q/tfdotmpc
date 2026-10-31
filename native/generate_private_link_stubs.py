@@ -65,7 +65,7 @@ NATIVE = {"__imp__ExRegisterTitleTerminateNotification", "__imp__XGetAVPack", "_
           "__imp__KeDelayExecutionThread",
           "__imp__FscSetCacheElementCount", "__imp__FscGetCacheElementCount",
           "__imp__XexLoadImage", "__imp__XexGetModuleHandle",
-          "__imp__XexGetProcedureAddress", "__imp__XexGetModuleSection", "__imp__XexUnloadImage", "__imp__RtlNtStatusToDosError"} | {
+          "__imp__XexGetProcedureAddress", "__imp__XexGetModuleSection", "__imp__XexUnloadImage", "__imp__XamGetExecutionId", "__imp__RtlNtStatusToDosError"} | {
               f"__{action}gprlr_{reg}"
               for action in ("save", "rest") for reg in range(14, 32)
           } | {

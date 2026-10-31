@@ -7,6 +7,11 @@ PPC_FUNC(__imp__RtlImageXexHeaderField) {
     ctx.r3.u64 = dotm::bound_xex_optional_header_field(ctx.r3.u32, ctx.r4.u32);
 }
 
+PPC_FUNC(__imp__XamGetExecutionId) {
+    (void)base;
+    ctx.r3.u64 = dotm::bound_xam_get_execution_id(ctx.r3.u32);
+}
+
 PPC_FUNC(__imp__XexLoadImage) {
     ctx.r3.u64 = dotm::bound_xex_load_image(ctx.r3.u32, ctx.r4.u32,
                                              ctx.r5.u32, ctx.r6.u32);

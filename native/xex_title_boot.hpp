@@ -19,6 +19,9 @@ std::uint32_t bound_xex_get_procedure_address(
     std::uint32_t module_handle, std::uint32_t ordinal,
     std::uint32_t output_pointer);
 std::uint32_t bound_xex_unload_image(std::uint32_t module_handle);
+// XamGetExecutionId: write a guest pointer to the 24-byte execution ID from
+// the original title's XEX2 optional header, not a fabricated host profile.
+std::uint32_t bound_xam_get_execution_id(std::uint32_t output_pointer);
 std::uint32_t install_original_xex_title_header(
     GuestMemory& memory, const std::filesystem::path& original_xex,
     std::uint32_t expected_entry);

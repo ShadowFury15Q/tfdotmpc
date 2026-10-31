@@ -218,6 +218,24 @@ std::uint32_t bound_xex_get_procedure_address(
     put32(*memory, output_pointer, 0U);
     return kNtDriverEntryNotFound;
 }
+std::uint32_t bound_xam_get_execution_id(std::uint32_t output_pointer) {
+    std::lock_guard lock(module_mutex);
+    auto* memory = bound_system_memory.load(std::memory_order_acquire);
+    if (!memory) return kNtNotSupported;
+    if (!valid_output(*memory, output_pointer)) return kNtInvalidParameter;
+    if (!memory->committed_range(kHeaderAddress, 24)) return kNtNotFound;
+    // XEX2 field 0x00040006 is a pointer to the original 24-byte
+    // XEX_EXECUTION_ID (media/version/title/platform/disc/save-game IDs).
+    // This import is called by original DOTM sub_8351EF50 with a PPC r3
+    // output pointer and expects an NTSTATUS in r3.
+    const auto execution_id =
+        xex_optional_header_field(*memory, kHeaderAddress, kExecutionIdKey);
+    if (!execution_id || !memory->committed_range(execution_id, 24) ||
+        be32(memory->address(execution_id + 12)) != kDotmTitleId)
+        return kNtNotFound;
+    put32(*memory, output_pointer, execution_id);
+    return 0U;
+}
 std::uint32_t bound_xex_unload_image(std::uint32_t module_handle) {
     std::lock_guard lock(module_mutex);
     auto* memory = bound_system_memory.load(std::memory_order_acquire);

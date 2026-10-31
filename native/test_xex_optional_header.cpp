@@ -1,6 +1,7 @@
 #include "guest_memory.hpp"
 #include "ppc_recomp_shared.h"
 #include "xex_optional_header.hpp"
+#include "xex_title_boot.hpp"
 #include <cstdint>
 #include <stdexcept>
 namespace {
@@ -63,6 +64,35 @@ int main() {
     try { dotm::xex_optional_header_field(memory, base + 4096, entry_key); }
     catch (const std::runtime_error&) { threw = true; }
     check(threw);
+    // XamGetExecutionId's r3 is an OUTPUT pointer, not a header address.
+    // The service must return the original title's XEX2 execution-info
+    // guest address and an NTSTATUS, including rejection of invalid pointers.
+    constexpr std::uint32_t title_header = 0x81000000U;
+    memory.commit(title_header, 4096);
+    write_be32(memory, title_header, 0x58455832U);
+    write_be32(memory, title_header + 8, 0x200U);
+    write_be32(memory, title_header + 20, 1U);
+    write_be32(memory, title_header + 24, execution_key);
+    write_be32(memory, title_header + 28, 0x100U);
+    write_be32(memory, title_header + 0x100 + 12, 0x415608A4U);
+    dotm::bind_xex_system_modules(&memory);
+    constexpr std::uint32_t output = base + 0x180U;
+    c.r3.u32 = output;
+    __imp__XamGetExecutionId(c, memory.base());
+    check(c.r3.u32 == 0U);
+    check(memory.committed_range(output, 4));
+    check((std::uint32_t(memory.address(output)[0]) << 24 |
+           std::uint32_t(memory.address(output)[1]) << 16 |
+           std::uint32_t(memory.address(output)[2]) << 8 |
+           std::uint32_t(memory.address(output)[3])) == title_header + 0x100U);
+    c.r3.u32 = 0;
+    __imp__XamGetExecutionId(c, memory.base());
+    check(c.r3.u32 == 0xC000000DU);
+    write_be32(memory, title_header + 0x100 + 12, 0xDEADBEEFU);
+    c.r3.u32 = output;
+    __imp__XamGetExecutionId(c, memory.base());
+    check(c.r3.u32 == 0xC0000225U);
+    dotm::bind_xex_system_modules(nullptr);
     dotm::bind_xex_optional_header(nullptr);
     return 0;
 }

@@ -6,6 +6,7 @@
 #define PPC_EXTERN_FUNC(name) extern PPC_FUNC(name)
 PPC_EXTERN_FUNC(_xstart);
 PPC_EXTERN_FUNC(__imp__XamInputGetState);
+PPC_EXTERN_FUNC(__imp__XamGetExecutionId);
 PPC_EXTERN_FUNC(__imp__XamInputGetCapabilities);
 PPC_EXTERN_FUNC(__imp__NetDll_XNetStartup);
 PPC_EXTERN_FUNC(__imp__NetDll_XNetCleanup);
