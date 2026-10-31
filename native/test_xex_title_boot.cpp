@@ -1,6 +1,7 @@
 #include "guest_memory.hpp"
 #include "xex_optional_header.hpp"
 #include "xex_title_boot.hpp"
+#include "kernel_critical_sections.hpp"
 #include <array>
 #include <chrono>
 #include <cstring>
@@ -134,8 +135,33 @@ int main() {
         memory.address(0x8200095CU)[i] = std::uint8_t(0x000101BFU >> (24 - i * 8));
         memory.address(0x82000960U)[i] = std::uint8_t(0x000101BEU >> (24 - i * 8));
     }
+    // Retail xboxkrnl ordinal 449 is VdHSIOCalibrationLock. Reject a
+    // corrupt data-import token before allocating its guest kernel object.
+    for (int i = 0; i < 4; ++i)
+        memory.address(0x820008ACU)[i] = std::uint8_t(0xDEADBEEFU >> (24 - i * 8));
+    bool bad_hsio_lock_import = false;
+    try { dotm::install_original_xex_title_header(memory, file.path, entry); }
+    catch (const std::runtime_error&) { bad_hsio_lock_import = true; }
+    check(bad_hsio_lock_import && !memory.committed_range(0x8190B000U, 4),
+          "Invalid VdHSIOCalibrationLock ordinal rejected before allocation");
+    for (int i = 0; i < 4; ++i)
+        memory.address(0x820008ACU)[i] = std::uint8_t(0x000101C1U >> (24 - i * 8));
     check(dotm::install_original_xex_title_header(memory, file.path, entry)
           == 0x81000000U);
+    check(get32(memory, 0x820008ACU) == 0x8190B000U &&
+          memory.address(0x8190B000U)[0] == 1U &&
+          get32(memory, 0x8190B010U) == 0xFFFFFFFFU,
+          "Original HSIO lock import resolves to initialized guest critical section");
+    dotm::bind_kernel_critical_sections(&memory);
+    dotm::kernel_enter_critical_section(0x8190B000U);
+    check(get32(memory, 0x8190B010U) == 0U &&
+          get32(memory, 0x8190B014U) == 1U,
+          "Original HSIO lock accepts native Xbox critical-section enter");
+    dotm::kernel_leave_critical_section(0x8190B000U);
+    check(get32(memory, 0x8190B010U) == 0xFFFFFFFFU &&
+          get32(memory, 0x8190B014U) == 0U,
+          "Original HSIO lock releases without retaining guest ownership");
+    dotm::bind_kernel_critical_sections(nullptr);
     check(get32(memory, 0x8200085CU) == 0x81904000U);
     check(get32(memory, 0x81904000U + 16) == 0U);
     check(get32(memory, 0x82000998U) == 0x81900000U);
