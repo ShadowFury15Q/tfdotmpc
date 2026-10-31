@@ -35,6 +35,26 @@ PPC_FUNC(__imp__NtQueryVirtualMemory) {
         static_cast<std::uint32_t>(ctx.r4.u64));
 }
 
+// Xbox 360 physical allocation: six register arguments and pointer result.
+PPC_FUNC(__imp__MmAllocatePhysicalMemoryEx) {
+    (void)base;
+    ctx.r3.u64 = dotm::mm_bound_allocate_physical_memory_ex(
+        ctx.r3.u32, ctx.r4.u32, ctx.r5.u32,
+        ctx.r6.u32, ctx.r7.u32, ctx.r8.u32);
+}
+PPC_FUNC(__imp__MmFreePhysicalMemory) {
+    (void)base;
+    dotm::mm_bound_free_physical_memory(ctx.r3.u32, ctx.r4.u32);
+}
+PPC_FUNC(__imp__MmQueryAllocationSize) {
+    (void)base;
+    ctx.r3.u64 = dotm::mm_bound_query_physical_allocation_size(ctx.r3.u32);
+}
+PPC_FUNC(__imp__MmGetPhysicalAddress) {
+    (void)base;
+    ctx.r3.u64 = dotm::mm_bound_get_physical_address(ctx.r3.u32);
+}
+
 // Xbox 360 MmQueryStatistics: pointer to 104-byte big-endian structure.
 PPC_FUNC(__imp__MmQueryStatistics) {
     ctx.r3.u64 = dotm::mm_bound_query_statistics(ctx.r3.u32);
