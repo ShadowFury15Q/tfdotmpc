@@ -8,6 +8,7 @@
 
 PPC_EXTERN_FUNC(__imp__ExRegisterTitleTerminateNotification);
 PPC_EXTERN_FUNC(__imp__XamLoaderTerminateTitle);
+PPC_EXTERN_FUNC(__imp__HalReturnToFirmware);
 namespace {
 std::vector<int> callback_order;
 void first_callback(PPCContext&, std::uint8_t*) { callback_order.push_back(1); }
@@ -102,6 +103,31 @@ int main() {
         dotm::bind_title_termination(nullptr);
         check(dotm::title_termination_snapshot().empty(),
               "Terminated title callbacks must not leak to the next game");
+        // Original _xstart can reach HalReturnToFirmware on a fatal CRT path.
+        // It must preserve the requested routine and run title callbacks once.
+        callback_order.clear();
+        dotm::bind_title_termination(&mem);
+        put32(mem, image + 0x20, code + 0x100U);
+        put32(mem, image + 0x24, 7);
+        ctx.r3.u64 = image + 0x20;
+        ctx.r4.u64 = 1;
+        __imp__ExRegisterTitleTerminateNotification(ctx, mem.base());
+        ctx.r3.u64 = 2; // HalQuickRebootRoutine
+        bool firmware_requested = false;
+        try { __imp__HalReturnToFirmware(ctx, mem.base()); }
+        catch (const dotm::FirmwareReturnRequested& e) {
+            firmware_requested = e.routine() == 2;
+        }
+        check(firmware_requested && callback_order == std::vector<int>({1}),
+              "HAL quick reboot propagates PPC r3 and dispatches shutdown once");
+        firmware_requested = false;
+        try { __imp__HalReturnToFirmware(ctx, mem.base()); }
+        catch (const dotm::FirmwareReturnRequested& e) {
+            firmware_requested = e.routine() == 2;
+        }
+        check(firmware_requested && callback_order.size() == 1,
+              "Repeated firmware transition must not redispatch callbacks");
+        dotm::bind_title_termination(nullptr);
         std::cout << "Xbox title-termination callback registration PPC ABI PASS\n";
         return 0;
     } catch (const std::exception& e) {

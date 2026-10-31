@@ -1,6 +1,7 @@
 #include "kernel_title_termination.hpp"
 #include <algorithm>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 
 namespace dotm {
@@ -51,13 +52,17 @@ std::vector<TitleTerminationNotification> title_termination_snapshot() {
     std::lock_guard lock(registration_mutex);
     return notifications;
 }
-[[noreturn]] void xam_bound_loader_terminate_title(PPCContext& context) {
+[[noreturn]] void dispatch_termination(PPCContext& context,
+                                       std::optional<std::uint32_t> firmware_mode) {
     std::vector<TitleTerminationNotification> callbacks;
     GuestMemory* active = nullptr;
     {
         std::lock_guard lock(registration_mutex);
         if (!guest) throw std::runtime_error("XamLoaderTerminateTitle without a bound title");
-        if (terminating) throw TitleTerminated();
+        if (terminating) {
+            if (firmware_mode) throw FirmwareReturnRequested(*firmware_mode);
+            throw TitleTerminated();
+        }
         terminating = true;
         active = guest;
         callbacks = notifications;
@@ -70,6 +75,14 @@ std::vector<TitleTerminationNotification> title_termination_snapshot() {
         active->find_function(callback.callback_address)(context, active->base());
     }
     // A terminated title must not continue executing PPC after this import.
+    if (firmware_mode) throw FirmwareReturnRequested(*firmware_mode);
     throw TitleTerminated();
+}
+[[noreturn]] void xam_bound_loader_terminate_title(PPCContext& context) {
+    dispatch_termination(context, std::nullopt);
+}
+[[noreturn]] void hal_bound_return_to_firmware(PPCContext& context,
+                                                std::uint32_t routine) {
+    dispatch_termination(context, routine);
 }
 }
