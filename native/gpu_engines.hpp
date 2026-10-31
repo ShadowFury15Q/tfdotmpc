@@ -27,6 +27,9 @@ struct GpuEngineSnapshot {
     std::uint32_t ring_read_pointer_dwords = 0;
     std::uint64_t packets_executed = 0;
     std::uint64_t register_writes = 0;
+    // Xenos tiled-rendering bin predication state, written by PM4 packets.
+    std::uint64_t bin_mask = 0;
+    std::uint64_t bin_select = 0;
     // ME_INIT command (PM4 opcode 0x48) verified from original guest memory.
     bool me_init_command_verified = false;
     bool me_init_packet_submitted = false;
