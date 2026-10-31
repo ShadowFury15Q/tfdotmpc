@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 import struct
 import unittest
 import zipfile
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import prepare_private_boot as p
@@ -56,6 +57,32 @@ class PrivateBootTests(unittest.TestCase):
             path.write_bytes(image)
             with self.assertRaises(ValueError):
                 p.verify_pe(path)
+
+    def test_private_boot_repairs_original_bctr_with_verified_pe(self):
+        # Mock only the host tool invocations: public CI must never need game bytes.
+        with TemporaryDirectory() as t:
+            root = Path(t)
+            repo = root / "repo"
+            (repo / "native").mkdir(parents=True)
+            (repo / "native" / "CMakeLists.txt").write_text("project(DOTM)")
+            output = root / "private"
+            ppc = output / "ppc"
+            pe = output / "original_title.pe"
+            xex = output / "default.xex"
+            commands = []
+            with patch.object(p.shutil, "which", return_value="/mock/tool"), \
+                 patch.object(p, "checked", side_effect=commands.append):
+                p.boot(repo, output, ppc, pe, xex, root / "simde")
+            self.assertEqual(len(commands), 3)
+            configure, build, run = commands
+            self.assertIn("-DDOTM_PRIVATE_PPC_DIR=" + str(ppc), configure)
+            self.assertIn("-DDOTM_PRIVATE_PE_FILE=" + str(pe), configure)
+            self.assertIn("-DDOTM_SIMDE_INCLUDE_DIR=" + str(root / "simde"), configure)
+            self.assertEqual(build[-1], "2")
+            self.assertEqual(run[-4:], ["--run-entry", pe, "--xex-header", xex])
+            # No original binary or PPC translation unit is copied into repo.
+            self.assertEqual(list((repo / "native").iterdir()),
+                             [repo / "native" / "CMakeLists.txt"])
 
     def test_invalid_original_xex_refused(self):
         with TemporaryDirectory() as t:
