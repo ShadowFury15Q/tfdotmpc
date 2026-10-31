@@ -49,6 +49,11 @@ constexpr std::uint32_t kCertMonitorAddress = 0x81909000U;
 constexpr std::uint32_t kGlobalXamDeviceImport = 0x8200095CU;
 constexpr std::uint32_t kGlobalDeviceImport = 0x82000960U;
 constexpr std::uint32_t kGpuDeviceGlobalsAddress = 0x8190A000U;
+// Retail xboxkrnl export ordinal 449 (0x1C1) is the global
+// VdHSIOCalibrationLock RTL_CRITICAL_SECTION, not a function pointer.
+// Original DOTM sub_82525808 reads this import at 0x820008AC.
+constexpr std::uint32_t kHSIOCalibrationLockImport = 0x820008ACU;
+constexpr std::uint32_t kHSIOCalibrationLockAddress = 0x8190B000U;
 constexpr std::uint32_t kRetailHardwareFlags = 0x20U;
 constexpr std::uint8_t kHardwareCpuCount = 6U;
 // The original DOTM sub_827813F8 dereferences [0x82000998] then its handle,
@@ -279,7 +284,8 @@ std::uint32_t install_original_xex_title_header(
         !memory.committed_range(kThreadTypeImport, 4) ||
         !memory.committed_range(kCertMonitorImport, 4) ||
         !memory.committed_range(kGlobalXamDeviceImport, 4) ||
-        !memory.committed_range(kGlobalDeviceImport, 4))
+        !memory.committed_range(kGlobalDeviceImport, 4) ||
+        !memory.committed_range(kHSIOCalibrationLockImport, 4))
         throw std::runtime_error("Load original decrypted PE before XEX2 module wiring");
     const auto timestamp_import_tag = be32(memory.address(kTimeStampBundleImport));
     if (timestamp_import_tag != 0 && timestamp_import_tag != 0x000100ADU)
@@ -304,6 +310,9 @@ std::uint32_t install_original_xex_title_header(
     if ((global_xam_device_tag != 0 && global_xam_device_tag != 0x000101BFU) ||
         (global_device_tag != 0 && global_device_tag != 0x000101BEU))
         throw std::runtime_error("Unexpected VdGlobalDevice import ordinals");
+    const auto hsio_lock_tag = be32(memory.address(kHSIOCalibrationLockImport));
+    if (hsio_lock_tag != 0 && hsio_lock_tag != 0x000101C1U)
+        throw std::runtime_error("Unexpected VdHSIOCalibrationLock import ordinal");
     if (memory.any_committed_range(kHeaderAddress, kMaximumHeaderSize) ||
         memory.any_committed_range(kModuleHandleAddress, 4096) ||
         memory.any_committed_range(kModuleAddress, 4096) ||
@@ -315,7 +324,8 @@ std::uint32_t install_original_xex_title_header(
         memory.any_committed_range(kCommandLineAddress, 4096) ||
         memory.any_committed_range(kThreadTypeAddress, 4096) ||
         memory.any_committed_range(kCertMonitorAddress, 4096) ||
-        memory.any_committed_range(kGpuDeviceGlobalsAddress, 4096))
+        memory.any_committed_range(kGpuDeviceGlobalsAddress, 4096) ||
+        memory.any_committed_range(kHSIOCalibrationLockAddress, 4096))
         throw std::runtime_error("XEX2 module boot memory overlaps existing guest state");
     // Validate the executable entry BEFORE touching any guest memory.
     bool matched_entry = false;
@@ -352,6 +362,7 @@ std::uint32_t install_original_xex_title_header(
     memory.commit(kThreadTypeAddress, 4096);
     memory.commit(kCertMonitorAddress, 4096);
     memory.commit(kGpuDeviceGlobalsAddress, 4096);
+    memory.commit(kHSIOCalibrationLockAddress, 4096);
     // System XAM module uses an Xbox 360 LDR_DATA_TABLE_ENTRY as HMODULE.
     // No proprietary xam.xex is loaded: only the built-in native service handle.
     std::memset(memory.address(kXamModuleAddress), 0, 4096);
@@ -397,6 +408,13 @@ std::uint32_t install_original_xex_title_header(
     std::memset(memory.address(kGpuDeviceGlobalsAddress), 0, 4096);
     put32(memory, kGlobalXamDeviceImport, kGpuDeviceGlobalsAddress);
     put32(memory, kGlobalDeviceImport, kGpuDeviceGlobalsAddress + 4U);
+    // Xbox RTL_CRITICAL_SECTION: initialized dispatcher header and
+    // LockCount=-1 (unowned). The native critical-section registry adopts
+    // this valid guest structure on first RtlEnterCriticalSection.
+    std::memset(memory.address(kHSIOCalibrationLockAddress), 0, 4096);
+    memory.address(kHSIOCalibrationLockAddress)[0] = 1;
+    put32(memory, kHSIOCalibrationLockAddress + 16U, 0xFFFFFFFFU);
+    put32(memory, kHSIOCalibrationLockImport, kHSIOCalibrationLockAddress);
     put32(memory, kModuleHandleAddress, kModuleAddress);
     put32(memory, kModuleAddress + 0x58, kHeaderAddress);
     put32(memory, kOriginalModuleImport, kModuleHandleAddress);
