@@ -35,6 +35,12 @@ PPC_FUNC(__imp__NtQueryVirtualMemory) {
         static_cast<std::uint32_t>(ctx.r4.u64));
 }
 
+// Xbox 360 KeQuerySystemTime takes a pointer to a big-endian 64-bit
+// LARGE_INTEGER in r3 and returns void (preserves the PPC argument register).
+PPC_FUNC(__imp__KeQuerySystemTime) {
+    dotm::ke_bound_query_system_time(ctx.r3.u32);
+}
+
 // The original title runs in Xbox 360 user process type 1.
 PPC_FUNC(__imp__KeGetCurrentProcessType) {
     ctx.r3.u64 = 1U;

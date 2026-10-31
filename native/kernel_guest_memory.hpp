@@ -26,6 +26,11 @@ std::uint32_t nt_free_virtual_memory_guest(
 
 // Host service binding for recompiled PowerPC imports. Caller must unbind
 // before destroying either object; no ownership is transferred.
+// Xbox KeQuerySystemTime: 64-bit UTC FILETIME (100 ns since 1601), big-endian.
+// The explicit-value overload supports deterministic PPC ABI regression tests.
+void ke_query_system_time_guest(GuestMemory& memory, std::uint32_t output,
+                                std::uint64_t filetime);
+void ke_bound_query_system_time(std::uint32_t output);
 void bind_kernel_guest_memory(GuestMemory* memory,
                               GuestVirtualAllocator* allocator) noexcept;
 std::uint32_t nt_bound_allocate_virtual_memory(

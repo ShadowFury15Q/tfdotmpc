@@ -37,6 +37,7 @@ NATIVE = {"__imp__XGetAVPack", "__imp__KeGetCurrentProcessType",
           "__imp__XamLoaderGetLaunchData",
           "__imp__NtAllocateVirtualMemory", "__imp__NtFreeVirtualMemory",
           "__imp__NtQueryVirtualMemory", "__imp__KeQueryPerformanceFrequency",
+          "__imp__KeQuerySystemTime",
           "__imp__NtCreateMutant", "__imp__NtReleaseMutant",
           "__imp__NtCreateEvent", "__imp__NtSetEvent", "__imp__NtClearEvent", "__imp__NtPulseEvent",
           "__imp__NtWaitForSingleObjectEx", "__imp__NtClose",
@@ -224,13 +225,16 @@ def generate(directory: Path, minimum_units: int = 697) -> tuple[str, int, int]:
     definition_counts = Counter()
     for path in [mapping, *units]:
         source = path.read_text(encoding="utf-8")
-        bodies = DEF.findall(cpp_code_only(source))
+        # Parse once: preserving GCC alias target strings does not expose
+        # function definitions inside unrelated literals or comments.
+        code = cpp_code_only(source, preserve_alias_targets=True) if path != mapping else cpp_code_only(source)
+        bodies = DEF.findall(code)
         definition_counts.update(bodies)
         if path == mapping:
             continue
         # GCC aliases require their implementation body in the same C++ unit.
         local_bodies = set(bodies)
-        for target, guest_symbol in ALIAS.findall(cpp_code_only(source, preserve_alias_targets=True)):
+        for target, guest_symbol in ALIAS.findall(code):
             if target not in local_bodies:
                 raise ValueError(f"Missing XenonRecomp alias target for {guest_symbol}: {target}")
             definition_counts[guest_symbol] += 1

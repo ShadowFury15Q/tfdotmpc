@@ -8,6 +8,7 @@ PPC_EXTERN_FUNC(__imp__NtAllocateVirtualMemory);
 PPC_EXTERN_FUNC(__imp__NtFreeVirtualMemory);
 PPC_EXTERN_FUNC(__imp__NtQueryVirtualMemory);
 PPC_EXTERN_FUNC(__imp__KeGetCurrentProcessType);
+PPC_EXTERN_FUNC(__imp__KeQuerySystemTime);
 
 namespace {
 void check(bool ok, const char* message) {
@@ -36,6 +37,36 @@ int main() {
         ctx.r3.u64 = 0xFFFFFFFFU;
         __imp__KeGetCurrentProcessType(ctx, memory.base());
         check(ctx.r3.u64 == 1U, "Retail user process type ABI");
+        // The original PPC CRT reads a 64-bit Xbox UTC timestamp from r3.
+        const auto timestamp = ptr + 0x80U;
+        dotm::ke_query_system_time_guest(memory, timestamp,
+                                         0x0123456789ABCDEFULL);
+        const std::uint8_t expected_time[] = {
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF};
+        for (unsigned i = 0; i < 8; ++i)
+            check(memory.address(timestamp)[i] == expected_time[i],
+                  "KeQuerySystemTime big-endian 64-bit store");
+        ctx.r3.u64 = timestamp;
+        __imp__KeQuerySystemTime(ctx, memory.base());
+        check(ctx.r3.u32 == timestamp, "KeQuerySystemTime void PPC ABI");
+        const auto unix_utc =
+            (std::uint64_t(read32(memory, timestamp)) << 32) |
+            read32(memory, timestamp + 4);
+        check(unix_utc > 116444736000000000ULL,
+              "KeQuerySystemTime returns UTC FILETIME rather than Unix seconds");
+        bool time_rejected = false;
+        try { dotm::ke_query_system_time_guest(memory, timestamp + 1, 1); }
+        catch (const std::runtime_error&) { time_rejected = true; }
+        check(time_rejected, "Unaligned KeQuerySystemTime output rejected");
+        time_rejected = false;
+        try { dotm::ke_query_system_time_guest(memory, 0x50000000U, 1); }
+        catch (const std::runtime_error&) { time_rejected = true; }
+        check(time_rejected, "Uncommitted KeQuerySystemTime output rejected");
+        time_rejected = false;
+        try { dotm::ke_query_system_time_guest(memory,
+                 static_cast<std::uint32_t>(dotm::GuestMemory::kFunctionTableOffset), 1); }
+        catch (const std::runtime_error&) { time_rejected = true; }
+        check(time_rejected, "KeQuerySystemTime protects PPC dispatch table");
         auto allocate = [&](std::uint32_t base, std::uint32_t size,
                             std::uint32_t type = 0x3000U,
                             std::uint32_t protect = 4U,

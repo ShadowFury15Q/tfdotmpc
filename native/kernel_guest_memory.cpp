@@ -1,5 +1,6 @@
 #include "kernel_guest_memory.hpp"
 #include <cstdint>
+#include <chrono>
 #include <mutex>
 #include <new>
 #include <stdexcept>
@@ -181,6 +182,31 @@ std::uint32_t nt_free_virtual_memory_guest(
     }
     write_be32(memory, size_pointer, static_cast<std::uint32_t>(affected_size));
     return kNtSuccess;
+}
+void ke_query_system_time_guest(GuestMemory& memory, std::uint32_t output,
+                                std::uint64_t filetime) {
+    const auto begin = std::uint64_t(output);
+    const auto end = begin + 8U;
+    const auto table = GuestMemory::kFunctionTableOffset;
+    if ((output & 7U) || begin < 0x10000U || end > GuestMemory::kAddressSpaceSize ||
+        (begin < table + GuestMemory::kFunctionTableSize && end > table) ||
+        !memory.committed_range(begin, 8))
+        throw std::runtime_error("KeQuerySystemTime: invalid guest LARGE_INTEGER");
+    auto* p = memory.address(output);
+    for (int i = 0; i < 8; ++i)
+        p[i] = static_cast<std::uint8_t>(filetime >> (56 - i * 8));
+}
+void ke_bound_query_system_time(std::uint32_t output) {
+    std::lock_guard lock(binding_mutex);
+    if (!bound_memory || !bound_allocator)
+        throw std::runtime_error("KeQuerySystemTime: unbound guest memory");
+    constexpr std::uint64_t kFiletimeUnixEpoch = 116444736000000000ULL;
+    const auto unix_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    if (unix_ns < 0)
+        throw std::runtime_error("KeQuerySystemTime: invalid host clock");
+    ke_query_system_time_guest(*bound_memory, output,
+        kFiletimeUnixEpoch + static_cast<std::uint64_t>(unix_ns / 100));
 }
 void bind_kernel_guest_memory(GuestMemory* memory,
                               GuestVirtualAllocator* allocator) noexcept {
