@@ -26,6 +26,7 @@
 #include <thread>
 #include <chrono>
 #include <stdexcept>
+#include <filesystem>
 #ifdef DOTM_SYNTHETIC_PRIVATE_BOOT
 #include <chrono>
 #include <filesystem>
@@ -249,7 +250,21 @@ int main(int argc, char** argv) {
     }
     try {
         dotm::GuestMemory memory;
-        if (run_original) memory.load_pe(argv[2]);
+        if (run_original) {
+            // The original PPC startup immediately opens D:\\TransGame\\Xbox360TOC.txt.
+            // Without the extracted title filesystem it enters its fatal
+            // cleanup path before video initialization and dereferences an
+            // uninitialized D3D device. Diagnose the missing original asset
+            // rather than misreporting that null dereference as a GPU defect.
+            const char* root_env = std::getenv("DOTM_GAME_ROOT");
+            const auto root = std::filesystem::path(root_env && *root_env ? root_env : ".");
+            const auto toc = root / "TransGame" / "Xbox360TOC.txt";
+            if (!std::filesystem::is_regular_file(toc))
+                throw std::runtime_error(
+                    "Original DOTM title content missing: " + toc.string() +
+                    " (set DOTM_GAME_ROOT to the extracted Xbox 360 game directory)");
+            memory.load_pe(argv[2]);
+        }
 #ifdef DOTM_SYNTHETIC_PRIVATE_BOOT
         if (synthetic_entry) load_synthetic_boot_pe(memory);
 #endif
