@@ -36,9 +36,17 @@ constexpr std::uint32_t kStackBase = 0x70000000U;
 constexpr std::uint32_t kStackBytes = 0x00100000U;
 constexpr std::uint32_t kInitialStackPointer = kStackBase + kStackBytes - 0x100U;
 
-void unresolved_indirect(PPCContext&, std::uint8_t*) {
-    throw std::runtime_error(
-        "Unimplemented indirect PPC target; native game execution is blocked");
+template <typename Context>
+std::uint32_t indirect_target(const Context& ctx) {
+    if constexpr (requires { ctx.ctr.u32; }) return ctx.ctr.u32;
+    return 0;
+}
+void unresolved_indirect(PPCContext& ctx, std::uint8_t*) {
+    char message[160]{};
+    std::snprintf(message, sizeof(message),
+        "Unimplemented indirect PPC target 0x%08X (LR=0x%08X)",
+        indirect_target(ctx), static_cast<std::uint32_t>(ctx.lr));
+    throw std::runtime_error(message);
 }
 
 // The current host bindings implement only a subset of Xbox 360 imports.

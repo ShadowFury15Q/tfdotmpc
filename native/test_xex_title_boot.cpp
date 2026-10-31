@@ -116,6 +116,8 @@ int main() {
     check(get32(memory, 0x81904000U + 16) == 0U);
     check(get32(memory, 0x82000998U) == 0x81900000U);
     check(get32(memory, 0x820009D8U) == 0x81907000U);
+    check(get32(memory, 0x820009B0U) == 0x81908000U);
+    check(get32(memory, 0x81908000U) == 27U);
     check(std::strcmp(reinterpret_cast<const char*>(memory.address(0x81907000U)),
                       "\"default.xex\"") == 0,
           "ExLoadedCommandLine points to a real guest ANSI command line");

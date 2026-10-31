@@ -1,6 +1,7 @@
 #include "ppc_recomp_shared.h"
 #include "kernel_thread.hpp"
 #include "guest_memory.hpp"
+#include <stdexcept>
 
 namespace {
 std::uint32_t run_guest_thread(dotm::GuestMemory& memory, std::uint32_t pcr,
@@ -15,6 +16,31 @@ std::uint32_t run_guest_thread(dotm::GuestMemory& memory, std::uint32_t pcr,
     memory.find_function(api_startup ? api_startup : start_address)(ctx, memory.base());
     return ctx.r3.u32;
 }
+}
+
+PPC_FUNC(__imp__ObReferenceObjectByHandle) {
+    (void)base;
+    ctx.r3.u64 = dotm::nt_bound_reference_thread(ctx.r3.u32,
+        ctx.r4.u32, ctx.r5.u32);
+}
+PPC_FUNC(__imp__KeSetAffinityThread) {
+    (void)base;
+    ctx.r3.u64 = dotm::nt_bound_set_thread_affinity(ctx.r3.u32,
+        ctx.r4.u32, ctx.r5.u32);
+}
+PPC_FUNC(__imp__KeQueryBasePriorityThread) {
+    (void)base;
+    ctx.r3.u64 = dotm::nt_bound_query_base_priority_thread(ctx.r3.u32);
+}
+PPC_FUNC(__imp__KeSetBasePriorityThread) {
+    (void)base;
+    ctx.r3.u64 = dotm::nt_bound_set_base_priority_thread(ctx.r3.u32,
+        static_cast<std::int32_t>(ctx.r4.u32));
+}
+PPC_FUNC(__imp__ObDereferenceObject) {
+    (void)base;
+    if (!dotm::nt_bound_dereference_thread(ctx.r3.u32))
+        throw std::runtime_error("Unknown Xbox kernel object reference");
 }
 
 // Original DOTM sub_8351E9D8 passes PHANDLE, stack bytes, thread ID pointer,

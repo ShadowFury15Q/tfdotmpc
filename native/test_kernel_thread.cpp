@@ -14,6 +14,11 @@ PPC_EXTERN_FUNC(__imp__KeDelayExecutionThread);
 PPC_EXTERN_FUNC(__imp__ExTerminateThread);
 PPC_EXTERN_FUNC(__imp__NtWaitForSingleObjectEx);
 PPC_EXTERN_FUNC(__imp__NtClose);
+PPC_EXTERN_FUNC(__imp__ObReferenceObjectByHandle);
+PPC_EXTERN_FUNC(__imp__ObDereferenceObject);
+PPC_EXTERN_FUNC(__imp__KeSetAffinityThread);
+PPC_EXTERN_FUNC(__imp__KeQueryBasePriorityThread);
+PPC_EXTERN_FUNC(__imp__KeSetBasePriorityThread);
 namespace {
 std::atomic<unsigned> calls{0};
 std::atomic<bool> delay_entered{false};
@@ -96,6 +101,29 @@ int main() {
     c.r3.u64 = handle; c.r4.u64 = 1; c.r5.u64 = 0; c.r6.u64 = 0x70100008U;
     __imp__NtWaitForSingleObjectEx(c, memory.base());
     check(c.r3.u32 == 0x102U);
+    // Original CRT calls ObReferenceObjectByHandle(handle, ExThreadObjectType,
+    // &thread) and must receive a live KTHREAD, not an opaque host pointer.
+    c.r3.u64 = handle; c.r4.u64 = 0x81908000U; c.r5.u64 = 0x70100070U;
+    __imp__ObReferenceObjectByHandle(c, memory.base());
+    check(c.r3.u32 == 0U && read32(memory.address(0x70100070U)) == 0x78001000U);
+    c.r3.u64 = handle; c.r4.u64 = 0x81907000U; c.r5.u64 = 0x70100070U;
+    __imp__ObReferenceObjectByHandle(c, memory.base());
+    check(c.r3.u32 == 0xC0000024U);
+    c.r3.u64 = 0x78001000U; c.r4.u64 = 0x00000002U;
+    c.r5.u64 = 0x70100074U;
+    __imp__KeSetAffinityThread(c, memory.base());
+    check(c.r3.u32 == 0U && read32(memory.address(0x70100074U)) == 2U);
+    c.r3.u64 = 0x78001000U; c.r4.u64 = 3U; c.r5.u64 = 0;
+    __imp__KeSetAffinityThread(c, memory.base());
+    check(c.r3.u32 == 0xC000000DU);
+    c.r3.u64 = 0x78001000U; c.r4.u64 = 12U;
+    __imp__KeSetBasePriorityThread(c, memory.base());
+    check(c.r3.u32 == 0U);
+    c.r3.u64 = 0x78001000U;
+    __imp__KeQueryBasePriorityThread(c, memory.base());
+    check(c.r3.u32 == 12U);
+    c.r3.u64 = 0x78001000U;
+    __imp__ObDereferenceObject(c, memory.base());
     c.r3.u64 = handle; c.r4.u64 = 0x70100020U;
     __imp__NtResumeThread(c, memory.base());
     check(c.r3.u32 == 0 && read32(memory.address(0x70100020U)) == 1);
@@ -190,7 +218,28 @@ int main() {
         check(c.r3.u32 == 0U);
     }
     check(calls.load() == 41U);
+    create(c, memory, 0U);
+    check(c.r3.u32 == 0U);
+    const auto referenced_handle = read32(memory.address(0x70100000U));
+    c.r3.u64 = referenced_handle; c.r4.u64 = 1; c.r5.u64 = 0; c.r6.u64 = 0;
+    __imp__NtWaitForSingleObjectEx(c, memory.base());
+    check(c.r3.u32 == 0U);
+    c.r3.u64 = referenced_handle; c.r4.u64 = 0x81908000U;
+    c.r5.u64 = 0x70100070U;
+    __imp__ObReferenceObjectByHandle(c, memory.base());
+    check(c.r3.u32 == 0U);
+    const auto referenced_object = read32(memory.address(0x70100070U));
+    c.r3.u64 = referenced_handle;
+    __imp__NtClose(c, memory.base());
+    check(c.r3.u32 == 0U);
+    // A closed handle does not release a still-referenced KTHREAD body.
+    create(c, memory, 1U);
+    check(c.r3.u32 == 0U &&
+          read32(memory.address(0x70100000U)) == 0xF7000004U);
+    c.r3.u64 = referenced_object;
+    __imp__ObDereferenceObject(c, memory.base());
     dotm::bind_kernel_threads(nullptr);
+    check(calls.load() == 42U);
     check(!memory.committed_range(0x72000000U, 1) &&
           !memory.committed_range(0x78000000U, 1));
 }

@@ -39,6 +39,8 @@ constexpr std::uint32_t kPcrBase = 0x78000000U;
 constexpr std::uint32_t kStackBytes = 0x100000U;
 constexpr std::uint32_t kPcrStride = 0x10000U;
 constexpr std::uint32_t kMaxThreads = 32;
+constexpr std::uint32_t kThreadObjectType = 0x81908000U;
+constexpr std::uint32_t kObjectTypeMismatch = 0xC0000024U;
 struct ThreadExit { std::uint32_t code; };
 struct ThreadState {
     std::mutex mutex;
@@ -46,6 +48,10 @@ struct ThreadState {
     std::thread worker;
     std::uint32_t handle = 0;
     std::uint32_t thread_id = 0;
+    std::uint32_t slot = 0;
+    std::uint32_t references = 0;
+    std::uint32_t affinity_mask = 0x3FU;
+    std::int32_t base_priority = 0;
     std::uint32_t suspend_count = 0;
     std::uint32_t exit_code = 0;
     bool finished = false;
@@ -209,7 +215,7 @@ std::uint32_t nt_bound_create_thread(std::uint32_t handle_output,
         const auto& old = all_threads[i];
         if (!old) { slot = i; break; }
         std::lock_guard state_lock(old->mutex);
-        if (old->finished && !handles.contains(old->handle)) {
+        if (old->finished && !old->references && !handles.contains(old->handle)) {
             slot = i;
             break;
         }
@@ -254,6 +260,8 @@ std::uint32_t nt_bound_create_thread(std::uint32_t handle_output,
         auto state = std::make_shared<ThreadState>();
         state->handle = kThreadBase + slot * 4U;
         state->thread_id = id;
+        state->slot = slot;
+        state->affinity_mask = affinity ? affinity : 0x3FU;
         state->suspend_count = creation_flags & 1U;
         handles.emplace(state->handle, state);
         try {
@@ -441,6 +449,90 @@ std::uint32_t nt_bound_delay_execution_thread(std::uint32_t wait_mode,
 std::uint32_t nt_bound_close_thread(std::uint32_t handle) {
     std::lock_guard lock(registry_mutex);
     return handles.erase(handle) ? kSuccess : kInvalidHandle;
+}
+
+std::uint32_t nt_bound_reference_thread(std::uint32_t handle,
+    std::uint32_t object_type, std::uint32_t object_output) {
+    std::lock_guard lock(registry_mutex);
+    if (!bound_memory) return kNotSupported;
+    if ((object_output & 3U) ||
+        !valid_guest(*bound_memory, object_output, 4, true))
+        return kInvalidParameter;
+    if (object_type && object_type != kThreadObjectType)
+        return kObjectTypeMismatch;
+    const auto it = handles.find(handle);
+    if (it == handles.end()) return kInvalidHandle;
+    auto& state = *it->second;
+    if (state.references == std::numeric_limits<std::uint32_t>::max())
+        return kNoMemory;
+    ++state.references;
+    write32(*bound_memory, object_output,
+            kPcrBase + state.slot * kPcrStride + 0x1000U);
+    return kSuccess;
+}
+
+bool nt_bound_dereference_thread(std::uint32_t object_pointer) {
+    std::lock_guard lock(registry_mutex);
+    for (const auto& state : all_threads) {
+        if (state && state->references &&
+            object_pointer == kPcrBase + state->slot * kPcrStride + 0x1000U) {
+            --state->references;
+            return true;
+        }
+    }
+    return false;
+}
+
+std::uint32_t nt_bound_set_thread_affinity(std::uint32_t object_pointer,
+    std::uint32_t affinity_mask, std::uint32_t previous_affinity_output) {
+    std::lock_guard lock(registry_mutex);
+    if (!bound_memory) return kNotSupported;
+    if (!affinity_mask || (affinity_mask & ~0x3FU) ||
+        (affinity_mask & (affinity_mask - 1U)))
+        return kInvalidParameter;
+    if (previous_affinity_output &&
+        ((previous_affinity_output & 3U) ||
+         !valid_guest(*bound_memory, previous_affinity_output, 4, true)))
+        return kInvalidParameter;
+    for (const auto& state : all_threads) {
+        if (!state || object_pointer !=
+            kPcrBase + state->slot * kPcrStride + 0x1000U) continue;
+        std::lock_guard state_lock(state->mutex);
+        if (state->finished) return kInvalidHandle;
+        unsigned guest_cpu = 0;
+        while (!(affinity_mask & (1U << guest_cpu))) ++guest_cpu;
+        if (!pin_guest_worker(state->worker, guest_cpu)) return kNotSupported;
+        if (previous_affinity_output)
+            write32(*bound_memory, previous_affinity_output, state->affinity_mask);
+        state->affinity_mask = affinity_mask;
+        return kSuccess;
+    }
+    return kInvalidHandle;
+}
+
+std::uint32_t nt_bound_query_base_priority_thread(std::uint32_t object_pointer) {
+    std::lock_guard lock(registry_mutex);
+    for (const auto& state : all_threads)
+        if (state && object_pointer ==
+            kPcrBase + state->slot * kPcrStride + 0x1000U)
+            return static_cast<std::uint32_t>(state->base_priority);
+    throw std::runtime_error("KeQueryBasePriorityThread: unknown KTHREAD");
+}
+
+std::uint32_t nt_bound_set_base_priority_thread(std::uint32_t object_pointer,
+    std::int32_t priority) {
+    if (priority < -16 || priority > 16)
+        throw std::runtime_error("KeSetBasePriorityThread: invalid priority");
+    std::lock_guard lock(registry_mutex);
+    for (const auto& state : all_threads) {
+        if (state && object_pointer ==
+            kPcrBase + state->slot * kPcrStride + 0x1000U) {
+            const auto previous = state->base_priority;
+            state->base_priority = priority;
+            return static_cast<std::uint32_t>(previous);
+        }
+    }
+    throw std::runtime_error("KeSetBasePriorityThread: unknown KTHREAD");
 }
 
 bool kernel_guest_thread_active() noexcept { return executing_guest_thread; }
