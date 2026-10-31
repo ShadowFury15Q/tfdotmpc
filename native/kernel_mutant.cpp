@@ -14,7 +14,6 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
-#include <vector>
 
 namespace dotm {
 namespace {
@@ -131,28 +130,41 @@ std::shared_ptr<Mutant> find_mutant(std::uint32_t handle) {
 // entry throws. Wake these waits before joining the workers: otherwise the
 // host cannot report the original error and hangs during stack unwinding.
 void cancel_kernel_mutant_waiters() noexcept {
-    // A condition_variable notification is not enough when the predicate
-    // changes without its mutex: cancellation can occur after a waiter
-    // checks the predicate but before it sleeps, losing the only wakeup.
-    // Snapshot shared ownership under the registry lock, then synchronize
-    // each predicate update with the exact mutex used by its wait.
-    std::vector<std::shared_ptr<Mutant>> mutants;
-    std::vector<std::shared_ptr<Event>> events;
-    {
-        std::lock_guard lock(registry_mutex);
-        mutants.reserve(handles.size());
-        events.reserve(event_handles.size());
-        for (const auto& [handle, object] : handles) mutants.push_back(object);
-        for (const auto& [handle, object] : event_handles) events.push_back(object);
-    }
-    for (const auto& object : mutants) {
+    // The cancellation predicate must change under the same mutex as wait().
+    // Otherwise a notify can race between the predicate check and sleep.
+    // Take one shared_ptr at a time so this noexcept teardown never allocates
+    // and never holds registry_mutex while acquiring an object mutex (the
+    // event signal paths acquire these mutexes in the opposite order).
+    for (;;) {
+        std::shared_ptr<Mutant> object;
+        {
+            std::lock_guard lock(registry_mutex);
+            for (const auto& [handle, candidate] : handles) {
+                if (!candidate->closing.load(std::memory_order_acquire)) {
+                    object = candidate;
+                    break;
+                }
+            }
+        }
+        if (!object) break;
         {
             std::lock_guard lock(object->mutex);
             object->closing.store(true, std::memory_order_release);
         }
         object->ready.notify_all();
     }
-    for (const auto& object : events) {
+    for (;;) {
+        std::shared_ptr<Event> object;
+        {
+            std::lock_guard lock(registry_mutex);
+            for (const auto& [handle, candidate] : event_handles) {
+                if (!candidate->closing.load(std::memory_order_acquire)) {
+                    object = candidate;
+                    break;
+                }
+            }
+        }
+        if (!object) break;
         {
             std::lock_guard lock(object->mutex);
             object->closing.store(true, std::memory_order_release);
