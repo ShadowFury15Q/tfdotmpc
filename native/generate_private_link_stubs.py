@@ -53,7 +53,7 @@ NATIVE = {"__imp__KeEnterCriticalRegion", "__imp__KeLeaveCriticalRegion", "__imp
           "__imp__VdInitializeRingBuffer",
           "__imp__VdEnableRingBufferRPtrWriteBack",
           "__imp__NtCreateFile", "__imp__NtOpenFile", "__imp__NtReadFile",
-          "__imp__NtQueryInformationFile",
+          "__imp__NtQueryInformationFile", "__imp__NtQueryFullAttributesFile",
           "__imp__KeQuerySystemTime", "__imp__RtlTimeToTimeFields", "__imp__RtlTimeFieldsToTime",
           "__imp__NtCreateMutant", "__imp__NtReleaseMutant",
           "__imp__NtCreateEvent", "__imp__NtSetEvent", "__imp__NtClearEvent", "__imp__NtPulseEvent",
