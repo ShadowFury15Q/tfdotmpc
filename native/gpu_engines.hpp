@@ -24,6 +24,9 @@ struct GpuEngineSnapshot {
     std::uint32_t read_pointer_writeback_physical_address = 0;
     std::uint32_t read_pointer_writeback_guest_address = 0;
     std::uint32_t read_pointer_writeback_block_log2 = 0;
+    std::uint32_t ring_read_pointer_dwords = 0;
+    std::uint64_t packets_executed = 0;
+    std::uint64_t register_writes = 0;
 };
 
 // The binding must be removed before the guest address space is destroyed.
@@ -40,5 +43,11 @@ void vd_bound_initialize_ring_buffer(
     std::uint32_t physical_address, std::uint32_t size_log2);
 void vd_bound_enable_ring_buffer_read_pointer_writeback(
     std::uint32_t physical_address, std::uint32_t block_size_log2);
+// Consume original big-endian Xenos PM4 words from the allocated physical ring.
+// The write pointer is a ring index in dwords, not a byte address.
+// Unsupported GPU commands fail closed rather than pretending to render.
+std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
+                                    std::uint32_t max_packets = 4096);
+std::uint32_t vd_bound_read_gpu_register(std::uint32_t index);
 GpuEngineSnapshot vd_bound_gpu_snapshot();
 }

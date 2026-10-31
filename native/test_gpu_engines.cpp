@@ -81,6 +81,83 @@ int main() {
               state.read_pointer_writeback_block_log2 == 6 &&
               memory.address(writeback)[0] == 0,
               "GPU read pointer writeback uses real guest physical memory");
+        // Exercise actual big-endian PM4 packets from the allocated DMA ring.
+        auto put = [&](std::uint32_t index, std::uint32_t value) {
+            auto* b = memory.address(ring) + index * 4;
+            b[0] = static_cast<std::uint8_t>(value >> 24);
+            b[1] = static_cast<std::uint8_t>(value >> 16);
+            b[2] = static_cast<std::uint8_t>(value >> 8);
+            b[3] = static_cast<std::uint8_t>(value);
+        };
+        put(0, (1U << 16) | 0x123U);
+        put(1, 0x11223344U);
+        put(2, 0x55667788U);
+        put(3, 0x40000000U | (0x23U << 11) | 0x22U);
+        put(4, 0xAABBCCDDU);
+        put(5, 0xEEFF0099U);
+        put(6, 0x80000000U);
+        put(7, 0xC0000000U | (1U << 16) | (0x10U << 8));
+        put(8, 0x11111111U);
+        put(9, 0x22222222U);
+        put(10, 0xC0000000U | (2U << 16) | (0x55U << 8));
+        put(11, 0x4100U);
+        put(12, 0xDEADBEEFU);
+        put(13, 0x10203040U);
+        put(14, 0xC0000000U | (1U << 16) | (0x2DU << 8));
+        put(15, (4U << 16) | 0x40U);
+        put(16, 0x0BADCAFEU);
+        put(17, (2U << 16) | 0x8000U | 0x20U);
+        put(18, 0x11111111U);
+        put(19, 0x22222222U);
+        put(20, 0x33333333U);
+        check(dotm::vd_bound_execute_ring(21) == 7,
+              "Xenos PM4 type-0/1/2/3 packets executed from real ring");
+        state = dotm::vd_bound_gpu_snapshot();
+        check(state.ring_read_pointer_dwords == 21 &&
+              state.packets_executed == 7 && state.register_writes == 10 &&
+              dotm::vd_bound_read_gpu_register(0x123) == 0x11223344U &&
+              dotm::vd_bound_read_gpu_register(0x124) == 0x55667788U &&
+              dotm::vd_bound_read_gpu_register(0x22) == 0xAABBCCDDU &&
+              dotm::vd_bound_read_gpu_register(0x23) == 0xEEFF0099U &&
+              dotm::vd_bound_read_gpu_register(0x4100) == 0xDEADBEEFU &&
+              dotm::vd_bound_read_gpu_register(0x4101) == 0x10203040U &&
+              dotm::vd_bound_read_gpu_register(0x2040) == 0x0BADCAFEU &&
+              dotm::vd_bound_read_gpu_register(0x20) == 0x33333333U,
+              "PM4 register state and repeated writes are preserved");
+        check(memory.address(writeback)[3] == 21,
+              "GPU read pointer writeback advances in guest big-endian memory");
+        put(21, (1U << 16) | 0x100U);
+        put(22, 0xABCDEF12U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(23); },
+                     "Incomplete PM4 packet rejected without consuming it");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 21,
+              "Incomplete PM4 does not advance read pointer");
+        put(23, 0xFEEDCAFEU);
+        check(dotm::vd_bound_execute_ring(24) == 1 &&
+              dotm::vd_bound_read_gpu_register(0x101) == 0xFEEDCAFEU,
+              "Incomplete packet resumes once producer finishes payload");
+        put(24, 0xC0000000U | (0x22U << 8));
+        put(25, 0x1234U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(26); },
+                     "Unimplemented Xenos draw packet must not be silently skipped");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 24,
+              "Unsupported draw command remains pending");
+        // Large NOP advances the read pointer to the final ring dword.
+        put(24, 0xC0000000U | (997U << 16) | (0x10U << 8));
+        check(dotm::vd_bound_execute_ring(1023) == 1 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 1023,
+              "Large PM4 NOP advances to ring boundary");
+        put(1023, (1U << 16) | 0x150U);
+        put(0, 0xCAFE0123U);
+        put(1, 0xCAFE4567U);
+        check(dotm::vd_bound_execute_ring(2) == 1 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 2 &&
+              dotm::vd_bound_read_gpu_register(0x150) == 0xCAFE0123U &&
+              dotm::vd_bound_read_gpu_register(0x151) == 0xCAFE4567U &&
+              memory.address(writeback)[3] == 2,
+              "PM4 payload wraps across physical ring boundary");
+        expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
+                     "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
                      "Unallocated physical command ring rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(physical, 22); },
