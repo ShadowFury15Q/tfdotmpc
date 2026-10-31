@@ -7,6 +7,8 @@ on:
       - 'native/**'
       - 'scripts/private_ppc_preflight.py'
       - 'scripts/test_private_ppc_preflight.py'
+      - 'scripts/audit_ppc_call_sites.py'
+      - 'scripts/test_audit_ppc_call_sites.py'
       - 'scripts/prepare_private_boot.py'
       - 'scripts/extract_dotm_xex_basic.py'
       - 'scripts/test_extract_dotm_xex_basic.py'
@@ -68,6 +70,12 @@ jobs:
         run: |
           python scripts/test_private_ppc_preflight.py
           if ($LASTEXITCODE -ne 0) { throw "Private PPC preflight tests failed" }
+
+      - name: Audit original PPC import call sites (synthetic fixtures only)
+        shell: pwsh
+        run: |
+          python scripts/test_audit_ppc_call_sites.py
+          if ($LASTEXITCODE -ne 0) { throw "PPC call-site audit tests failed" }
 
       - name: Test original XEX2 retail AES/Basic PE decoder (synthetic bytes only)
         shell: pwsh
