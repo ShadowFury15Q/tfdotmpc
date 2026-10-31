@@ -82,6 +82,11 @@ int main() {
     c.r3.u64 = handle;
     __imp__NtClose(c, memory.base());
     check(c.r3.u32 == 0xC0000008U);
+    // A suspended worker must not execute its entrypoint, and teardown must
+    // wake and join it rather than deadlock on its initial suspend gate.
+    create(c, memory, 1U);
+    check(c.r3.u32 == 0);
     dotm::bind_kernel_mutants(nullptr);
     dotm::bind_kernel_threads(nullptr);
+    check(calls.load() == 1);
 }
