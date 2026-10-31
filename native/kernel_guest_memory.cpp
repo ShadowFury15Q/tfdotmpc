@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <algorithm>
 #include <chrono>
+#include <cstring>
+#include <map>
 #include <mutex>
 #include <new>
 #include <stdexcept>
@@ -23,6 +25,27 @@ constexpr std::uint64_t kXboxLargePageSize = 0x10000ULL;
 std::mutex binding_mutex;
 GuestMemory* bound_memory = nullptr;
 GuestVirtualAllocator* bound_allocator = nullptr;
+// Physical allocations are keyed by the 512 MiB physical offset. The three
+// Xbox physical views use different page granularities but share this budget.
+constexpr std::uint64_t kPhysicalBytes = 0x20000000ULL;
+constexpr std::uint32_t kPhysical4kView = 0xE0000000U;
+constexpr std::uint32_t kPhysical64kView = 0xA0000000U;
+constexpr std::uint32_t kPhysical16mView = 0xC0000000U;
+struct PhysicalBlock {
+    std::uint32_t guest_address;
+    std::uint32_t length;
+    std::uint32_t protect;
+};
+std::map<std::uint32_t, PhysicalBlock> physical_blocks;
+bool physical_overlaps(std::uint64_t offset, std::uint64_t length) {
+    auto it = physical_blocks.lower_bound(static_cast<std::uint32_t>(offset));
+    if (it != physical_blocks.end() && it->first < offset + length) return true;
+    if (it != physical_blocks.begin()) {
+        --it;
+        if (std::uint64_t(it->first) + it->second.length > offset) return true;
+    }
+    return false;
+}
 
 bool writable_word(const GuestMemory& memory, std::uint32_t address) {
     const std::uint64_t begin = address;
@@ -161,8 +184,11 @@ std::uint32_t mm_query_statistics_guest(
         GuestMemory::kImageSize / GuestVirtualAllocator::kPageSize : 0ULL;
     const auto allocated_pages = allocator.allocated_bytes() /
         GuestVirtualAllocator::kPageSize;
+    std::uint64_t physical_pages = 0;
+    for (const auto& [offset, block] : physical_blocks)
+        physical_pages += block.length / GuestVirtualAllocator::kPageSize;
     const auto used_pages = static_cast<std::uint32_t>(std::min<std::uint64_t>(
-        kTotalPhysicalPages, image_pages + allocated_pages));
+        kTotalPhysicalPages, image_pages + allocated_pages + physical_pages));
     const auto virtual_bytes = static_cast<std::uint32_t>(std::min<std::uint64_t>(
         kXboxTitleVirtualBytes, allocator.capacity_bytes()));
     const auto reserved_bytes = static_cast<std::uint32_t>(std::min<std::uint64_t>(
@@ -177,7 +203,7 @@ std::uint32_t mm_query_statistics_guest(
     words[3] = kTotalPhysicalPages - used_pages;
     words[4] = virtual_bytes;
     words[5] = reserved_bytes;
-    words[6] = used_pages;
+    words[6] = static_cast<std::uint32_t>(physical_pages);
     words[9] = static_cast<std::uint32_t>(image_pages);
     words[10] = static_cast<std::uint32_t>(allocated_pages);
     words[11] = static_cast<std::uint32_t>(allocated_pages);
@@ -335,9 +361,102 @@ void ke_bound_query_system_time(std::uint32_t output) {
 void bind_kernel_guest_memory(GuestMemory* memory,
                               GuestVirtualAllocator* allocator) noexcept {
     std::lock_guard lock(binding_mutex);
+    if (bound_memory && bound_memory != memory) {
+        for (const auto& [offset, block] : physical_blocks) {
+            try { bound_memory->decommit(block.guest_address, block.length); }
+            catch (const std::exception&) { /* noexcept teardown */ }
+        }
+        physical_blocks.clear();
+    }
     bound_memory = memory && allocator ? memory : nullptr;
     bound_allocator = memory && allocator ? allocator : nullptr;
 }
+
+std::uint32_t mm_bound_allocate_physical_memory_ex(
+    std::uint32_t flags, std::uint32_t bytes, std::uint32_t protect,
+    std::uint32_t min_address, std::uint32_t max_address,
+    std::uint32_t alignment) {
+    std::lock_guard lock(binding_mutex);
+    constexpr std::uint32_t kReadOnly = 2U, kReadWrite = 4U;
+    constexpr std::uint32_t kNoCache = 0x200U, kWriteCombine = 0x400U;
+    constexpr std::uint32_t k16mPages = 0x10000000U, k64kPages = 0x20000000U;
+    constexpr std::uint32_t kAllowed = kReadOnly | kReadWrite | kNoCache |
+        kWriteCombine | k16mPages | k64kPages;
+    const auto access = protect & (kReadOnly | kReadWrite);
+    if (!bound_memory || flags > 2U || !bytes || (protect & ~kAllowed) ||
+        (access != kReadOnly && access != kReadWrite) ||
+        (protect & (k16mPages | k64kPages)) == (k16mPages | k64kPages))
+        return 0;
+    const std::uint64_t page = (protect & k64kPages) ? 0x10000ULL :
+        (protect & k16mPages) ? 0x1000000ULL : 0x1000ULL;
+    const std::uint32_t view = (protect & k64kPages) ? kPhysical64kView :
+        (protect & k16mPages) ? kPhysical16mView : kPhysical4kView;
+    const std::uint64_t effective_alignment =
+        std::max<std::uint64_t>(alignment, page);
+    if ((effective_alignment & (effective_alignment - 1)) != 0 ||
+        effective_alignment > kPhysicalBytes)
+        return 0;
+    const std::uint64_t length = (std::uint64_t(bytes) + page - 1) & ~(page - 1);
+    const std::uint64_t low = min_address;
+    const std::uint64_t high = std::min<std::uint64_t>(
+        max_address, kPhysicalBytes - 1);
+    if (low > high || length > high - low + 1) return 0;
+    // Xbox physical allocations prefer high addresses. Never double-book
+    // physical offsets even when allocations use different page-size views.
+    std::uint64_t candidate = (high + 1 - length) & ~(effective_alignment - 1);
+    for (;;) {
+        if (candidate < low) break;
+        const std::uint64_t guest = std::uint64_t(view) + candidate;
+        if (!physical_overlaps(candidate, length) &&
+            !bound_memory->any_committed_range(guest,
+                                                static_cast<std::size_t>(length))) {
+            try {
+                bound_memory->commit(guest, static_cast<std::size_t>(length));
+                std::memset(bound_memory->address(static_cast<std::uint32_t>(guest)),
+                            0, static_cast<std::size_t>(length));
+                physical_blocks.emplace(static_cast<std::uint32_t>(candidate),
+                    PhysicalBlock{static_cast<std::uint32_t>(guest),
+                                  static_cast<std::uint32_t>(length), protect});
+                return static_cast<std::uint32_t>(guest);
+            } catch (const std::exception&) {
+                return 0;
+            }
+        }
+        if (candidate < effective_alignment) break;
+        candidate -= effective_alignment;
+    }
+    return 0;
+}
+void mm_bound_free_physical_memory(std::uint32_t type,
+                                   std::uint32_t guest_address) {
+    std::lock_guard lock(binding_mutex);
+    if (!bound_memory || type > 2U) return;
+    for (auto it = physical_blocks.begin(); it != physical_blocks.end(); ++it) {
+        if (it->second.guest_address != guest_address) continue;
+        bound_memory->decommit(guest_address, it->second.length);
+        physical_blocks.erase(it);
+        return;
+    }
+}
+std::uint32_t mm_bound_query_physical_allocation_size(
+    std::uint32_t guest_address) {
+    std::lock_guard lock(binding_mutex);
+    if (!bound_memory) return 0;
+    for (const auto& [offset, block] : physical_blocks)
+        if (block.guest_address == guest_address) return block.length;
+    return 0;
+}
+std::uint32_t mm_bound_get_physical_address(std::uint32_t guest_address) {
+    std::lock_guard lock(binding_mutex);
+    if (!bound_memory) return 0;
+    for (const auto& [offset, block] : physical_blocks) {
+        if (guest_address >= block.guest_address &&
+            std::uint64_t(guest_address) - block.guest_address < block.length)
+            return offset + (guest_address - block.guest_address);
+    }
+    return 0;
+}
+
 std::uint32_t nt_bound_allocate_virtual_memory(
     std::uint32_t base_pointer, std::uint32_t size_pointer,
     std::uint32_t allocation_type, std::uint32_t protect,
