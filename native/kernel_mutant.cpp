@@ -14,6 +14,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 namespace dotm {
 namespace {
@@ -130,13 +131,32 @@ std::shared_ptr<Mutant> find_mutant(std::uint32_t handle) {
 // entry throws. Wake these waits before joining the workers: otherwise the
 // host cannot report the original error and hangs during stack unwinding.
 void cancel_kernel_mutant_waiters() noexcept {
-    std::lock_guard lock(registry_mutex);
-    for (auto& [handle, object] : handles) {
-        object->closing.store(true, std::memory_order_release);
+    // A condition_variable notification is not enough when the predicate
+    // changes without its mutex: cancellation can occur after a waiter
+    // checks the predicate but before it sleeps, losing the only wakeup.
+    // Snapshot shared ownership under the registry lock, then synchronize
+    // each predicate update with the exact mutex used by its wait.
+    std::vector<std::shared_ptr<Mutant>> mutants;
+    std::vector<std::shared_ptr<Event>> events;
+    {
+        std::lock_guard lock(registry_mutex);
+        mutants.reserve(handles.size());
+        events.reserve(event_handles.size());
+        for (const auto& [handle, object] : handles) mutants.push_back(object);
+        for (const auto& [handle, object] : event_handles) events.push_back(object);
+    }
+    for (const auto& object : mutants) {
+        {
+            std::lock_guard lock(object->mutex);
+            object->closing.store(true, std::memory_order_release);
+        }
         object->ready.notify_all();
     }
-    for (auto& [handle, object] : event_handles) {
-        object->closing.store(true, std::memory_order_release);
+    for (const auto& object : events) {
+        {
+            std::lock_guard lock(object->mutex);
+            object->closing.store(true, std::memory_order_release);
+        }
         object->ready.notify_all();
     }
 }
