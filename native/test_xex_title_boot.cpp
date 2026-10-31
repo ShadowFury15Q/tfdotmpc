@@ -110,6 +110,17 @@ int main() {
     check(bad_command_line_import && !memory.committed_range(0x81907000U, 1));
     for (int i = 0; i < 4; ++i)
         memory.address(0x820009D8U)[i] = std::uint8_t(0x000101AEU >> (24 - i * 8));
+    // Xbox kernel ordinal 614 is KeCertMonitorData, a nullable data export.
+    put32(header, 36, 256);
+    for (int i = 0; i < 4; ++i)
+        memory.address(0x82000958U)[i] = std::uint8_t(0xDEADBEEFU >> (24 - i * 8));
+    bool bad_cert_import = false;
+    try { dotm::install_original_xex_title_header(memory, file.path, entry); }
+    catch (const std::runtime_error&) { bad_cert_import = true; }
+    check(bad_cert_import && !memory.committed_range(0x81909000U, 4),
+          "Corrupt KeCertMonitorData ordinal rejected before allocation");
+    for (int i = 0; i < 4; ++i)
+        memory.address(0x82000958U)[i] = std::uint8_t(0x00010266U >> (24 - i * 8));
     check(dotm::install_original_xex_title_header(memory, file.path, entry)
           == 0x81000000U);
     check(get32(memory, 0x8200085CU) == 0x81904000U);
@@ -117,6 +128,9 @@ int main() {
     check(get32(memory, 0x82000998U) == 0x81900000U);
     check(get32(memory, 0x820009D8U) == 0x81907000U);
     check(get32(memory, 0x820009B0U) == 0x81908000U);
+    check(get32(memory, 0x82000958U) == 0x81909000U &&
+          get32(memory, 0x81909000U) == 0U,
+          "KeCertMonitorData import resolves to disabled retail monitor pointer");
     check(get32(memory, 0x81908000U) == 27U);
     check(std::strcmp(reinterpret_cast<const char*>(memory.address(0x81907000U)),
                       "\"default.xex\"") == 0,

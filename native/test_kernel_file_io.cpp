@@ -11,6 +11,7 @@
 
 PPC_EXTERN_FUNC(__imp__NtCreateFile);
 PPC_EXTERN_FUNC(__imp__NtReadFile);
+PPC_EXTERN_FUNC(__imp__NtQueryInformationFile);
 PPC_EXTERN_FUNC(__imp__NtClose);
 namespace {
 void check(bool ok, const char* message) {
@@ -68,6 +69,21 @@ int main() {
               get32(m, iosb+4) == 1, "NtCreateFile opens real host-backed title file");
         const auto handle = get32(m, handle_out);
         check(handle >= 0xF9000000U && handle < 0xFA000000U, "File handle namespace");
+        // Original title first requests FILE_NETWORK_OPEN_INFORMATION (34).
+        ctx.r3.u64 = handle; ctx.r4.u64 = iosb; ctx.r5.u64 = buffer;
+        ctx.r6.u64 = 56; ctx.r7.u64 = 34;
+        __imp__NtQueryInformationFile(ctx, m.base());
+        const auto length = (std::uint64_t(get32(m, buffer + 40)) << 32) |
+            get32(m, buffer + 44);
+        check(ctx.r3.u32 == 0 && length == 22 &&
+              get32(m, buffer + 48) == 0x80 && get32(m, iosb+4) == 56,
+              "NtQueryInformationFile returns real host file size and Xbox metadata");
+        ctx.r3.u64 = handle; ctx.r4.u64 = iosb; ctx.r5.u64 = buffer;
+        ctx.r6.u64 = 24; ctx.r7.u64 = 5;
+        __imp__NtQueryInformationFile(ctx, m.base());
+        check(ctx.r3.u32 == 0 && get32(m, buffer + 12) == 22 &&
+              get32(m, iosb+4) == 24,
+              "FileStandardInformation returns exact file length");
         put32(m, stack + 84, 0);
         ctx.r3.u64 = handle; ctx.r4.u64 = 0; ctx.r5.u64 = 0;
         ctx.r6.u64 = 0; ctx.r7.u64 = iosb; ctx.r8.u64 = buffer;

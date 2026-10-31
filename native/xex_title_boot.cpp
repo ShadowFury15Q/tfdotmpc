@@ -41,6 +41,9 @@ constexpr std::uint32_t kCommandLineAddress = 0x81907000U;
 // Retail xboxkrnl export ordinal 27 is ExThreadObjectType, a data import.
 constexpr std::uint32_t kThreadTypeImport = 0x820009B0U;
 constexpr std::uint32_t kThreadTypeAddress = 0x81908000U;
+// Retail kernel ordinal 614 (0x266): KeCertMonitorData, optional monitor pointer.
+constexpr std::uint32_t kCertMonitorImport = 0x82000958U;
+constexpr std::uint32_t kCertMonitorAddress = 0x81909000U;
 constexpr std::uint32_t kRetailHardwareFlags = 0x20U;
 constexpr std::uint8_t kHardwareCpuCount = 6U;
 // The original DOTM sub_827813F8 dereferences [0x82000998] then its handle,
@@ -250,7 +253,8 @@ std::uint32_t install_original_xex_title_header(
         !memory.committed_range(kHardwareInfoImport, 4) ||
         !memory.committed_range(kDebugMonitorImport, 4) ||
         !memory.committed_range(kCommandLineImport, 4) ||
-        !memory.committed_range(kThreadTypeImport, 4))
+        !memory.committed_range(kThreadTypeImport, 4) ||
+        !memory.committed_range(kCertMonitorImport, 4))
         throw std::runtime_error("Load original decrypted PE before XEX2 module wiring");
     const auto timestamp_import_tag = be32(memory.address(kTimeStampBundleImport));
     if (timestamp_import_tag != 0 && timestamp_import_tag != 0x000100ADU)
@@ -267,6 +271,9 @@ std::uint32_t install_original_xex_title_header(
     const auto thread_type_tag = be32(memory.address(kThreadTypeImport));
     if (thread_type_tag != 0 && thread_type_tag != 0x0001001BU)
         throw std::runtime_error("Unexpected ExThreadObjectType import ordinal");
+    const auto cert_monitor_tag = be32(memory.address(kCertMonitorImport));
+    if (cert_monitor_tag != 0 && cert_monitor_tag != 0x00010266U)
+        throw std::runtime_error("Unexpected KeCertMonitorData import ordinal");
     if (memory.any_committed_range(kHeaderAddress, kMaximumHeaderSize) ||
         memory.any_committed_range(kModuleHandleAddress, 4096) ||
         memory.any_committed_range(kModuleAddress, 4096) ||
@@ -276,7 +283,8 @@ std::uint32_t install_original_xex_title_header(
         memory.any_committed_range(kHardwareInfoAddress, 4096) ||
         memory.any_committed_range(kDebugMonitorAddress, 4096) ||
         memory.any_committed_range(kCommandLineAddress, 4096) ||
-        memory.any_committed_range(kThreadTypeAddress, 4096))
+        memory.any_committed_range(kThreadTypeAddress, 4096) ||
+        memory.any_committed_range(kCertMonitorAddress, 4096))
         throw std::runtime_error("XEX2 module boot memory overlaps existing guest state");
     // Validate the executable entry BEFORE touching any guest memory.
     bool matched_entry = false;
@@ -311,6 +319,7 @@ std::uint32_t install_original_xex_title_header(
     memory.commit(kDebugMonitorAddress, 4096);
     memory.commit(kCommandLineAddress, 4096);
     memory.commit(kThreadTypeAddress, 4096);
+    memory.commit(kCertMonitorAddress, 4096);
     // System XAM module uses an Xbox 360 LDR_DATA_TABLE_ENTRY as HMODULE.
     // No proprietary xam.xex is loaded: only the built-in native service handle.
     std::memset(memory.address(kXamModuleAddress), 0, 4096);
@@ -347,6 +356,10 @@ std::uint32_t install_original_xex_title_header(
     constexpr char thread_name[] = "Thread";
     std::memcpy(memory.address(kThreadTypeAddress + 4U), thread_name, sizeof(thread_name));
     put32(memory, kThreadTypeImport, kThreadTypeAddress);
+    // Certification monitoring is not attached in retail title execution.
+    // Export points at a valid guest variable containing a null callback pointer.
+    std::memset(memory.address(kCertMonitorAddress), 0, 4096);
+    put32(memory, kCertMonitorImport, kCertMonitorAddress);
     put32(memory, kModuleHandleAddress, kModuleAddress);
     put32(memory, kModuleAddress + 0x58, kHeaderAddress);
     put32(memory, kOriginalModuleImport, kModuleHandleAddress);

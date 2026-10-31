@@ -1,5 +1,6 @@
 #include "kernel_file_io.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <fstream>
 #include <limits>
@@ -24,6 +25,7 @@ constexpr std::uint32_t kNotSupported = 0xC00000BBU;
 constexpr std::uint32_t kFirstHandle = 0xF9000000U;
 struct FileState {
     std::ifstream stream;
+    std::filesystem::path path;
     std::uint64_t position = 0;
 };
 std::mutex mutex;
@@ -57,6 +59,10 @@ void write32(std::uint32_t address, std::uint32_t value) {
     auto* p = memory->address(address);
     for (int i = 0; i < 4; ++i)
         p[i] = std::uint8_t(value >> (24 - 8*i));
+}
+void write64(std::uint32_t address, std::uint64_t value) {
+    write32(address, static_cast<std::uint32_t>(value >> 32));
+    write32(address + 4, static_cast<std::uint32_t>(value));
 }
 void set_io_status(std::uint32_t address, std::uint32_t status, std::uint32_t bytes) {
     write32(address, status);
@@ -160,6 +166,7 @@ std::uint32_t nt_bound_create_file(std::uint32_t handle_out,
     if (!std::filesystem::is_regular_file(*resolved, ec) || ec) return kAccessDenied;
     if (next_handle >= 0xF9FFFFFCU) return kNotSupported;
     auto file = std::make_shared<FileState>();
+    file->path = *resolved;
     file->stream.open(*resolved, std::ios::binary);
     if (!file->stream.is_open()) return kAccessDenied;
     const auto handle = next_handle;
@@ -199,6 +206,55 @@ std::uint32_t nt_bound_read_file(std::uint32_t handle, std::uint32_t event,
     const auto status = (length && !count) ? kEndOfFile : kSuccess;
     set_io_status(io_status, status, count);
     return status;
+}
+std::uint32_t nt_bound_query_information_file(std::uint32_t handle,
+    std::uint32_t io_status, std::uint32_t output,
+    std::uint32_t length, std::uint32_t info_class) {
+    std::lock_guard lock(mutex);
+    const auto it = files.find(handle);
+    if (it == files.end()) return kInvalidHandle;
+    const auto expected = info_class == 34 ? 56U :
+        info_class == 5 ? 24U : info_class == 14 ? 8U : 0U;
+    if (!expected) return 0xC0000003U; // STATUS_INVALID_INFO_CLASS
+    if ((io_status & 3U) || !valid(io_status, 8, true) ||
+        (output & 7U) || length < expected || !valid(output, expected, true))
+        return kInvalidParameter;
+    const auto& file = *it->second;
+    if (info_class == 14) {
+        write64(output, file.position);
+    } else {
+        std::error_code ec;
+        const auto size = std::filesystem::file_size(file.path, ec);
+        if (ec) return kAccessDenied;
+        const auto allocation = (size + 4095U) & ~std::uint64_t(4095U);
+        if (info_class == 5) {
+            write64(output, allocation);
+            write64(output + 8, size);
+            write32(output + 16, 1); // NumberOfLinks
+            auto* tail = memory->address(output + 20);
+            tail[0] = 0; tail[1] = 0; tail[2] = 0; tail[3] = 0;
+        } else {
+            // FILE_NETWORK_OPEN_INFORMATION, 56 bytes. Portable host APIs
+            // expose modification time but not reliable creation/access/change.
+            const auto mtime = std::filesystem::last_write_time(file.path, ec);
+            if (ec) return kAccessDenied;
+            const auto unix_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::file_clock::to_sys(mtime).time_since_epoch()).count();
+            constexpr std::uint64_t epoch = 116444736000000000ULL;
+            const auto last_write = unix_ns >= 0 ?
+                epoch + static_cast<std::uint64_t>(unix_ns / 100) : 0U;
+            write64(output, 0); // CreationTime unknown
+            write64(output + 8, 0); // LastAccessTime unknown
+            write64(output + 16, last_write);
+            write64(output + 24, 0); // ChangeTime unknown
+            write64(output + 32, allocation);
+            write64(output + 40, size);
+            write32(output + 48, 0x80U); // FILE_ATTRIBUTE_NORMAL
+            write32(output + 52, 0);
+        }
+    }
+    set_io_status(io_status, kSuccess, expected);
+    return kSuccess;
 }
 std::uint32_t nt_bound_close_file(std::uint32_t handle) {
     std::lock_guard lock(mutex);
