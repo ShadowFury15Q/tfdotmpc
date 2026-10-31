@@ -169,6 +169,7 @@ int main() {
         __imp__NtOpenFile(ctx, m.base());
         check(ctx.r3.u32 == 0xC0000022U,
               "NtOpenFile must deny host write access");
+        ctx.r3.u64 = handle_out;
         ctx.r4.u64 = 0x00100080U; ctx.r8.u64 = 0x4060U;
         __imp__NtOpenFile(ctx, m.base());
         check(ctx.r3.u32 == 0xC00000BBU,
