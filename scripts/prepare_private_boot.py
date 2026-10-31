@@ -125,7 +125,11 @@ def boot(repo, output, ppc, pe, xex, simde):
     build_path = output / "native-build"
     args = [cmake, "-S", str(repo / "native"), "-B", str(build_path),
             "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
-            "-DCMAKE_CXX_COMPILER=" + clang, "-DDOTM_PRIVATE_PPC_DIR=" + str(ppc)]
+            "-DCMAKE_CXX_COMPILER=" + clang, "-DDOTM_PRIVATE_PPC_DIR=" + str(ppc),
+            # The bctr jump-table repair requires original decrypted PPC bytes.
+            # Without this, the private link can succeed but indirect branches
+            # inside original functions still use incomplete generated targets.
+            "-DDOTM_PRIVATE_PE_FILE=" + str(pe)]
     if simde:
         args.append("-DDOTM_SIMDE_INCLUDE_DIR=" + str(simde))
     checked(args)
