@@ -336,15 +336,46 @@ int main() {
               dotm::vd_bound_read_gpu_register(0x123U) ==
                   (register_after_match | 0x20U),
               "Per-half PM4 bin updates restore high-bin predicated execution");
-        put(57, 0xC0005000U); put(58, 0U);
-        expect_throw([&] { dotm::vd_bound_execute_ring(59); },
+        // REG_RMW can read its AND and OR operands from GPU registers.
+        // Set them through the guest MMIO aperture, as the original PPC
+        // driver does, and verify all three register-source combinations.
+        auto* and_source = memory.address(0x7FC80000U + 0x200U * 4U);
+        auto* or_source = memory.address(0x7FC80000U + 0x201U * 4U);
+        for (unsigned i = 0; i < 4; ++i) {
+            and_source[i] = 0x0FU;
+            or_source[i] = 0x10U;
+        }
+        const auto rmw_before = dotm::vd_bound_read_gpu_register(0x123U);
+        put(57, 0xC0022100U); put(58, 0xC0000123U);
+        put(59, 0xFFFF0200U); put(60, 0xFFFF0201U);
+        const auto both_expected = (rmw_before & 0x0F0F0F0FU) | 0x10101010U;
+        check(dotm::vd_bound_execute_ring(61) == 1 &&
+              dotm::vd_bound_read_gpu_register(0x123U) == both_expected &&
+              dotm::vd_bound_read_gpu_mmio_register(0x123U) == both_expected &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 61,
+              "PM4 REG_RMW resolves both register operands and masks their indices");
+        put(61, 0xC0022100U); put(62, 0x80000123U);
+        put(63, 0x200U); put(64, 0xFFFFFFFFU);
+        const auto and_expected = both_expected & 0x0F0F0F0FU;
+        check(dotm::vd_bound_execute_ring(65) == 1 &&
+              dotm::vd_bound_read_gpu_register(0x123U) == and_expected,
+              "PM4 REG_RMW supports register AND with immediate OR");
+        put(65, 0xC0022100U); put(66, 0x40000123U);
+        put(67, 0U); put(68, 0x201U);
+        check(dotm::vd_bound_execute_ring(69) == 1 &&
+              dotm::vd_bound_read_gpu_register(0x123U) == 0x10101010U &&
+              dotm::vd_bound_read_gpu_register(0x200U) == 0x0F0F0F0FU &&
+              dotm::vd_bound_read_gpu_register(0x201U) == 0x10101010U,
+              "PM4 REG_RMW supports immediate AND with register OR");
+        put(69, 0xC0005000U); put(70, 0U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(71); },
                      "Malformed Xenos SET_BIN_MASK packet rejected");
-        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 57,
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 69,
               "Malformed bin packet cannot advance GPU read pointer");
-        put(57, 0xC0002200U); put(58, 0x1234U);
-        expect_throw([&] { dotm::vd_bound_execute_ring(59); },
+        put(69, 0xC0002200U); put(70, 0x1234U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(71); },
                      "Unmasked original draw still requires a real rendering backend");
-        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 57,
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 69,
               "Unimplemented unmasked draw remains pending");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
