@@ -300,6 +300,52 @@ int main() {
                      "Altered ME_INIT packet must fail before GPU read pointer advances");
         check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 27,
               "Unverified ME_INIT DMA packet remains pending");
+        // Real Xenos tiled rendering uses 64-bit bin masks and selections.
+        // The high and low DWORDs of each PM4 packet must not be swapped.
+        const auto register_before_bins = dotm::vd_bound_read_gpu_register(0x123U);
+        put(27, 0xC0015000U); put(28, 1U); put(29, 2U); // SET_BIN_MASK
+        put(30, 0xC0015100U); put(31, 1U); put(32, 0U); // SET_BIN_SELECT
+        put(33, 0xC0022101U); // Predicated REG_RMW: selected high bin matches.
+        put(34, 0x123U); put(35, 0xFFFFFFFFU); put(36, 0x10U);
+        check(dotm::vd_bound_execute_ring(37) == 3 &&
+              dotm::vd_bound_gpu_snapshot().bin_mask == 0x100000002ULL &&
+              dotm::vd_bound_gpu_snapshot().bin_select == 0x100000000ULL &&
+              dotm::vd_bound_read_gpu_register(0x123U) ==
+                  (register_before_bins | 0x10U),
+              "Xenos 64-bit bin selection executes matching predicated PM4 writes");
+        const auto register_after_match = dotm::vd_bound_read_gpu_register(0x123U);
+        put(37, 0xC0006000U); put(38, 0U); // SET_BIN_MASK_LO
+        put(39, 0xC0006100U); put(40, 0U); // SET_BIN_MASK_HI
+        put(41, 0xC0022101U); // Predicated REG_RMW must not write.
+        put(42, 0x123U); put(43, 0U); put(44, 0xFFFFFFFFU);
+        put(45, 0xC0002201U); put(46, 0x1234U); // Masked-out draw.
+        check(dotm::vd_bound_execute_ring(47) == 4 &&
+              dotm::vd_bound_gpu_snapshot().bin_mask == 0 &&
+              dotm::vd_bound_read_gpu_register(0x123U) == register_after_match &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 47 &&
+              memory.address(writeback)[3] == 47,
+              "Masked-out PM4 writes and draws consume packets without side effects");
+        put(47, 0xC0006100U); put(48, 1U); // SET_BIN_MASK_HI
+        put(49, 0xC0006200U); put(50, 0U); // SET_BIN_SELECT_LO
+        put(51, 0xC0006300U); put(52, 1U); // SET_BIN_SELECT_HI
+        put(53, 0xC0022101U);
+        put(54, 0x123U); put(55, 0xFFFFFFFFU); put(56, 0x20U);
+        check(dotm::vd_bound_execute_ring(57) == 4 &&
+              dotm::vd_bound_gpu_snapshot().bin_mask == 0x100000000ULL &&
+              dotm::vd_bound_gpu_snapshot().bin_select == 0x100000000ULL &&
+              dotm::vd_bound_read_gpu_register(0x123U) ==
+                  (register_after_match | 0x20U),
+              "Per-half PM4 bin updates restore high-bin predicated execution");
+        put(57, 0xC0005000U); put(58, 0U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(59); },
+                     "Malformed Xenos SET_BIN_MASK packet rejected");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 57,
+              "Malformed bin packet cannot advance GPU read pointer");
+        put(57, 0xC0002200U); put(58, 0x1234U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(59); },
+                     "Unmasked original draw still requires a real rendering backend");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 57,
+              "Unimplemented unmasked draw remains pending");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
