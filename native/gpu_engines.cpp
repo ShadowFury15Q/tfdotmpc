@@ -168,12 +168,14 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
         const auto header = at(start);
         const auto type = header >> 30;
         const auto count = ((header >> 16) & 0x3FFFU) + 1;
-        const auto payload = header == 0 || type == 2 ? 0U :
-                             type == 1 ? 2U : count;
+        // A zero dword is a valid type-0 packet writing register zero.
+        // Only type-2 packets have no payload; treating header zero as
+        // padding silently desynchronizes the command processor.
+        const auto payload = type == 2 ? 0U : type == 1 ? 2U : count;
         if (payload >= available)
             throw std::runtime_error("Incomplete Xenos PM4 packet in physical ring");
         const auto first = (start + 1) % capacity;
-        if (header != 0 && type == 0) {
+        if (type == 0) {
             const auto base = header & 0x7FFFU;
             const bool repeat = (header & 0x8000U) != 0;
             if (base >= gpu_registers.size() ||
