@@ -392,7 +392,144 @@ void ke_bound_query_system_time(std::uint32_t output) {
     ke_query_system_time_guest(*bound_memory, output,
         kFiletimeUnixEpoch + static_cast<std::uint64_t>(unix_ns / 100));
 }
-void bind_kernel_guest_memory(GuestMemory* memory,
+
+namespace {
+constexpr std::uint64_t kNtTicksPerSecond = 10000000ULL;
+constexpr std::uint64_t kNtTicksPerDay = 86400ULL * kNtTicksPerSecond;
+constexpr std::int64_t kNtDaysBeforeUnixEpoch = 134774;
+
+// Civil-date arithmetic uses the proleptic Gregorian calendar. It is
+// independent of the host timezone, locale, and time_t width.
+struct NtCivilDate { int year; unsigned month; unsigned day; };
+std::int64_t nt_days_from_civil(int year, unsigned month, unsigned day) {
+    year -= month <= 2;
+    const int era = (year >= 0 ? year : year - 399) / 400;
+    const unsigned year_of_era = static_cast<unsigned>(year - era * 400);
+    const unsigned day_of_year = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
+    const unsigned day_of_era = year_of_era * 365 + year_of_era / 4 -
+        year_of_era / 100 + day_of_year;
+    return static_cast<std::int64_t>(era) * 146097 + day_of_era - 719468;
+}
+NtCivilDate nt_civil_from_days(std::int64_t days) {
+    days += 719468;
+    const std::int64_t era = (days >= 0 ? days : days - 146096) / 146097;
+    const unsigned day_of_era = static_cast<unsigned>(days - era * 146097);
+    const unsigned year_of_era = (day_of_era - day_of_era / 1460 +
+        day_of_era / 36524 - day_of_era / 146096) / 365;
+    int year = static_cast<int>(year_of_era + era * 400);
+    const unsigned day_of_year = day_of_era -
+        (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    const unsigned month_prime = (5 * day_of_year + 2) / 153;
+    const unsigned day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    const unsigned month = month_prime < 10 ? month_prime + 3 : month_prime - 9;
+    year += month <= 2;
+    return {year, month, day};
+}
+bool nt_leap_year(int year) {
+    return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+}
+unsigned nt_days_in_month(int year, unsigned month) {
+    static constexpr unsigned days[12] =
+        {31,28,31,30,31,30,31,31,30,31,30,31};
+    return days[month - 1] + (month == 2 && nt_leap_year(year) ? 1U : 0U);
+}
+bool nt_time_buffer(const GuestMemory& memory, std::uint32_t address,
+                    std::uint32_t bytes, std::uint32_t alignment) {
+    const auto begin = static_cast<std::uint64_t>(address);
+    const auto end = begin + bytes;
+    const auto table = GuestMemory::kFunctionTableOffset;
+    return begin >= 0x10000U && (address & (alignment - 1)) == 0 &&
+        end <= GuestMemory::kAddressSpaceSize &&
+        !(begin < table + GuestMemory::kFunctionTableSize && end > table) &&
+        memory.committed_range(address, bytes);
+}
+std::uint16_t nt_read_be16(const std::uint8_t* p) {
+    return static_cast<std::uint16_t>((std::uint16_t(p[0]) << 8) | p[1]);
+}
+void nt_write_be16(std::uint8_t* p, std::uint16_t value) {
+    p[0] = static_cast<std::uint8_t>(value >> 8);
+    p[1] = static_cast<std::uint8_t>(value);
+}
+}
+void rtl_time_to_time_fields_guest(GuestMemory& memory,
+    std::uint32_t time_pointer, std::uint32_t fields_pointer) {
+    if (!nt_time_buffer(memory, time_pointer, 8, 8) ||
+        !nt_time_buffer(memory, fields_pointer, 16, 2))
+        throw std::runtime_error("RtlTimeToTimeFields: invalid guest pointer");
+    const auto* input = memory.address(time_pointer);
+    std::uint64_t ticks = 0;
+    for (int i = 0; i < 8; ++i) ticks = (ticks << 8) | input[i];
+    if (ticks > 0x7FFFFFFFFFFFFFFFULL)
+        throw std::runtime_error("RtlTimeToTimeFields: negative NT time");
+    const std::uint64_t nt_days = ticks / kNtTicksPerDay;
+    const auto civil = nt_civil_from_days(
+        static_cast<std::int64_t>(nt_days) - kNtDaysBeforeUnixEpoch);
+    if (civil.year < 1601 || civil.year > 32767)
+        throw std::runtime_error("RtlTimeToTimeFields: year exceeds TIME_FIELDS");
+    std::uint64_t remainder = ticks % kNtTicksPerDay;
+    const auto hour = static_cast<std::uint16_t>(remainder / (3600 * kNtTicksPerSecond));
+    remainder %= 3600 * kNtTicksPerSecond;
+    const auto minute = static_cast<std::uint16_t>(remainder / (60 * kNtTicksPerSecond));
+    remainder %= 60 * kNtTicksPerSecond;
+    const auto second = static_cast<std::uint16_t>(remainder / kNtTicksPerSecond);
+    remainder %= kNtTicksPerSecond;
+    const auto millisecond = static_cast<std::uint16_t>(remainder / 10000);
+    // 1601-01-01 was Monday; Windows uses Sunday=0.
+    const std::uint16_t values[8] = {
+        static_cast<std::uint16_t>(civil.year),
+        static_cast<std::uint16_t>(civil.month),
+        static_cast<std::uint16_t>(civil.day), hour, minute, second,
+        millisecond, static_cast<std::uint16_t>((nt_days + 1) % 7)};
+    auto* output = memory.address(fields_pointer);
+    for (int i = 0; i < 8; ++i) nt_write_be16(output + 2 * i, values[i]);
+}
+bool rtl_time_fields_to_time_guest(GuestMemory& memory,
+    std::uint32_t fields_pointer, std::uint32_t time_pointer) {
+    if (!nt_time_buffer(memory, fields_pointer, 16, 2) ||
+        !nt_time_buffer(memory, time_pointer, 8, 8))
+        throw std::runtime_error("RtlTimeFieldsToTime: invalid guest pointer");
+    const auto* input = memory.address(fields_pointer);
+    std::uint16_t fields[8]{};
+    for (int i = 0; i < 8; ++i) fields[i] = nt_read_be16(input + 2 * i);
+    const int year = fields[0];
+    const unsigned month = fields[1], day = fields[2];
+    const unsigned hour = fields[3], minute = fields[4], second = fields[5];
+    const unsigned millisecond = fields[6];
+    if (year < 1601 || year > 32767 || month < 1 || month > 12 ||
+        day < 1 || day > nt_days_in_month(year, month) ||
+        hour > 23 || minute > 59 || second > 59 || millisecond > 999)
+        return false;
+    // Weekday (field 7) is output-only and is ignored by the NT conversion.
+    const auto nt_days = nt_days_from_civil(year, month, day) +
+        kNtDaysBeforeUnixEpoch;
+    if (nt_days < 0) return false;
+    const std::uint64_t ticks =
+        static_cast<std::uint64_t>(nt_days) * kNtTicksPerDay +
+        (static_cast<std::uint64_t>(hour) * 3600 + minute * 60 + second) *
+            kNtTicksPerSecond + static_cast<std::uint64_t>(millisecond) * 10000;
+    if (ticks > 0x7FFFFFFFFFFFFFFFULL) return false;
+    auto* output = memory.address(time_pointer);
+    for (int i = 0; i < 8; ++i)
+        output[i] = static_cast<std::uint8_t>(ticks >> (56 - i * 8));
+    return true;
+}
+void rtl_bound_time_to_time_fields(std::uint32_t time_pointer,
+    std::uint32_t fields_pointer) {
+    std::lock_guard lock(binding_mutex);
+    if (!bound_memory)
+        throw std::runtime_error("RtlTimeToTimeFields: guest memory not bound");
+    rtl_time_to_time_fields_guest(*bound_memory, time_pointer, fields_pointer);
+}
+std::uint32_t rtl_bound_time_fields_to_time(std::uint32_t fields_pointer,
+    std::uint32_t time_pointer) {
+    std::lock_guard lock(binding_mutex);
+    if (!bound_memory)
+        throw std::runtime_error("RtlTimeFieldsToTime: guest memory not bound");
+    return rtl_time_fields_to_time_guest(*bound_memory, fields_pointer,
+        time_pointer) ? 1U : 0U;
+}
+
+void bind_kernel_guest_memory(GuestMemory* memory:
                               GuestVirtualAllocator* allocator) noexcept {
     std::lock_guard lock(binding_mutex);
     if (bound_memory && bound_memory != memory) {

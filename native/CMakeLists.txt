@@ -63,6 +63,14 @@ target_include_directories(dotm_kernel_performance_ppc_test PRIVATE
 target_link_libraries(dotm_kernel_performance_ppc_test PRIVATE dotm_kernel_guest_memory)
 add_test(NAME xbox360_performance_frequency_original_ppc_abi
   COMMAND dotm_kernel_performance_ppc_test)
+# Xbox NT calendar conversion from the original PPC file I/O code:
+# 64-bit 100ns FILETIME and 8 x big-endian 16-bit TIME_FIELDS.
+add_executable(dotm_kernel_time_ppc_test test_kernel_time.cpp kernel_ppc_import.cpp)
+target_include_directories(dotm_kernel_time_ppc_test PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures)
+target_link_libraries(dotm_kernel_time_ppc_test PRIVATE dotm_kernel_guest_memory)
+add_test(NAME xbox360_nt_calendar_time_fields_ppc_abi COMMAND dotm_kernel_time_ppc_test)
+
 # Real Xbox kernel thread-local slots, including per-thread value isolation.
 find_package(Threads REQUIRED)
 # Implement actual Xbox 360 RTL ULONG memory primitives on committed guest pages.

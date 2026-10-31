@@ -64,6 +64,17 @@ std::uint32_t nt_free_virtual_memory_guest(
 void ke_query_system_time_guest(GuestMemory& memory, std::uint32_t output,
                                 std::uint64_t filetime);
 void ke_bound_query_system_time(std::uint32_t output);
+
+// Xbox NT time conversion uses 100-nanosecond intervals since 1601-01-01.
+// TIME_FIELDS is eight big-endian signed 16-bit words in the original PPC ABI.
+void rtl_time_to_time_fields_guest(GuestMemory& memory,
+    std::uint32_t time_pointer, std::uint32_t fields_pointer);
+bool rtl_time_fields_to_time_guest(GuestMemory& memory,
+    std::uint32_t fields_pointer, std::uint32_t time_pointer);
+void rtl_bound_time_to_time_fields(std::uint32_t time_pointer,
+    std::uint32_t fields_pointer);
+std::uint32_t rtl_bound_time_fields_to_time(std::uint32_t fields_pointer,
+    std::uint32_t time_pointer);
 // Xbox DbgPrint: format in r3, seven 32-bit PPC varargs in r4-r10.
 // Reads only committed guest strings; never passes guest pointers to host printf.
 std::uint32_t ke_bound_dbg_print(std::uint32_t format,

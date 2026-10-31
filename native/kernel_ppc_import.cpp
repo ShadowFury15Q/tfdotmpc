@@ -88,6 +88,18 @@ PPC_FUNC(__imp__KeQuerySystemTime) {
     dotm::ke_bound_query_system_time(ctx.r3.u32);
 }
 
+
+// Original CRT and file timestamps use big-endian NT TIME_FIELDS (8 x SHORT).
+// RtlTimeToTimeFields is void; RtlTimeFieldsToTime returns BOOLEAN in r3.
+PPC_FUNC(__imp__RtlTimeToTimeFields) {
+    (void)base;
+    dotm::rtl_bound_time_to_time_fields(ctx.r3.u32, ctx.r4.u32);
+}
+PPC_FUNC(__imp__RtlTimeFieldsToTime) {
+    (void)base;
+    ctx.r3.u64 = dotm::rtl_bound_time_fields_to_time(ctx.r3.u32, ctx.r4.u32);
+}
+
 // The original title runs in Xbox 360 user process type 1.
 PPC_FUNC(__imp__KeGetCurrentProcessType) {
     ctx.r3.u64 = 1U;
