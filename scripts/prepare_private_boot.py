@@ -116,7 +116,7 @@ def verified_or_extracted_pe(root, output, extractor):
     return verify_pe(path)
 
 
-def boot(repo, output, ppc, pe, xex, simde, game_root):
+def boot(repo, root, output, ppc, pe, xex, simde, game_root):
     cmake, ninja = shutil.which("cmake"), shutil.which("ninja")
     clang = shutil.which("clang++") or shutil.which("clang-cl")
     if not (cmake and ninja and clang):
@@ -140,6 +140,11 @@ def boot(repo, output, ppc, pe, xex, simde, game_root):
                            else "dotm_private_link_probe")
     print("Attempting the ORIGINAL PPC _xstart, not the synthetic test.")
     env = os.environ.copy()
+    if game_root is None:
+        for candidate in (root, output / "game", output.parent / "game"):
+            if (candidate / "TransGame" / "Xbox360TOC.txt").is_file():
+                game_root = candidate
+                break
     if game_root is not None:
         game_root = game_root.resolve()
         toc = game_root / "TransGame" / "Xbox360TOC.txt"
@@ -180,7 +185,7 @@ def main():
         pe = verified_or_extracted_pe(root, output, args.extractor)
         print("PRIVATE ORIGINAL INPUTS READY:", ppc, pe, xex)
         if args.boot:
-            boot(repo, output, ppc, pe, xex, args.simde_include, args.game_root)
+            boot(repo, root, output, ppc, pe, xex, args.simde_include, args.game_root)
         else:
             print("Use --boot to compile all 697 private PPC units and attempt original _xstart.")
         return 0
