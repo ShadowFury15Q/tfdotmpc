@@ -529,7 +529,7 @@ std::uint32_t rtl_bound_time_fields_to_time(std::uint32_t fields_pointer,
         time_pointer) ? 1U : 0U;
 }
 
-void bind_kernel_guest_memory(GuestMemory* memory:
+void bind_kernel_guest_memory(GuestMemory* memory,
                               GuestVirtualAllocator* allocator) noexcept {
     std::lock_guard lock(binding_mutex);
     if (bound_memory && bound_memory != memory) {
