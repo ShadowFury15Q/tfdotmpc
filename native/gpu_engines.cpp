@@ -62,6 +62,26 @@ std::uint64_t hash_guest_packet(std::uint32_t address, std::uint32_t words) {
     return hash;
 }
 }
+constexpr std::uint32_t kXenosMmioBase = 0x7FC80000U;
+constexpr std::uint32_t kXenosMmioBytes = 0x00080000U;
+void vd_bound_map_gpu_mmio() {
+    std::lock_guard lock(gpu_mutex);
+    if (!guest_memory)
+        throw std::runtime_error("Xbox GPU MMIO requires a guest address space");
+    if (guest_memory->any_committed_range(kXenosMmioBase, kXenosMmioBytes)) {
+        if (guest_memory->committed_range(kXenosMmioBase, kXenosMmioBytes))
+            return;
+        throw std::runtime_error("Xbox GPU MMIO overlaps guest allocations");
+    }
+    guest_memory->commit(kXenosMmioBase, kXenosMmioBytes);
+}
+std::uint32_t vd_bound_read_gpu_mmio_register(std::uint32_t index) {
+    std::lock_guard lock(gpu_mutex);
+    if (index >= 0x5000U ||
+        !readable(kXenosMmioBase + index * 4U, 4U))
+        throw std::runtime_error("Invalid Xbox GPU MMIO register read");
+    return read_be32(kXenosMmioBase + index * 4U);
+}
 void bind_gpu_engines(GuestMemory* memory) noexcept {
     std::lock_guard lock(gpu_mutex);
     guest_memory = memory;

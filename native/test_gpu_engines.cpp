@@ -34,6 +34,20 @@ int main() {
             memory.address(image)[i] = static_cast<std::uint8_t>(i * 3 + 1);
         dotm::bind_kernel_guest_memory(&memory, &allocator);
         dotm::bind_gpu_engines(&memory);
+        // The original video driver writes MMIO directly, bypassing imports.
+        // Map its 512 KiB Xenos register aperture into committed guest pages.
+        dotm::vd_bound_map_gpu_mmio();
+        check(memory.committed_range(0x7FC80000U, 0x80000U),
+              "Original Xenos MMIO aperture committed before PPC startup");
+        constexpr std::uint32_t mmio = 0x7FC80714U;
+        auto* mmio_bytes = memory.address(mmio);
+        mmio_bytes[0] = 0x12; mmio_bytes[1] = 0x34;
+        mmio_bytes[2] = 0x56; mmio_bytes[3] = 0x78;
+        check(dotm::vd_bound_read_gpu_mmio_register(0x714U / 4U) == 0x12345678U,
+              "Original PPC GPU register writes retain big-endian values");
+        dotm::vd_bound_map_gpu_mmio(); // idempotent
+        expect_throw([&] { (void)dotm::vd_bound_read_gpu_mmio_register(0x5000U); },
+                     "GPU MMIO register reads reject out-of-range indexes");
         PPCContext ctx{};
         ctx.r3.u64 = 0x4F810001U;
         ctx.r4.u64 = image + 128;

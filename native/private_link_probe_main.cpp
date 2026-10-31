@@ -63,6 +63,11 @@ struct ScopedHostBindings {
                        dotm::XamLaunchDataHost& launch_data) {
         dotm::bind_kernel_guest_memory(&memory, &allocator);
         dotm::bind_gpu_engines(&memory);
+#ifndef DOTM_SYNTHETIC_PRIVATE_BOOT
+        // Original PPC directly writes Xenos registers at 0x7FC8xxxx.
+        // Back the real guest MMIO aperture before executing _xstart.
+        dotm::vd_bound_map_gpu_mmio();
+#endif
         dotm::bind_title_termination(&memory);
         dotm::bind_kernel_critical_sections(&memory);
         dotm::bind_kernel_mutants(&memory);

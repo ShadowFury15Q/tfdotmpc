@@ -44,6 +44,10 @@ struct GpuEngineSnapshot {
 
 // The binding must be removed before the guest address space is destroyed.
 void bind_gpu_engines(GuestMemory* memory) noexcept;
+// Xbox 360 Xenos MMIO aperture at guest 0x7FC80000. Original PPC writes
+// these registers directly, outside kernel import calls.
+void vd_bound_map_gpu_mmio();
+std::uint32_t vd_bound_read_gpu_mmio_register(std::uint32_t index);
 // Xbox kernel VdInitializeEngines: flags, callback, callback argument,
 // PFP and ME microcode addresses, returning BOOL in PPC r3.
 std::uint32_t vd_bound_initialize_engines(
