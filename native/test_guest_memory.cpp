@@ -8,6 +8,7 @@
 #include <vector>
 #include <system_error>
 #include <stdexcept>
+#include <thread>
 void fallback(PPCContext&,std::uint8_t*){}
 void target(PPCContext&,std::uint8_t*){}
 void check(bool ok,const char* reason){if(!ok)throw std::runtime_error(reason);}
@@ -46,6 +47,39 @@ int main(int argc,char** argv){
   check(m.address(0x82006000)[0]==0,"Recommitted guest page is zeroed");
   check(m.address(0x82007000)[0]==0xef,"Adjacent guest bytes survive decommit");
   m.decommit(0x82006000,4096);
+  // Original title PPC workers can commit distinct guest pages concurrently.
+  // Their page bits share the same 64-bit tracking word: nonatomic |= / &=
+  // can lose updates even when the host page mappings do not overlap.
+  constexpr std::uint32_t parallel_base = 0x73000000U;
+  constexpr unsigned workers = 8;
+  constexpr unsigned rounds = 32;
+  {
+   std::vector<std::thread> threads;
+   for(unsigned worker=0;worker<workers;++worker)
+    threads.emplace_back([&m,worker]{
+     for(unsigned round=0;round<rounds;++round)
+      m.commit(parallel_base+(round*workers+worker)*4096U,4096);
+    });
+   for(auto& thread:threads)thread.join();
+  }
+  for(unsigned page=0;page<workers*rounds;++page)
+   check(m.committed_range(parallel_base+page*4096U,4096),
+         "Concurrent guest page commits must not lose bitmap updates");
+  check(!m.any_committed_range(parallel_base+workers*rounds*4096U,4096),
+        "Concurrent commits must not affect the next guest page");
+  {
+   std::vector<std::thread> threads;
+   for(unsigned worker=0;worker<workers;++worker)
+    threads.emplace_back([&m,worker]{
+     for(unsigned round=0;round<rounds;++round)
+      if(((round*workers+worker)&1U)==0U)
+       m.decommit(parallel_base+(round*workers+worker)*4096U,4096);
+    });
+   for(auto& thread:threads)thread.join();
+  }
+  for(unsigned page=0;page<workers*rounds;++page)
+   check(m.committed_range(parallel_base+page*4096U,4096)==((page&1U)!=0U),
+         "Concurrent guest decommits must preserve neighboring page bits");
   m.initialize_function_table(fallback);
   check(m.find_function(0x82500000)==fallback,"fallback dispatch");
   const auto reject_mapping=[&](std::span<const dotm::FunctionEntry> entries,

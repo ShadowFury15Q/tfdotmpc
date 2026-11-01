@@ -65,7 +65,7 @@ void GuestMemory::commit(std::uint64_t a,std::size_t length){
  if(mprotect(base_+begin,end-begin,PROT_READ|PROT_WRITE)!=0)throw std::runtime_error("Guest commit failed");
 #endif
  for(std::uint64_t p=begin/page;p<end/page;++p)
-  committed_pages_[p/64]|=(std::uint64_t{1}<<(p%64));
+  committed_pages_[p/64].fetch_or(std::uint64_t{1}<<(p%64), std::memory_order_release);
 }
 void GuestMemory::decommit(std::uint64_t a,std::size_t length){
  if(!length)return;
@@ -83,13 +83,13 @@ void GuestMemory::decommit(std::uint64_t a,std::size_t length){
   throw std::runtime_error("Guest decommit failed");
 #endif
  for(std::uint64_t p=begin/page;p<end/page;++p)
-  committed_pages_[p/64]&=~(std::uint64_t{1}<<(p%64));
+  committed_pages_[p/64].fetch_and(~(std::uint64_t{1}<<(p%64)), std::memory_order_release);
 }
 bool GuestMemory::committed_range(std::uint64_t a,std::size_t length) const noexcept{
  if(!length||a>=kAddressSpaceSize||length>kAddressSpaceSize-a)return false;
  const auto begin=down(a),end=up(a+length);
  for(std::uint64_t p=begin/page;p<end/page;++p)
-  if(!(committed_pages_[p/64]&(std::uint64_t{1}<<(p%64))))return false;
+  if(!(committed_pages_[p/64].load(std::memory_order_acquire)&(std::uint64_t{1}<<(p%64))))return false;
  return true;
 }
 bool GuestMemory::any_committed_range(std::uint64_t a,std::size_t length) const noexcept{
@@ -97,7 +97,7 @@ bool GuestMemory::any_committed_range(std::uint64_t a,std::size_t length) const 
  if(a>=kAddressSpaceSize||length>kAddressSpaceSize-a)return true;
  const auto begin=down(a),end=up(a+length);
  for(std::uint64_t p=begin/page;p<end/page;++p)
-  if(committed_pages_[p/64]&(std::uint64_t{1}<<(p%64)))return true;
+  if(committed_pages_[p/64].load(std::memory_order_acquire)&(std::uint64_t{1}<<(p%64)))return true;
  return false;
 }
 void GuestMemory::copy_to_guest(std::uint32_t a,std::span<const std::uint8_t> b){

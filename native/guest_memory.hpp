@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -36,6 +37,8 @@ public:
  NativeFunction find_function(std::uint32_t addr) const;
 private:std::uint8_t* base_=nullptr;bool table_initialized_=false;
  std::uint32_t pe_entry_=0;bool pe_loaded_=false;
- std::array<std::uint64_t,16384> committed_pages_{};
+ // Independent guest PPC threads may touch different pages in one bitmap word.
+ // Atomic updates prevent lost page commitments without serializing queries.
+ std::array<std::atomic<std::uint64_t>,16384> committed_pages_{};
 };
 }
