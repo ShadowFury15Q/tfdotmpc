@@ -663,7 +663,7 @@ int main() {
               "Disabled scratch writeback updates the GPU register only");
         put(161, (1U << 16) | 0x01DCU);
         put(162, 1U);
-        put(163, 0x1FFFF000U); // Physical offset not allocated.
+        put(163, 0x20000000U); // Outside the Xbox 360 512 MiB physical aperture.
         put(164, 0x0578U);
         put(165, 0xDEADBEEFU);
         expect_throw([&] { dotm::vd_bound_execute_ring(166); },
