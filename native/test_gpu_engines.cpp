@@ -637,6 +637,50 @@ int main() {
               dotm::vd_bound_read_gpu_register(0x180U) == 0x11223344U &&
               dotm::vd_bound_read_gpu_register(0x181U) == 0x55667788U,
               "GPU resumes partial PM4 packet when the missing payload arrives");
+        // Xenos SCRATCH_REG0..7 write to real GPU physical memory when
+        // their SCRATCH_UMSK bits are enabled. The CPU reads these fences.
+        put(151, (1U << 16) | 0x01DCU); // UMSK and ADDR.
+        put(152, 0x3U);
+        put(153, writeback_physical + 0x40U);
+        put(154, (1U << 16) | 0x0578U); // SCRATCH_REG0 and REG1.
+        put(155, 0x11223344U);
+        put(156, 0x55667788U);
+        check(dotm::vd_bound_execute_ring(157) == 2 &&
+              memory.address(writeback)[0x40] == 0x11 &&
+              memory.address(writeback)[0x41] == 0x22 &&
+              memory.address(writeback)[0x42] == 0x33 &&
+              memory.address(writeback)[0x43] == 0x44 &&
+              memory.address(writeback)[0x44] == 0x55 &&
+              memory.address(writeback)[0x47] == 0x88,
+              "Enabled Xenos scratch registers write big-endian physical GPU fences");
+        put(157, 0x01DCU); // Disable scratch DMA.
+        put(158, 0U);
+        put(159, 0x0578U);
+        put(160, 0xAABBCCDDU);
+        check(dotm::vd_bound_execute_ring(161) == 2 &&
+              dotm::vd_bound_read_gpu_register(0x0578U) == 0xAABBCCDDU &&
+              memory.address(writeback)[0x40] == 0x11,
+              "Disabled scratch writeback updates the GPU register only");
+        put(161, (1U << 16) | 0x01DCU);
+        put(162, 1U);
+        put(163, 0x1FFFF000U); // Physical offset not allocated.
+        put(164, 0x0578U);
+        put(165, 0xDEADBEEFU);
+        expect_throw([&] { dotm::vd_bound_execute_ring(166); },
+                     "Scratch DMA to unallocated physical memory is rejected");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 164 &&
+              dotm::vd_bound_read_gpu_register(0x0578U) == 0xAABBCCDDU &&
+              memory.address(writeback)[0x40] == 0x11,
+              "Failed scratch DMA preserves the pending packet and prior fence");
+        put(164, 0x01DDU);
+        put(165, writeback_physical + 0x40U);
+        put(166, 0x0578U);
+        put(167, 0xCAFEBABEU);
+        check(dotm::vd_bound_execute_ring(168) == 2 &&
+              dotm::vd_bound_read_gpu_register(0x0578U) == 0xCAFEBABEU &&
+              memory.address(writeback)[0x40] == 0xCA &&
+              memory.address(writeback)[0x43] == 0xBE,
+              "Scratch DMA resumes after restoring a valid physical address");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
