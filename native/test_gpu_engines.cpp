@@ -1178,6 +1178,48 @@ int main() {
         check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 228U &&
               dotm::vd_bound_gpu_snapshot().shader_uploads == 2U,
               "Malformed shader upload does not consume command ring");
+        // IM_LOAD start_size high bits address instructions within the
+        // existing shader. Preserve the prefix and replace only the
+        // requested instruction range, including the final instruction.
+        auto* shader_patch = memory.address(writeback + 0x130U);
+        const std::uint8_t vertex_patch_bytes[] = {
+            0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE
+        };
+        for (std::uint32_t i = 0; i < 8U; ++i)
+            shader_patch[i] = vertex_patch_bytes[i];
+        put(228, 0xC0012700U); // Physical IM_LOAD.
+        put(229, writeback_physical + 0x130U);
+        put(230, (1U << 16) | 2U); // Replace vertex instructions 1..2.
+        check(dotm::vd_bound_execute_ring(231) == 1 &&
+              dotm::vd_bound_copy_shader_microcode(0U) ==
+                  std::vector<std::uint32_t>({0x01234567U, 0xDEADBEEFU, 0xCAFEBABEU}) &&
+              dotm::vd_bound_gpu_snapshot().vertex_shader_dwords == 3U &&
+              dotm::vd_bound_gpu_snapshot().shader_uploads == 3U,
+              "IM_LOAD patches existing vertex microcode without losing prefix");
+        const auto vertex_fingerprint = dotm::vd_bound_gpu_snapshot().vertex_shader_fingerprint;
+        put(231, 0xC0032B00U); // Immediate upload: 4 payload words.
+        put(232, 1U);
+        put(233, (2U << 16) | 2U); // Replace pixel word 2, append word 3.
+        put(234, 0x13579BDFU);
+        put(235, 0x2468ACE0U);
+        check(dotm::vd_bound_execute_ring(236) == 1 &&
+              dotm::vd_bound_copy_shader_microcode(1U) ==
+                  std::vector<std::uint32_t>({0xAABBCCDDU, 0x12345678U,
+                                              0x13579BDFU, 0x2468ACE0U}) &&
+              dotm::vd_bound_gpu_snapshot().pixel_shader_dwords == 4U &&
+              dotm::vd_bound_gpu_snapshot().shader_uploads == 4U,
+              "IM_LOAD_IMMEDIATE patches and extends pixel shader instruction image");
+        put(236, 0xC0012700U);
+        put(237, writeback_physical + 0x130U);
+        put(238, (5U << 16) | 1U); // Vertex shader has only 3 words.
+        expect_throw([&] { dotm::vd_bound_execute_ring(239); },
+                     "IM_LOAD rejects a gap of uninitialized shader instructions");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 236U &&
+              dotm::vd_bound_gpu_snapshot().shader_uploads == 4U &&
+              dotm::vd_bound_gpu_snapshot().vertex_shader_fingerprint == vertex_fingerprint &&
+              dotm::vd_bound_copy_shader_microcode(0U) ==
+                  std::vector<std::uint32_t>({0x01234567U, 0xDEADBEEFU, 0xCAFEBABEU}),
+              "Rejected partial shader upload preserves ring, hash and microcode");
         expect_throw([&] { (void)dotm::vd_bound_copy_shader_microcode(2U); },
                      "Unknown shader stage rejected");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },

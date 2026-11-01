@@ -897,15 +897,24 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                     (address_or_stage & 3U);
                 const auto start = start_size >> 16U;
                 const auto words = start_size & 0xFFFFU;
-                if (stage > 1U || start != 0U || words == 0U ||
+                if (stage > 1U || words == 0U ||
+                    std::uint64_t(start) + words > 0x10000U ||
                     (immediate && std::uint64_t(words) + 2U != payload))
                     throw std::runtime_error("Invalid Xenos shader stage or microcode length");
-                std::vector<std::uint32_t> shader;
-                shader.reserve(words);
+                // The high 16 bits select the instruction offset. An
+                // IM_LOAD starting at a nonzero offset updates the already
+                // loaded shader rather than discarding its preceding words.
+                // Reject holes: translating uninitialized instructions would
+                // silently create a different shader than the original game.
+                const auto& previous = active_shader_microcode[stage];
+                if (start && start > previous.size())
+                    throw std::runtime_error("Xenos shader upload skips uninitialized instructions");
+                std::vector<std::uint32_t> incoming;
+                incoming.reserve(words);
                 if (immediate) {
                     // Snapshot FIFO before any subsequent GPU DMA can modify it.
                     for (std::uint32_t i = 0; i < words; ++i)
-                        shader.push_back(at(first + 2U + i));
+                        incoming.push_back(at(first + 2U + i));
                 } else {
                     const auto physical = address_or_stage & ~3U;
                     const auto bytes = words * 4U;
@@ -913,18 +922,25 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                     if (!guest || !readable(*guest, bytes))
                         throw std::runtime_error("Xenos shader source is not allocated physical memory");
                     for (std::uint32_t i = 0; i < words; ++i)
-                        shader.push_back(read_be32(*guest + i * 4U));
+                        incoming.push_back(read_be32(*guest + i * 4U));
                 }
+                // Assemble and hash the complete instruction image. Commit
+                // only after all physical-memory reads and validation succeed.
+                std::vector<std::uint32_t> shader = start
+                    ? previous : std::vector<std::uint32_t>{};
+                shader.resize(std::max(shader.size(), std::size_t(start) + words));
+                std::copy(incoming.begin(), incoming.end(), shader.begin() + start);
                 auto fingerprint = kPacketHashOffset;
                 for (const auto word : shader)
                     fingerprint = hash_packet_word(fingerprint, word);
+                const auto total_words = static_cast<std::uint32_t>(shader.size());
                 active_shader_microcode[stage].swap(shader);
                 ++engine.shader_uploads;
                 if (stage == 0U) {
-                    engine.vertex_shader_dwords = words;
+                    engine.vertex_shader_dwords = total_words;
                     engine.vertex_shader_fingerprint = fingerprint;
                 } else {
-                    engine.pixel_shader_dwords = words;
+                    engine.pixel_shader_dwords = total_words;
                     engine.pixel_shader_fingerprint = fingerprint;
                 }
             } else if (opcode == 0x2FU) {
