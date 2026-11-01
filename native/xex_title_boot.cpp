@@ -54,6 +54,12 @@ constexpr std::uint32_t kGpuDeviceGlobalsAddress = 0x8190A000U;
 // Original DOTM sub_82525808 reads this import at 0x820008AC.
 constexpr std::uint32_t kHSIOCalibrationLockImport = 0x820008ACU;
 constexpr std::uint32_t kHSIOCalibrationLockAddress = 0x8190B000U;
+// Original PPC 0x8251FC30 dereferences [0x820008CC] and divides the
+// exported GPU clock by its display timing value. Retail ordinal 0x1C0
+// is VdGpuClockInMHz, a DATA import, not an executable function.
+constexpr std::uint32_t kGpuClockImport = 0x820008CCU;
+constexpr std::uint32_t kGpuClockAddress = 0x8190C000U;
+constexpr std::uint32_t kGpuClockMHz = 500U;
 constexpr std::uint32_t kRetailHardwareFlags = 0x20U;
 constexpr std::uint8_t kHardwareCpuCount = 6U;
 // The original DOTM sub_827813F8 dereferences [0x82000998] then its handle,
@@ -285,7 +291,8 @@ std::uint32_t install_original_xex_title_header(
         !memory.committed_range(kCertMonitorImport, 4) ||
         !memory.committed_range(kGlobalXamDeviceImport, 4) ||
         !memory.committed_range(kGlobalDeviceImport, 4) ||
-        !memory.committed_range(kHSIOCalibrationLockImport, 4))
+        !memory.committed_range(kHSIOCalibrationLockImport, 4) ||
+        !memory.committed_range(kGpuClockImport, 4))
         throw std::runtime_error("Load original decrypted PE before XEX2 module wiring");
     const auto timestamp_import_tag = be32(memory.address(kTimeStampBundleImport));
     if (timestamp_import_tag != 0 && timestamp_import_tag != 0x000100ADU)
@@ -313,6 +320,9 @@ std::uint32_t install_original_xex_title_header(
     const auto hsio_lock_tag = be32(memory.address(kHSIOCalibrationLockImport));
     if (hsio_lock_tag != 0 && hsio_lock_tag != 0x000101C1U)
         throw std::runtime_error("Unexpected VdHSIOCalibrationLock import ordinal");
+    const auto gpu_clock_tag = be32(memory.address(kGpuClockImport));
+    if (gpu_clock_tag != 0U && gpu_clock_tag != 0x000101C0U)
+        throw std::runtime_error("Unexpected VdGpuClockInMHz data import ordinal");
     if (memory.any_committed_range(kHeaderAddress, kMaximumHeaderSize) ||
         memory.any_committed_range(kModuleHandleAddress, 4096) ||
         memory.any_committed_range(kModuleAddress, 4096) ||
@@ -325,7 +335,8 @@ std::uint32_t install_original_xex_title_header(
         memory.any_committed_range(kThreadTypeAddress, 4096) ||
         memory.any_committed_range(kCertMonitorAddress, 4096) ||
         memory.any_committed_range(kGpuDeviceGlobalsAddress, 4096) ||
-        memory.any_committed_range(kHSIOCalibrationLockAddress, 4096))
+        memory.any_committed_range(kHSIOCalibrationLockAddress, 4096) ||
+        memory.any_committed_range(kGpuClockAddress, 4096))
         throw std::runtime_error("XEX2 module boot memory overlaps existing guest state");
     // Validate the executable entry BEFORE touching any guest memory.
     bool matched_entry = false;
@@ -363,6 +374,7 @@ std::uint32_t install_original_xex_title_header(
     memory.commit(kCertMonitorAddress, 4096);
     memory.commit(kGpuDeviceGlobalsAddress, 4096);
     memory.commit(kHSIOCalibrationLockAddress, 4096);
+    memory.commit(kGpuClockAddress, 4096);
     // System XAM module uses an Xbox 360 LDR_DATA_TABLE_ENTRY as HMODULE.
     // No proprietary xam.xex is loaded: only the built-in native service handle.
     std::memset(memory.address(kXamModuleAddress), 0, 4096);
@@ -415,6 +427,10 @@ std::uint32_t install_original_xex_title_header(
     memory.address(kHSIOCalibrationLockAddress)[0] = 1;
     put32(memory, kHSIOCalibrationLockAddress + 16U, 0xFFFFFFFFU);
     put32(memory, kHSIOCalibrationLockImport, kHSIOCalibrationLockAddress);
+    // The actual Xbox 360 Xenos GPU clock is 500 MHz. Resolve the PE
+    // import token to a real guest dword before original video setup runs.
+    put32(memory, kGpuClockAddress, kGpuClockMHz);
+    put32(memory, kGpuClockImport, kGpuClockAddress);
     put32(memory, kModuleHandleAddress, kModuleAddress);
     put32(memory, kModuleAddress + 0x58, kHeaderAddress);
     put32(memory, kOriginalModuleImport, kModuleHandleAddress);

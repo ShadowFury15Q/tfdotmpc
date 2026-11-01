@@ -135,6 +135,17 @@ int main() {
         memory.address(0x8200095CU)[i] = std::uint8_t(0x000101BFU >> (24 - i * 8));
         memory.address(0x82000960U)[i] = std::uint8_t(0x000101BEU >> (24 - i * 8));
     }
+    // Retail xboxkrnl ordinal 448 is VdGpuClockInMHz. A raw ordinal
+    // in the original PE is not a valid guest pointer: map it before PPC.
+    for (int i = 0; i < 4; ++i)
+        memory.address(0x820008CCU)[i] = std::uint8_t(0xDEADBEEFU >> (24 - i * 8));
+    bool bad_gpu_clock_import = false;
+    try { dotm::install_original_xex_title_header(memory, file.path, entry); }
+    catch (const std::runtime_error&) { bad_gpu_clock_import = true; }
+    check(bad_gpu_clock_import && !memory.committed_range(0x8190C000U, 4),
+          "Invalid VdGpuClockInMHz ordinal rejected before allocation");
+    for (int i = 0; i < 4; ++i)
+        memory.address(0x820008CCU)[i] = std::uint8_t(0x000101C0U >> (24 - i * 8));
     // Retail xboxkrnl ordinal 449 is VdHSIOCalibrationLock. Reject a
     // corrupt data-import token before allocating its guest kernel object.
     for (int i = 0; i < 4; ++i)
@@ -162,6 +173,9 @@ int main() {
           get32(memory, 0x8190B014U) == 0U,
           "Original HSIO lock releases without retaining guest ownership");
     dotm::bind_kernel_critical_sections(nullptr);
+    check(get32(memory, 0x820008CCU) == 0x8190C000U &&
+          get32(memory, 0x8190C000U) == 500U,
+          "Original GPU clock data import resolves to real 500 MHz guest dword");
     check(get32(memory, 0x8200085CU) == 0x81904000U);
     check(get32(memory, 0x81904000U + 16) == 0U);
     check(get32(memory, 0x82000998U) == 0x81900000U);
