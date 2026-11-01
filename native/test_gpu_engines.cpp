@@ -554,6 +554,20 @@ int main() {
                      "LOAD_ALU_CONSTANT rejects register bank overflow");
         check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 115,
               "Register overflow cannot partially write shader constants");
+        put(115, 0xC0022F00U);
+        put(116, 0x3FFFFFFCU); // No source memory is read for zero words.
+        put(117, 0x10U); put(118, 0U);
+        check(dotm::vd_bound_execute_ring(119) == 1 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 119 &&
+              dotm::vd_bound_read_gpu_register(0x4010U) == 0x12345678U,
+              "Zero-length LOAD_ALU_CONSTANT advances without fake physical memory");
+        put(119, 0xC0022F00U);
+        put(120, writeback_physical + 64U);
+        put(121, (5U << 16) | 0x10U); put(122, 1U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(123); },
+                     "Unknown Xenos shader constant bank is rejected");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 119,
+              "Unknown shader bank cannot advance GPU ring");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
