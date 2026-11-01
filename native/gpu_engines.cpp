@@ -449,16 +449,20 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 if ((source & 3U) ||
                     std::uint64_t(index) + count_dwords > gpu_registers.size())
                     throw std::runtime_error("Xenos LOAD_ALU_CONSTANT alignment or register overflow");
-                const auto guest_address = mm_bound_resolve_physical_range(
-                    source, std::size_t(count_dwords) * 4U);
-                if (!guest_address ||
-                    !readable(*guest_address, std::size_t(count_dwords) * 4U))
-                    throw std::runtime_error("Xenos LOAD_ALU_CONSTANT requires allocated physical source");
-                // Validate the entire source and register span before writes.
-                // CPU-side MMIO and PM4 see the same committed values.
-                for (std::uint32_t i = 0; i < count_dwords; ++i)
-                    write_gpu_register(index + i, read_be32(*guest_address + i * 4U));
-                engine.register_writes += count_dwords;
+                // Zero-length DMA is legal and reads no physical memory.
+                // A nonempty transfer must resolve its entire source first.
+                if (count_dwords) {
+                    const auto guest_address = mm_bound_resolve_physical_range(
+                        source, std::size_t(count_dwords) * 4U);
+                    if (!guest_address ||
+                        !readable(*guest_address, std::size_t(count_dwords) * 4U))
+                        throw std::runtime_error("Xenos LOAD_ALU_CONSTANT requires allocated physical source");
+                    // Validate the entire source and register span before writes.
+                    // CPU-side MMIO and PM4 see the same committed values.
+                    for (std::uint32_t i = 0; i < count_dwords; ++i)
+                        write_gpu_register(index + i, read_be32(*guest_address + i * 4U));
+                    engine.register_writes += count_dwords;
+                }
             } else if (opcode == 0x21U) {
                 // PM4_REG_RMW: register index, AND mask, OR mask.
                 // Apply the update only after validating the complete packet.
