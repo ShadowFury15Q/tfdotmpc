@@ -49,7 +49,7 @@ NATIVE = {"__imp__KeEnterCriticalRegion", "__imp__KeLeaveCriticalRegion", "__imp
           "__imp__VdRetrainEDRAM", "__imp__VdRetrainEDRAMWorker",
           "__imp__VdEnableDisableClockGating", "__imp__VdIsHSIOTrainingSucceeded",
           "__imp__VdSetGraphicsInterruptCallback",
-          "__imp__VdSetSystemCommandBufferGpuIdentifierAddress",
+          "__imp__VdSetSystemCommandBufferGpuIdentifierAddress", "__imp__VdGetSystemCommandBuffer",
           # Private import mislabeled by an old xboxkrnl ordinal table: 0x1DF
           # is VdVerifyMEInitCommand, implemented by gpu_engines_ppc.cpp.
           "__imp__KiApcNormalRoutineNop",

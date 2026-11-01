@@ -44,6 +44,8 @@ struct GpuEngineSnapshot {
     std::uint32_t me_init_command_word_count = 0;
     std::uint64_t me_init_command_fingerprint = 0;
     std::uint32_t system_command_buffer_gpu_identifier_address = 0;
+    std::uint32_t system_command_buffer_next_identifier = 0;
+    std::uint64_t system_command_buffer_queries = 0;
     // Last original-title display scaling notification (four big-endian u16s).
     std::uint64_t graphics_notifications = 0;
     std::uint32_t last_graphics_notification = 0;
@@ -81,6 +83,15 @@ std::uint32_t vd_bound_call_graphics_notification_routines(
 void vd_bound_set_graphics_interrupt_callback(
     std::uint32_t callback, std::uint32_t context);
 void vd_bound_set_system_command_buffer_gpu_identifier_address(std::uint32_t address);
+// XAM owns the optional 0x94-byte system command buffer descriptor. Install
+// a verified guest copy or detach it with descriptor_address == 0. No
+// command buffer is fabricated when XAM has not supplied one.
+void vd_bound_install_system_command_buffer(std::uint32_t descriptor_address,
+                                           std::uint32_t initial_identifier);
+// xboxkrnl VdGetSystemCommandBuffer(r3=descriptor, r4=identifier): return the
+// XAM-owned descriptor and advance its two-step GPU fence sequence.
+void vd_bound_get_system_command_buffer(std::uint32_t descriptor_address,
+                                        std::uint32_t identifier_address);
 // xboxkrnl ordinal 0x1DF: VdVerifyMEInitCommand, mislabeled as
 // KiApcNormalRoutineNop in some Xbox 360 export name tables.
 // Validate the original big-endian PM4_ME_INIT command in guest memory.

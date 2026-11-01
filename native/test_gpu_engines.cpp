@@ -16,6 +16,7 @@ PPC_EXTERN_FUNC(__imp__VdSetGraphicsInterruptCallback);
 PPC_EXTERN_FUNC(__imp__VdInitializeRingBuffer);
 PPC_EXTERN_FUNC(__imp__VdEnableRingBufferRPtrWriteBack);
 PPC_EXTERN_FUNC(__imp__VdSetSystemCommandBufferGpuIdentifierAddress);
+PPC_EXTERN_FUNC(__imp__VdGetSystemCommandBuffer);
 PPC_EXTERN_FUNC(__imp__KiApcNormalRoutineNop);
 
 namespace {
@@ -222,6 +223,46 @@ int main() {
                      "Unmapped GPU identifier address rejected");
         check(dotm::vd_bound_gpu_snapshot().system_command_buffer_gpu_identifier_address == writeback,
               "Invalid GPU identifier registration leaves previous address intact");
+        // The original _xstart graph calls VdGetSystemCommandBuffer at
+        // 0x825127D8 with r3 pointing to 0x94 bytes and r4 to a BE32 fence.
+        constexpr std::uint32_t system_descriptor = image + 0x300U;
+        constexpr std::uint32_t system_fence = image + 0x400U;
+        for (std::uint32_t i = 0; i < 0x94U; ++i)
+            memory.address(system_descriptor)[i] = 0xA5U;
+        ctx.r3.u32 = system_descriptor;
+        ctx.r4.u32 = system_fence;
+        __imp__VdGetSystemCommandBuffer(ctx, memory.base());
+        check(dotm::vd_bound_gpu_snapshot().system_command_buffer_queries == 1 &&
+              memory.address(system_descriptor)[0] == 0 &&
+              memory.address(system_descriptor)[0x93] == 0 &&
+              memory.address(system_fence)[3] == 0,
+              "No XAM descriptor means no fabricated system GPU command/fence");
+        memory.address(system_descriptor)[0] = 0x12;
+        memory.address(system_descriptor)[0x93] = 0x34;
+        dotm::vd_bound_install_system_command_buffer(system_descriptor, 7U);
+        __imp__VdGetSystemCommandBuffer(ctx, memory.base());
+        check(memory.address(system_descriptor)[0] == 0x12 &&
+              memory.address(system_descriptor)[0x93] == 0x34 &&
+              memory.address(system_fence)[3] == 7 &&
+              dotm::vd_bound_gpu_snapshot().system_command_buffer_next_identifier == 9U,
+              "Original XAM system descriptor and first GPU fence copied");
+        __imp__VdGetSystemCommandBuffer(ctx, memory.base());
+        check(memory.address(system_fence)[3] == 9 &&
+              dotm::vd_bound_gpu_snapshot().system_command_buffer_next_identifier == 11U,
+              "Successive XAM system fences advance by two");
+        ctx.r4.u32 = 0xDEAD0000U;
+        expect_throw([&] { __imp__VdGetSystemCommandBuffer(ctx, memory.base()); },
+                     "Invalid fence output fails before descriptor is overwritten");
+        check(memory.address(system_descriptor)[0] == 0x12 &&
+              dotm::vd_bound_gpu_snapshot().system_command_buffer_queries == 3,
+              "Invalid system buffer query preserves previous guest state");
+        ctx.r4.u32 = system_fence;
+        dotm::vd_bound_install_system_command_buffer(0, 0);
+        __imp__VdGetSystemCommandBuffer(ctx, memory.base());
+        check(memory.address(system_descriptor)[0] == 0 &&
+              memory.address(system_descriptor)[0x93] == 0 &&
+              memory.address(system_fence)[3] == 0,
+              "XAM system buffer detach invalidates the descriptor and fence");
         // Exercise actual big-endian PM4 packets from the allocated DMA ring.
         auto put = [&](std::uint32_t index, std::uint32_t value) {
             auto* b = memory.address(ring) + index * 4;

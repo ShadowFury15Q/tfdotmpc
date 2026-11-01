@@ -16,6 +16,9 @@ GuestMemory* guest_memory = nullptr;
 GpuEngineSnapshot engine;
 std::array<std::uint32_t, 0x5000> gpu_registers{};
 constexpr std::uint32_t kEdramBytes = 10U * 1024U * 1024U;
+constexpr std::size_t kSystemCommandBufferBytes = 0x94U;
+std::array<std::uint8_t, kSystemCommandBufferBytes> system_command_buffer{};
+bool system_command_buffer_installed = false;
 std::vector<std::uint8_t> edram_backing;
 constexpr std::uint32_t kXenosMmioBase = 0x7FC80000U;
 constexpr std::uint32_t kXenosMmioBytes = 0x00080000U;
@@ -196,6 +199,8 @@ void bind_gpu_engines(GuestMemory* memory) noexcept {
     engine = {};
     gpu_registers.fill(0);
     edram_backing.clear();
+    system_command_buffer.fill(0);
+    system_command_buffer_installed = false;
 }
 std::uint32_t vd_bound_initialize_engines(
     std::uint32_t flags, std::uint32_t callback, std::uint32_t callback_context,
@@ -210,6 +215,8 @@ std::uint32_t vd_bound_initialize_engines(
     if (!pfp_hash || !me_hash) return 0;
     const auto previous = engine;
     engine = {};
+    system_command_buffer.fill(0);
+    system_command_buffer_installed = false;
     engine.edram_trained = previous.edram_trained;
     engine.edram_backing_size = previous.edram_backing_size;
     engine.edram_last_training_mode = previous.edram_last_training_mode;
@@ -232,6 +239,8 @@ void vd_bound_shutdown_engines() noexcept {
     std::lock_guard lock(gpu_mutex);
     engine = {};
     edram_backing.clear();
+    system_command_buffer.fill(0);
+    system_command_buffer_installed = false;
     reset_gpu_registers();
 }
 std::uint32_t vd_bound_retrain_edram_worker(std::uint32_t mode) {
@@ -333,6 +342,49 @@ void vd_bound_set_system_command_buffer_gpu_identifier_address(std::uint32_t add
     if (address && ((address & 3U) || !guest_memory->committed_range(address, 4)))
         throw std::runtime_error("Invalid Xbox GPU command-buffer identifier address");
     engine.system_command_buffer_gpu_identifier_address = address;
+}
+void vd_bound_install_system_command_buffer(std::uint32_t descriptor_address,
+                                           std::uint32_t initial_identifier) {
+    std::lock_guard lock(gpu_mutex);
+    if (!engine.initialized || !guest_memory)
+        throw std::runtime_error("Xbox GPU engines are not initialized");
+    if (!descriptor_address) {
+        system_command_buffer.fill(0);
+        system_command_buffer_installed = false;
+        engine.system_command_buffer_next_identifier = 0;
+        return;
+    }
+    if ((descriptor_address & 3U) ||
+        !readable(descriptor_address, kSystemCommandBufferBytes))
+        throw std::runtime_error("Invalid XAM system command buffer descriptor");
+    // The descriptor is an opaque XAM-owned 0x94-byte kernel record. Keep
+    // the exact guest bytes rather than constructing a fake GPU command.
+    std::memcpy(system_command_buffer.data(), guest_memory->address(descriptor_address),
+                kSystemCommandBufferBytes);
+    system_command_buffer_installed = true;
+    engine.system_command_buffer_next_identifier = initial_identifier;
+}
+void vd_bound_get_system_command_buffer(std::uint32_t descriptor_address,
+                                        std::uint32_t identifier_address) {
+    std::lock_guard lock(gpu_mutex);
+    if (!engine.initialized || (descriptor_address & 3U) ||
+        (identifier_address & 3U) ||
+        !readable(descriptor_address, kSystemCommandBufferBytes) ||
+        !readable(identifier_address, 4U))
+        throw std::runtime_error("Invalid Xbox VdGetSystemCommandBuffer output");
+    // Without an installed XAM descriptor the kernel has no system commands
+    // to submit. In particular, never report a synthetic GPU address/fence.
+    if (system_command_buffer_installed) {
+        std::memcpy(guest_memory->address(descriptor_address),
+                    system_command_buffer.data(), kSystemCommandBufferBytes);
+        write_be32(identifier_address, engine.system_command_buffer_next_identifier);
+        engine.system_command_buffer_next_identifier += 2U;
+    } else {
+        std::memset(guest_memory->address(descriptor_address), 0,
+                    kSystemCommandBufferBytes);
+        write_be32(identifier_address, 0U);
+    }
+    ++engine.system_command_buffer_queries;
 }
 void vd_bound_verify_me_init_command(std::uint32_t address,
                                      std::uint32_t word_count) {
