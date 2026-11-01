@@ -367,21 +367,28 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
             if (base >= gpu_registers.size() ||
                 (!repeat && std::uint64_t(base) + payload > gpu_registers.size()))
                 throw std::runtime_error("Xenos PM4 type-0 register out of range");
+            // Fetch the packet into a stable FIFO snapshot before any DMA
+            // write can alias the ring and overwrite a later payload word.
+            std::vector<std::uint32_t> values;
+            values.reserve(payload);
+            for (std::uint32_t i = 0; i < payload; ++i)
+                values.push_back(at(first + i));
             validate_gpu_register_packet(
                 payload, [&](std::uint32_t i) { return base + (repeat ? 0U : i); },
-                [&](std::uint32_t i) { return at(first + i); });
-            for (std::uint32_t i = 0; i < payload; ++i) {
-                write_gpu_register(base + (repeat ? 0 : i), at(first + i));
-            }
+                [&](std::uint32_t i) { return values[i]; });
+            for (std::uint32_t i = 0; i < payload; ++i)
+                write_gpu_register(base + (repeat ? 0U : i), values[i]);
             engine.register_writes += payload;
         } else if (type == 1) {
             const auto r0 = header & 0x7FFU;
             const auto r1 = (header >> 11) & 0x7FFU;
+            const auto value0 = at(first);
+            const auto value1 = at(first + 1);
             validate_gpu_register_packet(
                 2U, [&](std::uint32_t i) { return i ? r1 : r0; },
-                [&](std::uint32_t i) { return at(first + i); });
-            write_gpu_register(r0, at(first));
-            write_gpu_register(r1, at(first + 1));
+                [&](std::uint32_t i) { return i ? value1 : value0; });
+            write_gpu_register(r0, value0);
+            write_gpu_register(r1, value1);
             engine.register_writes += 2;
         } else if (type == 3) {
             const auto opcode = (header >> 8) & 0x7FU;
