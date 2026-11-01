@@ -514,6 +514,46 @@ int main() {
               memory.address(ring + 107U * 4U)[2] == 0x33 &&
               memory.address(ring + 107U * 4U)[3] == 0x44,
               "MEM_WRITE snapshots payload before DMA overwrites its own ring");
+        // LOAD_ALU_CONSTANT reads actual allocated physical shader constants.
+        // The GPU sees their big-endian values and updates the MMIO-backed
+        // ALU constant bank without inventing a shader or rendering output.
+        auto* constants = memory.address(writeback + 64U);
+        constants[0] = 0x12; constants[1] = 0x34;
+        constants[2] = 0x56; constants[3] = 0x78;
+        constants[4] = 0xA1; constants[5] = 0xB2;
+        constants[6] = 0xC3; constants[7] = 0xD4;
+        put(107, 0xC0022F00U);
+        put(108, writeback_physical + 64U);
+        put(109, 0x10U); put(110, 2U);
+        check(dotm::vd_bound_execute_ring(111) == 1 &&
+              dotm::vd_bound_read_gpu_register(0x4010U) == 0x12345678U &&
+              dotm::vd_bound_read_gpu_register(0x4011U) == 0xA1B2C3D4U &&
+              dotm::vd_bound_read_gpu_mmio_register(0x4010U) == 0x12345678U &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 111 &&
+              memory.address(writeback)[3] == 111,
+              "LOAD_ALU_CONSTANT copies allocated physical BE shader constants");
+        put(111, 0xC0022F00U);
+        put(112, writeback_physical + 64U);
+        put(113, (4U << 16) | 0x30U); put(114, 2U);
+        check(dotm::vd_bound_execute_ring(115) == 1 &&
+              dotm::vd_bound_read_gpu_register(0x2030U) == 0x12345678U &&
+              dotm::vd_bound_read_gpu_register(0x2031U) == 0xA1B2C3D4U,
+              "LOAD_ALU_CONSTANT supports original Xenos general-register bank");
+        put(115, 0xC0022F00U);
+        put(116, 0x3FFFFFFCU);
+        put(117, 0x10U); put(118, 2U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(119); },
+                     "LOAD_ALU_CONSTANT rejects an unallocated physical source");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 115 &&
+              memory.address(writeback)[3] == 115,
+              "Failed LOAD_ALU_CONSTANT preserves DMA ring and writeback");
+        put(115, 0xC0022F00U);
+        put(116, writeback_physical + 64U);
+        put(117, (3U << 16) | 0x7FFU); put(118, 0xFFFU);
+        expect_throw([&] { dotm::vd_bound_execute_ring(119); },
+                     "LOAD_ALU_CONSTANT rejects register bank overflow");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 115,
+              "Register overflow cannot partially write shader constants");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
