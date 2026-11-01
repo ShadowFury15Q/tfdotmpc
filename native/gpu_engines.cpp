@@ -6,6 +6,7 @@
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
+#include <vector>
 
 namespace dotm {
 namespace {
@@ -415,10 +416,18 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                     throw std::runtime_error("Xenos PM4 MEM_WRITE address overflow");
                 for (std::uint32_t i = 0; i < word_count; ++i)
                     (void)gpu_physical_dword_address(base_address + i * 4U);
+                // The destination may overlap the active physical ring.
+                // Snapshot all packet payload words before committing DMA:
+                // otherwise the first write can overwrite a later source
+                // word and silently change the rest of this same packet.
+                std::vector<std::uint32_t> data;
+                data.reserve(word_count);
+                for (std::uint32_t i = 0; i < word_count; ++i)
+                    data.push_back(at(first + 1U + i));
                 for (std::uint32_t i = 0; i < word_count; ++i)
                     write_gpu_physical_dword(
                         (base_address + i * 4U) | (destination & 3U),
-                        at(first + 1U + i));
+                        data[i]);
             } else if (opcode == 0x21U) {
                 // PM4_REG_RMW: register index, AND mask, OR mask.
                 // Apply the update only after validating the complete packet.
