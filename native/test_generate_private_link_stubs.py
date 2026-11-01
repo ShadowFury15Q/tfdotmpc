@@ -46,6 +46,27 @@ class PrivateLinkStubsTests(unittest.TestCase):
             self.assertIn("r8=0x%08X", source)
             self.assertNotIn("synthetic mapping", source)
 
+    def test_native_video_imports_are_not_shadowed_by_private_stubs(self):
+        # Real VdSwap and VdPersistDisplay now live in gpu_engines_ppc.cpp.
+        # A generated duplicate would break the original 697-unit link.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n"
+                "PPC_EXTERN_FUNC(__imp__VdSwap);\n"
+                "PPC_EXTERN_FUNC(__imp__VdPersistDisplay);\n"
+                "PPC_EXTERN_FUNC(__imp__KeInitializeApc);\n",
+                encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
+            source, units, unresolved = generate(root, 1)
+            self.assertEqual((units, unresolved), (1, 1))
+            self.assertIn("PPC_FUNC(__imp__KeInitializeApc)", source)
+            self.assertNotIn("PPC_FUNC(__imp__VdSwap)", source)
+            self.assertNotIn("PPC_FUNC(__imp__VdPersistDisplay)", source)
+
     def test_xenonrecomp_alias_backed_game_functions_are_not_stubs(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
