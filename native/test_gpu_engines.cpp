@@ -1233,6 +1233,24 @@ int main() {
               "Rejected partial shader upload preserves ring, hash and microcode");
         expect_throw([&] { (void)dotm::vd_bound_copy_shader_microcode(2U); },
                      "Unknown shader stage rejected");
+        // Original Xenos driver writes COHER_STATUS_HOST to invalidate
+        // vertex/texture caches and then polls the same register for zero.
+        // The native physical backing is shared, so this is a real host
+        // memory ordering barrier, not a fabricated GPU frame or draw.
+        put(236, 0x00000A31U); // Type-0, one COHER_STATUS_HOST write.
+        put(237, 0x01000000U); // VC action, status bit set by hardware.
+        check(dotm::vd_bound_execute_ring(238) == 1 &&
+              dotm::vd_bound_read_gpu_register(0x0A31U) == 0x81000000U &&
+              dotm::vd_bound_read_gpu_mmio_register(0x0A31U) == 0x81000000U,
+              "Xenos coherency request sets the pending hardware status bit");
+        put(238, 0xC0043C00U); // WAIT_REG_MEM, five payload dwords.
+        put(239, 3U); put(240, 0x0A31U);
+        put(241, 0U); put(242, 0xFFFFFFFFU); put(243, 0U);
+        check(dotm::vd_bound_execute_ring(244) == 1 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 244U &&
+              dotm::vd_bound_read_gpu_register(0x0A31U) == 0U &&
+              dotm::vd_bound_read_gpu_mmio_register(0x0A31U) == 0U,
+              "WAIT_REG_MEM completes a shared-memory Xenos coherency barrier");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },

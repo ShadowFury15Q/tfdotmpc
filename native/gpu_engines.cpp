@@ -1,6 +1,7 @@
 #include "gpu_engines.hpp"
 #include "kernel_guest_memory.hpp"
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -23,6 +24,8 @@ std::vector<std::uint8_t> edram_backing;
 std::array<std::vector<std::uint32_t>, 2> active_shader_microcode{};
 constexpr std::uint32_t kXenosMmioBase = 0x7FC80000U;
 constexpr std::uint32_t kXenosMmioBytes = 0x00080000U;
+// Xenos COHER_STATUS_HOST register, 32-bit MMIO index.
+constexpr std::uint32_t kCoherStatusHost = 0x0A31U;
 
 bool readable(std::uint32_t address, std::size_t size) {
     return guest_memory && address >= 0x10000U &&
@@ -128,6 +131,11 @@ void write_gpu_register(std::uint32_t index, std::uint32_t value) {
         scratch_writeback = gpu_physical_dword_address(
             static_cast<std::uint32_t>(physical));
     }
+    // Xenos marks a cache-coherency request pending when the CPU or PM4
+    // writes COHER_STATUS_HOST. WAIT_REG_MEM must observe completion, not
+    // indefinitely poll the request bits as if this were an ordinary register.
+    if (index == kCoherStatusHost && value)
+        value |= 0x80000000U;
     gpu_registers[index] = value;
     const auto address = kXenosMmioBase + index * 4U;
     if (readable(address, 4U)) write_be32(address, value);
@@ -796,6 +804,21 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 } else {
                     if (poll_address >= gpu_registers.size())
                         throw std::runtime_error("Xenos PM4 WAIT_REG_MEM register out of range");
+                    if (poll_address == kCoherStatusHost &&
+                        (read_gpu_register(kCoherStatusHost) & 0x80000000U)) {
+                        // The native runtime currently has no separate GPU
+                        // resource cache: all allocated physical pages use
+                        // their committed guest backing. Publish host memory
+                        // writes before acknowledging the coherency request.
+                        // A future renderer must flush its texture/vertex
+                        // caches here before this completion can be trusted.
+                        std::atomic_thread_fence(std::memory_order_seq_cst);
+                        gpu_registers[kCoherStatusHost] = 0U;
+                        const auto mmio = kXenosMmioBase +
+                                          kCoherStatusHost * 4U;
+                        if (readable(mmio, 4U))
+                            write_be32(mmio, 0U);
+                    }
                     value = read_gpu_register(poll_address);
                 }
                 const auto masked = value & mask;
