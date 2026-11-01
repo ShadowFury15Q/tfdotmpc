@@ -1273,6 +1273,69 @@ int main() {
               dotm::vd_bound_read_gpu_mmio_register(0x0A31U) == 0U &&
               memory.address(writeback)[3] == 250U,
               "WAIT_REG_MEM completes direct PPC MMIO coherency without stalling ring");
+        // Original Xenos indirect command lists live in allocated physical memory.
+        const auto ib = dotm::mm_bound_allocate_physical_memory_ex(
+            2, 4096, 0x404, 0, 0xFFFFFFFFU, 4096);
+        check(ib != 0, "Physical PM4 indirect buffer allocation");
+        const auto ib_physical = dotm::mm_bound_get_physical_address(ib);
+        auto put_ib = [&](std::uint32_t i, std::uint32_t value) {
+            auto* p = memory.address(ib + 4U * i);
+            p[0] = static_cast<std::uint8_t>(value >> 24U);
+            p[1] = static_cast<std::uint8_t>(value >> 16U);
+            p[2] = static_cast<std::uint8_t>(value >> 8U);
+            p[3] = static_cast<std::uint8_t>(value);
+        };
+        put_ib(0, 0x00000204U); put_ib(1, 0x13579BDFU);
+        put_ib(2, 0xC0043C00U); // WAIT_REG_MEM on register 0x205.
+        put_ib(3, 3U); put_ib(4, 0x205U); put_ib(5, 0x1234U);
+        put_ib(6, 0xFFFFFFFFU); put_ib(7, 0U);
+        put_ib(8, 0x00000206U); put_ib(9, 0xCAFEBABEU);
+        put_ib(10, 0x80000000U); // Type-2.
+        auto* poll = memory.address(0x7FC80000U + 0x205U * 4U);
+        poll[0] = 0; poll[1] = 0; poll[2] = 0; poll[3] = 0;
+        put(250, 0xC0013F00U); put(251, ib_physical); put(252, 11U);
+        check(dotm::vd_bound_execute_ring(253) == 1 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 250U &&
+              dotm::vd_bound_read_gpu_register(0x204U) == 0x13579BDFU &&
+              memory.address(writeback)[3] == 250U,
+              "Indirect PM4 prefix executes without acknowledging pending WAIT");
+        poll[2] = 0x12U; poll[3] = 0x34U;
+        check(dotm::vd_bound_execute_ring(253, 1U) == 1 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 250U,
+              "Nested WAIT_REG_MEM resumes from its saved offset");
+        check(dotm::vd_bound_execute_ring(253) == 3 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 253U &&
+              dotm::vd_bound_read_gpu_register(0x206U) == 0xCAFEBABEU &&
+              memory.address(writeback)[3] == 253U,
+              "Nested completion commits parent ring and RPTR writeback");
+        put(253, 0xC0013F00U); put(254, 0x100U); put(255, 1U);
+        expect_throw([&] { (void)dotm::vd_bound_execute_ring(256); },
+                     "Indirect DMA rejects unallocated physical memory");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 253U,
+              "Rejected indirect DMA preserves parent read pointer");
+        put(254, ib_physical); put(255, 0x100001U);
+        expect_throw([&] { (void)dotm::vd_bound_execute_ring(256); },
+                     "Indirect DMA rejects reserved length bits");
+        put(255, 1U); put_ib(0, 0x80000000U);
+        check(dotm::vd_bound_execute_ring(256) == 2 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 256U &&
+              memory.address(writeback)[2] == 1U &&
+              memory.address(writeback)[3] == 0U,
+              "Indirect retry consumes nested TYPE2 and parent packet");
+        // Two-level nested dispatch and PFD (0x37) share physical memory rules.
+        put_ib(0, 0xC0013F00U); put_ib(1, ib_physical + 64U);
+        put_ib(2, 2U); put_ib(16, 0x00000207U);
+        put_ib(17, 0xFEEDC0DEU);
+        put(256, 0xC0013F00U); put(257, ib_physical); put(258, 3U);
+        check(dotm::vd_bound_execute_ring(259) == 3 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 259U &&
+              dotm::vd_bound_read_gpu_register(0x207U) == 0xFEEDC0DEU,
+              "Two-level original PM4 indirect dispatch");
+        put(259, 0xC0013700U); put(260, ib_physical + 64U); put(261, 2U);
+        check(dotm::vd_bound_execute_ring(262) == 2 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 262U,
+              "PFD indirect-buffer opcode executes physical command list");
+        dotm::mm_bound_free_physical_memory(1U, ib);
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
