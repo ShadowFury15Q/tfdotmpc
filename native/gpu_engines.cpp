@@ -107,9 +107,24 @@ std::uint32_t read_gpu_register(std::uint32_t index) {
     return readable(address, 4U) ? read_be32(address) : gpu_registers[index];
 }
 void write_gpu_register(std::uint32_t index, std::uint32_t value) {
+    // Xenos scratch registers are a hardware CPU/GPU synchronization path.
+    // An enabled SCRATCH_UMSK bit causes a write of SCRATCH_REGn to the
+    // physical dword at SCRATCH_ADDR + 4*n. Validate the destination before
+    // changing the register, so an invalid DMA leaves the packet pending.
+    std::optional<std::uint32_t> scratch_writeback;
+    if (index >= 0x0578U && index <= 0x057FU &&
+        (read_gpu_register(0x01DCU) & (1U << (index - 0x0578U)))) {
+        const auto physical = std::uint64_t(read_gpu_register(0x01DDU)) +
+                              std::uint64_t(index - 0x0578U) * 4U;
+        if ((physical & 3U) || physical > UINT32_MAX)
+            throw std::runtime_error("Xenos scratch writeback address invalid");
+        scratch_writeback = gpu_physical_dword_address(
+            static_cast<std::uint32_t>(physical));
+    }
     gpu_registers[index] = value;
     const auto address = kXenosMmioBase + index * 4U;
     if (readable(address, 4U)) write_be32(address, value);
+    if (scratch_writeback) write_be32(*scratch_writeback, value);
 }
 // Hash the actual big-endian packet words, including the type-3 header.
 // This also works for a packet wrapped around the physical GPU ring.
