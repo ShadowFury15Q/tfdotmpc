@@ -222,10 +222,10 @@ int main() {
               "GPU read pointer writeback advances in guest big-endian memory");
         put(21, (1U << 16) | 0x100U);
         put(22, 0xABCDEF12U);
-        expect_throw([&] { dotm::vd_bound_execute_ring(23); },
-                     "Incomplete PM4 packet rejected without consuming it");
-        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 21,
-              "Incomplete PM4 does not advance read pointer");
+        check(dotm::vd_bound_execute_ring(23) == 0 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 21 &&
+              memory.address(writeback)[3] == 21,
+              "Incomplete PM4 packet waits without throwing or consuming the header");
         put(23, 0xFEEDCAFEU);
         check(dotm::vd_bound_execute_ring(24) == 1 &&
               dotm::vd_bound_read_gpu_register(0x101) == 0xFEEDCAFEU,
@@ -620,6 +620,23 @@ int main() {
                      "COND_WRITE rejects an unallocated physical poll address");
         check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 147,
               "Invalid COND_WRITE source cannot advance GPU ring");
+        // A complete packet before a partial one must still commit its
+        // progress; the unfinished command and its writeback stay pending.
+        put(147, 0x80000000U); // PM4 type-2, no payload.
+        put(148, (1U << 16) | 0x180U); // Two register values required.
+        put(149, 0x11223344U); // Producer has only written the first.
+        check(dotm::vd_bound_execute_ring(150) == 1 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 148 &&
+              memory.address(writeback)[3] == 148 &&
+              dotm::vd_bound_read_gpu_register(0x180U) == 0U,
+              "GPU executes complete prefix and defers the incomplete next packet");
+        put(150, 0x55667788U);
+        check(dotm::vd_bound_execute_ring(151) == 1 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 151 &&
+              memory.address(writeback)[3] == 151 &&
+              dotm::vd_bound_read_gpu_register(0x180U) == 0x11223344U &&
+              dotm::vd_bound_read_gpu_register(0x181U) == 0x55667788U,
+              "GPU resumes partial PM4 packet when the missing payload arrives");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
