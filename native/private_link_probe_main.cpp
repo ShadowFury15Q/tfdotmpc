@@ -13,6 +13,7 @@
 #include "xex_optional_header.hpp"
 #include "xex_title_boot.hpp"
 #include "native_input.hpp"
+#include "ppc_fpscr_init.hpp"
 #include "ppc_recomp_shared.h" // Includes the generated PPC configuration and context
 #include "xam_guest_input.hpp"
 #include "xnet_startup.hpp"
@@ -223,6 +224,7 @@ void execute_guest_entry(dotm::GuestMemory& memory, std::uint32_t entry) {
     write_guest32(kKthread + 0x14CU, 1U);
 #endif
     PPCContext context{};
+    dotm::initialize_guest_fpscr(context);
 #ifndef DOTM_SYNTHETIC_PRIVATE_BOOT
     context.r13.u64 = kPcr;
 #endif

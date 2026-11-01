@@ -451,6 +451,10 @@ add_test(NAME xbox360_original_ppc_fpr_save_restore COMMAND dotm_ppc_nonvolatile
 add_test(NAME synthetic_full_ppc_link_and_xam_import
   COMMAND dotm_synthetic_private_link_test)
 
+add_executable(dotm_ppc_fpscr_init_test test_ppc_fpscr_init.cpp)
+add_test(NAME xenonrecomp_ppc_fpscr_preserves_host_exception_masks
+  COMMAND dotm_ppc_fpscr_init_test)
+
 # Exercise the same private boot probe against synthetic PPC units. This
 # tests stack setup and host bindings without distributing or running game code.
 add_executable(dotm_synthetic_private_boot_probe

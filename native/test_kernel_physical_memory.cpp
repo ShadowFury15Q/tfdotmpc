@@ -7,6 +7,8 @@ PPC_EXTERN_FUNC(__imp__MmAllocatePhysicalMemoryEx);
 PPC_EXTERN_FUNC(__imp__MmFreePhysicalMemory);
 PPC_EXTERN_FUNC(__imp__MmQueryAllocationSize);
 PPC_EXTERN_FUNC(__imp__MmGetPhysicalAddress);
+PPC_EXTERN_FUNC(__imp__MmQueryAddressProtect);
+PPC_EXTERN_FUNC(__imp__MmSetAddressProtect);
 namespace {
 void check(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
@@ -41,6 +43,26 @@ int main() {
         ctx.r3.u64 = first;
         __imp__MmQueryAllocationSize(ctx, memory.base());
         check(ctx.r3.u32 == 8192, "Physical allocation size");
+        ctx.r3.u64 = first;
+        __imp__MmQueryAddressProtect(ctx, memory.base());
+        check(ctx.r3.u32 == 0x404U, "Physical allocation exposes XDK page protection");
+        ctx.r3.u64 = first;
+        ctx.r4.u64 = 4096;
+        ctx.r5.u64 = 2;
+        __imp__MmSetAddressProtect(ctx, memory.base());
+        check(ctx.r3.u32 == first, "MmSetAddressProtect preserves PPC r3 for void ABI");
+        ctx.r3.u64 = first;
+        __imp__MmQueryAddressProtect(ctx, memory.base());
+        check(ctx.r3.u32 == 2U, "Physical page protection changed to read-only");
+        ctx.r3.u64 = first + 4096;
+        __imp__MmQueryAddressProtect(ctx, memory.base());
+        check(ctx.r3.u32 == 0x404U, "Physical page protection is per 4 KiB page");
+        ctx.r3.u64 = first;
+        ctx.r4.u64 = 4096;
+        ctx.r5.u64 = 0x404;
+        __imp__MmSetAddressProtect(ctx, memory.base());
+        memory.address(first)[0] = 0x5AU;
+        check(memory.address(first)[0] == 0x5AU, "Writable guest physical page restored");
         const auto large = allocate(ctx, memory.base(), 0, 4096,
                                     0x20000004U, 0, 0xFFFFU, 65536);
         check(large == 0xA0000000U &&

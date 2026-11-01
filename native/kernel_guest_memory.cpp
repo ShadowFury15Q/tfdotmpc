@@ -13,6 +13,12 @@
 #include <thread>
 #include <new>
 #include <stdexcept>
+#ifdef _WIN32
+#define NOMINMAX
+#include <Windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 namespace dotm {
 namespace {
@@ -50,6 +56,7 @@ struct PhysicalBlock {
     std::uint32_t guest_address;
     std::uint32_t length;
     std::uint32_t protect;
+    std::map<std::uint32_t, std::uint32_t> page_protect;
 };
 std::map<std::uint32_t, PhysicalBlock> physical_blocks;
 bool physical_overlaps(std::uint64_t offset, std::uint64_t length) {
@@ -630,6 +637,52 @@ std::uint32_t mm_bound_get_physical_address(std::uint32_t guest_address) {
             return offset + (guest_address - block.guest_address);
     }
     return 0;
+}
+
+std::uint32_t mm_bound_query_address_protect(std::uint32_t guest_address) {
+    std::lock_guard lock(binding_mutex);
+    if (!bound_memory) return 0;
+    for (const auto& [offset, block] : physical_blocks) {
+        if (guest_address < block.guest_address ||
+            std::uint64_t(guest_address) - block.guest_address >= block.length)
+            continue;
+        const auto page = (guest_address - block.guest_address) / 4096U;
+        const auto it = block.page_protect.find(page);
+        return it == block.page_protect.end() ?
+            (block.protect & 0x000006FFU) : it->second;
+    }
+    return 0;
+}
+void mm_bound_set_address_protect(std::uint32_t guest_address,
+                                  std::uint32_t bytes, std::uint32_t protect) {
+    std::lock_guard lock(binding_mutex);
+    const auto access = protect & 0xFFU;
+    if (!bound_memory || !bytes || (guest_address & 4095U) || (bytes & 4095U) ||
+        (protect & ~0x000006FFU) || (access != 2U && access != 4U) ||
+        (protect & 0x600U) == 0x600U)
+        throw std::runtime_error("MmSetAddressProtect: invalid guest page protection");
+    for (auto& [offset, block] : physical_blocks) {
+        if (guest_address < block.guest_address ||
+            std::uint64_t(guest_address) - block.guest_address + bytes > block.length)
+            continue;
+        if (!bound_memory->committed_range(guest_address, bytes))
+            throw std::runtime_error("MmSetAddressProtect: uncommitted guest physical pages");
+#ifdef _WIN32
+        DWORD previous = 0;
+        if (!VirtualProtect(bound_memory->address(guest_address), bytes,
+                            access == 2U ? PAGE_READONLY : PAGE_READWRITE, &previous))
+            throw std::runtime_error("MmSetAddressProtect: VirtualProtect failed");
+#else
+        if (mprotect(bound_memory->address(guest_address), bytes,
+                     access == 2U ? PROT_READ : PROT_READ | PROT_WRITE) != 0)
+            throw std::runtime_error("MmSetAddressProtect: mprotect failed");
+#endif
+        const auto first = (guest_address - block.guest_address) / 4096U;
+        for (std::uint32_t i = 0; i < bytes / 4096U; ++i)
+            block.page_protect[first + i] = protect;
+        return;
+    }
+    throw std::runtime_error("MmSetAddressProtect: address not in an Xbox physical allocation");
 }
 
 std::optional<std::uint32_t> mm_bound_resolve_physical_range(

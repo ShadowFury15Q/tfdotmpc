@@ -38,6 +38,11 @@ void mm_bound_free_physical_memory(std::uint32_t type,
 std::uint32_t mm_bound_query_physical_allocation_size(
     std::uint32_t guest_address);
 std::uint32_t mm_bound_get_physical_address(std::uint32_t guest_address);
+// Xbox 360 MmQueryAddressProtect / MmSetAddressProtect: physical guest pages.
+// Preserve XDK cache-policy bits; enforce host read/write page access.
+std::uint32_t mm_bound_query_address_protect(std::uint32_t guest_address);
+void mm_bound_set_address_protect(std::uint32_t guest_address,
+                                  std::uint32_t bytes, std::uint32_t protect);
 // Resolve GPU DMA offsets only within a real physical allocation.
 std::optional<std::uint32_t> mm_bound_resolve_physical_range(
     std::uint32_t physical_address, std::uint32_t length);

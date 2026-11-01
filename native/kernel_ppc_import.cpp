@@ -86,6 +86,16 @@ PPC_FUNC(__imp__MmGetPhysicalAddress) {
     (void)base;
     ctx.r3.u64 = dotm::mm_bound_get_physical_address(ctx.r3.u32);
 }
+// Xbox 360 physical page protection query returns XDK PAGE_* flags in r3.
+PPC_FUNC(__imp__MmQueryAddressProtect) {
+    (void)base;
+    ctx.r3.u64 = dotm::mm_bound_query_address_protect(ctx.r3.u32);
+}
+// Xbox 360 MmSetAddressProtect is void: r3 contains the original address.
+PPC_FUNC(__imp__MmSetAddressProtect) {
+    (void)base;
+    dotm::mm_bound_set_address_protect(ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
+}
 
 // Xbox 360 MmQueryStatistics: pointer to 104-byte big-endian structure.
 PPC_FUNC(__imp__MmQueryStatistics) {

@@ -14,6 +14,8 @@ import re
 #  entry width, branch offset multiplier). Original PPC uses halfword offsets
 #  and byte-indexed, four-byte-aligned switch tables.
 DOTM_TABLES = (
+    # Original _xstart path: 16-byte mode dispatch at 0x825151E8.
+    (2, '__imp__sub_825150F8', 0x825150F8, 0x82450290, 16, 0x82515218, 1, 4),
     (425, '__imp__sub_83294628', 0x83294628, 0x823C0730, 56, 0x83294970, 2, 1),
     (426, '__imp__sub_83298400', 0x83298400, 0x823C09D8, 25, 0x832987D8, 2, 1),
     (426, '__imp__sub_83296E98', 0x83296E98, 0x823C0920, 12, 0x83296F70, 1, 4),

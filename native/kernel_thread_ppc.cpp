@@ -1,3 +1,4 @@
+#include "ppc_fpscr_init.hpp"
 #include "ppc_recomp_shared.h"
 #include "kernel_thread.hpp"
 #include "guest_memory.hpp"
@@ -8,6 +9,7 @@ std::uint32_t run_guest_thread(dotm::GuestMemory& memory, std::uint32_t pcr,
     std::uint32_t stack_pointer, std::uint32_t api_startup,
     std::uint32_t start_address, std::uint32_t parameter) {
     PPCContext ctx{};
+    dotm::initialize_guest_fpscr(ctx);
     ctx.r1.u64 = stack_pointer;
     ctx.r13.u64 = pcr;
     ctx.r3.u64 = api_startup ? start_address : parameter;

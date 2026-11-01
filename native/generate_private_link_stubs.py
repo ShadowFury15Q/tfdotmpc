@@ -42,6 +42,7 @@ NATIVE = {"__imp__KeEnterCriticalRegion", "__imp__KeLeaveCriticalRegion", "__imp
           "__imp__NtQueryVirtualMemory", "__imp__MmQueryStatistics",
           "__imp__MmAllocatePhysicalMemoryEx", "__imp__MmFreePhysicalMemory",
           "__imp__MmQueryAllocationSize", "__imp__MmGetPhysicalAddress",
+          "__imp__MmQueryAddressProtect", "__imp__MmSetAddressProtect",
           "__imp__ExGetXConfigSetting",
           "__imp__XGetVideoMode", "__imp__VdQueryVideoMode", "__imp__VdGetCurrentDisplayGamma", "__imp__VdQueryVideoFlags", "__imp__KeQueryPerformanceFrequency",
           "__imp__VdCallGraphicsNotificationRoutines", "__imp__VdInitializeEngines", "__imp__VdShutdownEngines",

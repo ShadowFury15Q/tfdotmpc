@@ -4,7 +4,11 @@ from repair_ppc_jump_tables import DOTM_TABLES, decode_table_targets, patch_bctr
 
 
 def main():
-    assert len(DOTM_TABLES) == 3
+    assert len(DOTM_TABLES) == 4
+    assert DOTM_TABLES[0] == (
+        2, '__imp__sub_825150F8', 0x825150F8, 0x82450290,
+        16, 0x82515218, 1, 4)
+    assert 0x825152B8 in decode_table_targets(bytes([40]), 0x82515218, 1, 4)
     assert decode_table_targets(bytes([0, 1, 0, 3]), 0x832987D8, 2, 1) == {
         0x832987D9, 0x832987DB}
     assert decode_table_targets(bytes([0, 2, 5]), 0x83296F70, 1, 4) == {
