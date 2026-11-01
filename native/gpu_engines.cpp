@@ -533,6 +533,16 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 engine.me_init_packet_submitted = true;
             } else if (opcode == 0x10U) {
                 // PM4_NOP has payload but does not change GPU state.
+            } else if (opcode == 0x46U) {
+                // PM4_EVENT_WRITE with one initiator DWORD raises an Xenos
+                // VGT event without a memory destination. The 0x21F9 register
+                // is CPU-visible through the mapped GPU MMIO aperture.
+                // Multiword variants require actual completion/DMA semantics;
+                // do not acknowledge them until implemented.
+                if (payload != 1U)
+                    throw std::runtime_error("Unsupported Xenos EVENT_WRITE memory variant");
+                write_gpu_register(0x21F9U, at(first) & 0x3FU);
+                ++engine.register_writes;
             } else if (opcode == 0x58U) {
                 // PM4_EVENT_WRITE_SHD: shader-done event, physical fence
                 // address (with Xenos dword endian selector), fence value.
@@ -555,6 +565,10 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 // the packet, preserving RPTR and writeback on invalid DMA.
                 (void)gpu_physical_dword_address(encoded_address);
                 write_gpu_physical_dword(encoded_address, result);
+                // VGT_EVENT_INITIATOR is a live Xenos register, not just a
+                // trace annotation. Update it only after DMA has succeeded.
+                write_gpu_register(0x21F9U, event);
+                ++engine.register_writes;
             } else if (opcode == 0x3CU) {
                 // PM4_WAIT_REG_MEM: wait_info, poll address, reference, mask,
                 // poll interval. Do not consume the packet until its predicate
