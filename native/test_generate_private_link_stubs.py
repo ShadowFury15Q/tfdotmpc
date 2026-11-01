@@ -55,6 +55,8 @@ class PrivateLinkStubsTests(unittest.TestCase):
                 "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n"
                 "PPC_EXTERN_FUNC(__imp__VdSwap);\n"
                 "PPC_EXTERN_FUNC(__imp__VdPersistDisplay);\n"
+                "PPC_EXTERN_FUNC(__imp__VdSetDisplayMode);\n"
+                "PPC_EXTERN_FUNC(__imp__VdGetCurrentDisplayInformation);\n"
                 "PPC_EXTERN_FUNC(__imp__KeInitializeApc);\n",
                 encoding="utf-8")
             (root / "ppc_func_mapping.cpp").write_text(
@@ -66,6 +68,8 @@ class PrivateLinkStubsTests(unittest.TestCase):
             self.assertIn("PPC_FUNC(__imp__KeInitializeApc)", source)
             self.assertNotIn("PPC_FUNC(__imp__VdSwap)", source)
             self.assertNotIn("PPC_FUNC(__imp__VdPersistDisplay)", source)
+            self.assertNotIn("PPC_FUNC(__imp__VdSetDisplayMode)", source)
+            self.assertNotIn("PPC_FUNC(__imp__VdGetCurrentDisplayInformation)", source)
 
     def test_xenonrecomp_alias_backed_game_functions_are_not_stubs(self):
         with tempfile.TemporaryDirectory() as tmp:

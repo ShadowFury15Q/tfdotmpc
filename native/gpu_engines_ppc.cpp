@@ -57,6 +57,14 @@ PPC_FUNC(__imp__VdSwap) {
                         ctx.r7.u32, ctx.r8.u32, ctx.r9.u32, ctx.r10.u32,
                         ctx.r1.u32);
 }
+PPC_FUNC(__imp__VdSetDisplayMode) {
+    (void)base;
+    ctx.r3.u64 = dotm::vd_bound_set_display_mode(ctx.r3.u32);
+}
+PPC_FUNC(__imp__VdGetCurrentDisplayInformation) {
+    (void)base;
+    dotm::vd_bound_get_current_display_information(ctx.r3.u32);
+}
 PPC_FUNC(__imp__VdGetSystemCommandBuffer) {
     (void)base;
     dotm::vd_bound_get_system_command_buffer(ctx.r3.u32, ctx.r4.u32);

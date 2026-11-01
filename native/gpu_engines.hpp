@@ -41,6 +41,10 @@ struct GpuEngineSnapshot {
     std::uint32_t last_swap_width = 0;
     std::uint32_t last_swap_height = 0;
     std::uint32_t last_swap_texture_format = 0;
+    std::uint32_t display_mode_flags = 0;
+    std::uint32_t display_mode_width = 0;
+    std::uint32_t display_mode_height = 0;
+    std::uint64_t display_mode_changes = 0;
     std::uint64_t register_writes = 0;
     // Xenos tiled-rendering bin predication state, written by PM4 packets.
     std::uint64_t bin_mask = 0;
@@ -115,6 +119,10 @@ void vd_bound_swap(std::uint32_t command_buffer, std::uint32_t texture_fetch,
                    std::uint32_t gpu_identifier, std::uint32_t frontbuffer_output,
                    std::uint32_t format_output, std::uint32_t color_space_output,
                    std::uint32_t guest_stack);
+// Retail DOTM display setup at 0x82512984 and the immediately following
+// X_DISPLAY_INFO query (88-byte Xbox big-endian ABI).
+std::uint32_t vd_bound_set_display_mode(std::uint32_t flags);
+void vd_bound_get_current_display_information(std::uint32_t output);
 // xboxkrnl ordinal 0x1DF: VdVerifyMEInitCommand, mislabeled as
 // KiApcNormalRoutineNop in some Xbox 360 export name tables.
 // Validate the original big-endian PM4_ME_INIT command in guest memory.

@@ -18,6 +18,8 @@ PPC_EXTERN_FUNC(__imp__VdEnableRingBufferRPtrWriteBack);
 PPC_EXTERN_FUNC(__imp__VdSetSystemCommandBufferGpuIdentifierAddress);
 PPC_EXTERN_FUNC(__imp__VdGetSystemCommandBuffer);
 PPC_EXTERN_FUNC(__imp__VdSwap);
+PPC_EXTERN_FUNC(__imp__VdSetDisplayMode);
+PPC_EXTERN_FUNC(__imp__VdGetCurrentDisplayInformation);
 PPC_EXTERN_FUNC(__imp__VdPersistDisplay);
 PPC_EXTERN_FUNC(__imp__KiApcNormalRoutineNop);
 
@@ -176,6 +178,31 @@ int main() {
               swap_load(swap_command + 28U) == 0x80000000U &&
               swap_load(swap_command + 252U) == 0x80000000U,
               "VdSwap publishes real physical PM4 fetch without fake GPU present");
+        // Actual retail DOTM calls VdSetDisplayMode(0x40000000) and
+        // reads X_DISPLAY_INFO fields at offsets 0x48, 0x4A, 0x56.
+        ctx.r3.u64 = 0x40000000U;
+        __imp__VdSetDisplayMode(ctx, memory.base());
+        check(ctx.r3.u32 == 0U &&
+              dotm::vd_bound_gpu_snapshot().display_mode_changes == 1U,
+              "Retail 720p RGB display mode registered by Xbox kernel ABI");
+        constexpr std::uint32_t display_info = image + 0xF00U;
+        ctx.r3.u64 = display_info;
+        __imp__VdGetCurrentDisplayInformation(ctx, memory.base());
+        check(swap_load(display_info) == 0x050002D0U &&
+              swap_load(display_info + 0x10U) == 1280U &&
+              swap_load(display_info + 0x14U) == 720U &&
+              swap_load(display_info + 0x4CU) == 0x42700000U &&
+              memory.address(display_info)[0x48U] == 0x05U &&
+              memory.address(display_info)[0x49U] == 0x00U &&
+              memory.address(display_info)[0x4AU] == 0x02U &&
+              memory.address(display_info)[0x4BU] == 0xD0U &&
+              memory.address(display_info)[0x56U] == 0x05U,
+              "X_DISPLAY_INFO matches actual DOTM PPC big-endian field reads");
+        ctx.r3.u64 = 0x10000000U;
+        expect_throw([&] { __imp__VdSetDisplayMode(ctx, memory.base()); },
+                     "Unsupported display mode is not silently accepted");
+        check(dotm::vd_bound_gpu_snapshot().display_mode_changes == 1U,
+              "Rejected display mode leaves active Xbox display state intact");
         dotm::mm_bound_free_physical_memory(1U, swap_virtual);
         check(dotm::mm_bound_query_physical_allocation_size(swap_virtual) == 0U,
               "VdSwap frontbuffer test releases tracked physical pages");

@@ -487,6 +487,53 @@ void vd_bound_swap(std::uint32_t command_buffer, std::uint32_t texture_fetch,
     engine.last_swap_texture_format = texture_format;
     (void)gpu_identifier;
 }
+std::uint32_t vd_bound_set_display_mode(std::uint32_t flags) {
+    std::lock_guard lock(gpu_mutex);
+    // DOTM passes 0x40000000 for its 1280x720 RGB mode. Bit 27 selects
+    // the 10:10:10:2 texture format; the SD and non-RGB paths require
+    // hardware-specific scaler handling and must not silently succeed.
+    if (!engine.initialized || (flags & 0x40000000U) == 0U ||
+        (flags & ~0x78000002U) || (flags & 0x30000002U))
+        throw std::runtime_error("Unsupported Xbox VdSetDisplayMode configuration");
+    engine.display_mode_flags = flags;
+    engine.display_mode_width = 1280U;
+    engine.display_mode_height = 720U;
+    ++engine.display_mode_changes;
+    return 0U; // Xbox kernel STATUS_SUCCESS
+}
+void vd_bound_get_current_display_information(std::uint32_t output) {
+    std::lock_guard lock(gpu_mutex);
+    constexpr std::uint32_t kBytes = 0x58U;
+    const auto begin = std::uint64_t(output);
+    const auto end = begin + kBytes;
+    const auto table = std::uint64_t(GuestMemory::kFunctionTableOffset);
+    if (!engine.initialized || !engine.display_mode_changes ||
+        (output & 3U) || !readable(output, kBytes) ||
+        (begin < table + GuestMemory::kFunctionTableSize && end > table))
+        throw std::runtime_error("Invalid Xbox VdGetCurrentDisplayInformation output");
+    std::memset(guest_memory->address(output), 0, kBytes);
+    const auto write16 = [&](std::uint32_t offset, std::uint16_t value) {
+        auto* p = guest_memory->address(output + offset);
+        p[0] = static_cast<std::uint8_t>(value >> 8U);
+        p[1] = static_cast<std::uint8_t>(value);
+    };
+    const auto width = static_cast<std::uint16_t>(engine.display_mode_width);
+    const auto height = static_cast<std::uint16_t>(engine.display_mode_height);
+    write16(0x00U, width);             // front buffer width
+    write16(0x02U, height);            // front buffer height
+    guest_memory->address(output)[4] = static_cast<std::uint8_t>(
+        (engine.display_mode_flags & 0x08000000U) ? 54U : 6U);
+    write_be32(output + 0x10U, width);  // scaler source rectangle x2
+    write_be32(output + 0x14U, height); // scaler source rectangle y2
+    write_be32(output + 0x18U, width);  // scaler output width
+    write_be32(output + 0x1CU, height); // scaler output height
+    write_be32(output + 0x20U, 1U);    // vertical filter type
+    write_be32(output + 0x30U, 1U);    // horizontal filter type
+    write16(0x48U, width);             // display width (DOTM reads at SP+440)
+    write16(0x4AU, height);            // display height (SP+442)
+    write_be32(output + 0x4CU, 0x42700000U); // 60 Hz IEEE754 BE float
+    write16(0x56U, width);             // actual display width (SP+454)
+}
 void vd_bound_verify_me_init_command(std::uint32_t address,
                                      std::uint32_t word_count) {
     std::lock_guard lock(gpu_mutex);
