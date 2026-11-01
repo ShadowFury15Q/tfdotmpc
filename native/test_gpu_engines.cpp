@@ -377,6 +377,55 @@ int main() {
                      "Unmasked original draw still requires a real rendering backend");
         check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 69,
               "Unimplemented unmasked draw remains pending");
+        // WAIT_REG_MEM reads live CPU MMIO registers and stalls the ring
+        // without losing the packet or writing a speculative read pointer.
+        auto* poll_register = memory.address(0x7FC80000U + 0x202U * 4U);
+        poll_register[0] = 0x12; poll_register[1] = 0x34;
+        poll_register[2] = 0x56; poll_register[3] = 0x78;
+        put(69, 0xC0043C00U); // WAIT_REG_MEM, five payload DWORDs
+        put(70, 3U); put(71, 0x202U);
+        put(72, 0x12340000U); put(73, 0xFFFF0000U); put(74, 0U);
+        check(dotm::vd_bound_execute_ring(75) == 1 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 75 &&
+              memory.address(writeback)[3] == 75,
+              "WAIT_REG_MEM matches masked guest MMIO register value");
+        put(75, 0xC0043C00U);
+        put(76, 3U); put(77, 0x202U);
+        put(78, 0xDEADBEEFU); put(79, 0xFFFFFFFFU); put(80, 0x100U);
+        check(dotm::vd_bound_execute_ring(81) == 0 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 75 &&
+              memory.address(writeback)[3] == 75,
+              "Unmet WAIT_REG_MEM preserves packet and DMA read-pointer writeback");
+        poll_register[0] = 0xDE; poll_register[1] = 0xAD;
+        poll_register[2] = 0xBE; poll_register[3] = 0xEF;
+        check(dotm::vd_bound_execute_ring(81) == 1 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 81,
+              "WAIT_REG_MEM resumes when original PPC updates the polled register");
+        // The memory form resolves a genuine allocated GPU physical page,
+        // with the low address bits selecting Xenos 8-in-32 endian swapping.
+        auto* physical_poll = memory.address(writeback + 4);
+        physical_poll[0] = 0xA1; physical_poll[1] = 0xB2;
+        physical_poll[2] = 0xC3; physical_poll[3] = 0xD4;
+        put(81, 0xC0043C00U);
+        put(82, 0x13U); put(83, (writeback_physical + 4U) | 2U);
+        put(84, 0xA1B2C3D4U); put(85, 0xFFFFFFFFU); put(86, 0U);
+        check(dotm::vd_bound_execute_ring(87) == 1 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 87 &&
+              memory.address(writeback)[3] == 87,
+              "WAIT_REG_MEM physical-memory mode uses GPU endian conversion");
+        put(87, 0xC0033C00U);
+        put(88, 3U); put(89, 0x202U); put(90, 0U); put(91, 0U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(92); },
+                     "Malformed WAIT_REG_MEM packet rejected before consumption");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 87,
+              "Malformed WAIT_REG_MEM preserves the ring read pointer");
+        put(87, 0xC0043C00U);
+        put(88, 0x13U); put(89, 0xFFFFFFF2U);
+        put(90, 0U); put(91, 0xFFFFFFFFU); put(92, 0U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(93); },
+                     "WAIT_REG_MEM rejects unallocated physical poll addresses");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 87,
+              "Invalid physical WAIT_REG_MEM leaves DMA state intact");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
