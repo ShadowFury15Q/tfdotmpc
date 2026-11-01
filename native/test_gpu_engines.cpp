@@ -17,6 +17,7 @@ PPC_EXTERN_FUNC(__imp__VdInitializeRingBuffer);
 PPC_EXTERN_FUNC(__imp__VdEnableRingBufferRPtrWriteBack);
 PPC_EXTERN_FUNC(__imp__VdSetSystemCommandBufferGpuIdentifierAddress);
 PPC_EXTERN_FUNC(__imp__VdGetSystemCommandBuffer);
+PPC_EXTERN_FUNC(__imp__VdPersistDisplay);
 PPC_EXTERN_FUNC(__imp__KiApcNormalRoutineNop);
 
 namespace {
@@ -106,6 +107,31 @@ int main() {
         ctx.r7.u64 = image + 64;
         __imp__VdInitializeEngines(ctx, memory.base());
         check(ctx.r3.u32 == 1, "PPC r3-r7 GPU initialization ABI");
+        // Retail DOTM 0x82512C70 passes a guest display descriptor at r3
+        // and receives a physical allocation through r4. The caller frees
+        // it with MmFreePhysicalMemory(type=1). Do not fabricate a pointer.
+        constexpr std::uint32_t display_descriptor = image + 0x200U;
+        constexpr std::uint32_t display_allocation = image + 0x220U;
+        ctx.r3.u64 = display_descriptor;
+        ctx.r4.u64 = display_allocation;
+        __imp__VdPersistDisplay(ctx, memory.base());
+        const auto physical_display = (std::uint32_t(memory.address(display_allocation)[0]) << 24) |
+                                      (std::uint32_t(memory.address(display_allocation)[1]) << 16) |
+                                      (std::uint32_t(memory.address(display_allocation)[2]) << 8) |
+                                       std::uint32_t(memory.address(display_allocation)[3]);
+        check(ctx.r3.u32 == 1U && physical_display != 0U &&
+              dotm::mm_bound_query_physical_allocation_size(physical_display) >= 64U,
+              "Original VdPersistDisplay returns a real tracked Xbox physical allocation");
+        dotm::mm_bound_free_physical_memory(1U, physical_display);
+        check(dotm::mm_bound_query_physical_allocation_size(physical_display) == 0U,
+              "Original PPC MmFreePhysicalMemory releases persisted-display storage");
+        ctx.r3.u64 = display_descriptor;
+        ctx.r4.u64 = display_descriptor + 8U;
+        expect_throw([&] { __imp__VdPersistDisplay(ctx, memory.base()); },
+                     "PersistDisplay rejects output overlapping original descriptor");
+        ctx.r4.u64 = 0xDEAD0000U;
+        expect_throw([&] { __imp__VdPersistDisplay(ctx, memory.base()); },
+                     "PersistDisplay rejects uncommitted PPC output");
         check(dotm::vd_bound_read_gpu_register(0x714U / 4U) == 0U &&
               dotm::vd_bound_read_gpu_mmio_register(0x714U / 4U) == 0U,
               "GPU initialization clears prior direct PPC MMIO register writes");

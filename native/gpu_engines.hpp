@@ -89,6 +89,13 @@ void vd_bound_set_system_command_buffer_gpu_identifier_address(std::uint32_t add
 // command buffer is fabricated when XAM has not supplied one.
 void vd_bound_install_system_command_buffer(std::uint32_t descriptor_address,
                                            std::uint32_t initial_identifier);
+// The original DOTM calls xboxkrnl VdPersistDisplay(r3=12-byte
+// display descriptor, r4=guest address for returned physical allocation)
+// at PPC 0x82512C70 and immediately releases the returned allocation via
+// MmFreePhysicalMemory(1, address). Allocate real tracked physical memory.
+// This does not substitute for native frontbuffer presentation.
+std::uint32_t vd_bound_persist_display(std::uint32_t descriptor_address,
+                                       std::uint32_t allocation_output);
 // xboxkrnl VdGetSystemCommandBuffer(r3=descriptor, r4=identifier): return the
 // XAM-owned descriptor and advance its two-step GPU fence sequence.
 void vd_bound_get_system_command_buffer(std::uint32_t descriptor_address,

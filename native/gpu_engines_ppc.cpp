@@ -47,6 +47,10 @@ PPC_FUNC(__imp__VdEnableRingBufferRPtrWriteBack) {
     dotm::vd_bound_enable_ring_buffer_read_pointer_writeback(
         ctx.r3.u32, ctx.r4.u32);
 }
+PPC_FUNC(__imp__VdPersistDisplay) {
+    (void)base;
+    ctx.r3.u64 = dotm::vd_bound_persist_display(ctx.r3.u32, ctx.r4.u32);
+}
 PPC_FUNC(__imp__VdGetSystemCommandBuffer) {
     (void)base;
     dotm::vd_bound_get_system_command_buffer(ctx.r3.u32, ctx.r4.u32);

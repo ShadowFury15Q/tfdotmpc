@@ -364,6 +364,34 @@ void vd_bound_install_system_command_buffer(std::uint32_t descriptor_address,
     system_command_buffer_installed = true;
     engine.system_command_buffer_next_identifier = initial_identifier;
 }
+std::uint32_t vd_bound_persist_display(std::uint32_t descriptor_address,
+                                       std::uint32_t allocation_output) {
+    std::lock_guard lock(gpu_mutex);
+    constexpr std::uint32_t kDescriptorBytes = 12U;
+    constexpr std::uint32_t kPhysicalBytes = 64U;
+    const auto output_begin = std::uint64_t(allocation_output);
+    const auto output_end = output_begin + 4U;
+    const auto descriptor_begin = std::uint64_t(descriptor_address);
+    const auto descriptor_end = descriptor_begin + kDescriptorBytes;
+    const auto table = std::uint64_t(GuestMemory::kFunctionTableOffset);
+    const auto table_end = table + GuestMemory::kFunctionTableSize;
+    if (!engine.initialized || (descriptor_address & 3U) ||
+        (allocation_output & 3U) ||
+        !readable(descriptor_address, kDescriptorBytes) ||
+        !readable(allocation_output, 4U) ||
+        (output_begin < table_end && output_end > table) ||
+        (output_begin < descriptor_end && output_end > descriptor_begin))
+        throw std::runtime_error("Invalid Xbox VdPersistDisplay guest arguments");
+    // The retail DOTM path expects a *real* physical allocation, which
+    // is passed to MmFreePhysicalMemory(type=1) after VdPersistDisplay
+    // returns success. Do not invent a pointer or simulate a present.
+    const auto physical = mm_bound_allocate_physical_memory_ex(
+        1U, kPhysicalBytes, 4U, 0U, 0x1FFFFFFFU, 32U);
+    if (!physical)
+        return 0U; // physical pool exhausted: report failure without writing.
+    write_be32(allocation_output, physical);
+    return 1U;
+}
 void vd_bound_get_system_command_buffer(std::uint32_t descriptor_address,
                                         std::uint32_t identifier_address) {
     std::lock_guard lock(gpu_mutex);
