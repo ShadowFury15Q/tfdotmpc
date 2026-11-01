@@ -49,6 +49,30 @@ void write_be32(std::uint32_t address, std::uint32_t value) {
     p[2] = static_cast<std::uint8_t>(value >> 8);
     p[3] = static_cast<std::uint8_t>(value);
 }
+// Xenos DMA writes target allocated GPU physical pages, not arbitrary guest
+// virtual addresses. The low address bits specify the 32-bit endian mode.
+std::uint32_t gpu_physical_dword_address(std::uint32_t encoded_address) {
+    const auto guest = mm_bound_resolve_physical_range(encoded_address & ~3U, 4U);
+    if (!guest || !readable(*guest, 4U))
+        throw std::runtime_error("Xenos PM4 DMA write requires allocated physical memory");
+    return *guest;
+}
+void write_gpu_physical_dword(std::uint32_t encoded_address, std::uint32_t value) {
+    const auto guest = gpu_physical_dword_address(encoded_address);
+    // Store in guest byte order. These are the four Xenos 32-bit GPU
+    // endian modes (none, 8-in-16, 8-in-32, 16-in-32).
+    switch (encoded_address & 3U) {
+    case 0: value = ((value & 0x000000FFU) << 24) |
+                    ((value & 0x0000FF00U) << 8) |
+                    ((value & 0x00FF0000U) >> 8) |
+                    ((value & 0xFF000000U) >> 24); break;
+    case 1: value = (value << 16) | (value >> 16); break;
+    case 2: break;
+    case 3: value = ((value & 0x00FF00FFU) << 8) |
+                    ((value & 0xFF00FF00U) >> 8); break;
+    }
+    write_be32(guest, value);
+}
 // CPU-side Xenos MMIO and PM4 packet writes address the same register file.
 // Guest PPC accesses the MMIO pages directly, so the guest bytes are the
 // authoritative register state whenever the aperture has been mapped.
@@ -366,6 +390,35 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 case 7: satisfied = true; break;
                 }
                 if (!satisfied) return completed;
+            } else if (opcode == 0x3EU) {
+                // PM4_REG_TO_MEM: transfer a live Xenos register to an
+                // allocated GPU physical dword with the requested endian mode.
+                if (payload != 2U)
+                    throw std::runtime_error("Invalid Xenos PM4 REG_TO_MEM payload size");
+                const auto register_index = at(first);
+                const auto destination = at(first + 1);
+                if (register_index >= gpu_registers.size())
+                    throw std::runtime_error("Xenos PM4 REG_TO_MEM register out of range");
+                (void)gpu_physical_dword_address(destination);
+                write_gpu_physical_dword(destination, read_gpu_register(register_index));
+            } else if (opcode == 0x3DU) {
+                // PM4_MEM_WRITE: one physical address followed by consecutive
+                // DWORDs. Validate the entire destination before modifying
+                // any guest memory, so a bad DMA cannot partially commit.
+                if (payload < 2U)
+                    throw std::runtime_error("Invalid Xenos PM4 MEM_WRITE payload size");
+                const auto destination = at(first);
+                const auto base_address = destination & ~3U;
+                const auto word_count = payload - 1U;
+                if (std::uint64_t(base_address) +
+                        std::uint64_t(word_count) * 4U > (1ULL << 32))
+                    throw std::runtime_error("Xenos PM4 MEM_WRITE address overflow");
+                for (std::uint32_t i = 0; i < word_count; ++i)
+                    (void)gpu_physical_dword_address(base_address + i * 4U);
+                for (std::uint32_t i = 0; i < word_count; ++i)
+                    write_gpu_physical_dword(
+                        (base_address + i * 4U) | (destination & 3U),
+                        at(first + 1U + i));
             } else if (opcode == 0x21U) {
                 // PM4_REG_RMW: register index, AND mask, OR mask.
                 // Apply the update only after validating the complete packet.
