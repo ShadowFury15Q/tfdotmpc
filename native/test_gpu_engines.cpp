@@ -681,6 +681,61 @@ int main() {
               memory.address(writeback)[0x40] == 0xCA &&
               memory.address(writeback)[0x43] == 0xBE,
               "Scratch DMA resumes after restoring a valid physical address");
+        // A failed second scratch DMA in a single PM4 packet must not
+        // commit the first register or its fence write. Both TYPE0 and
+        // TYPE1 packets must remain retryable at their original read pointer.
+        for (unsigned i = 0; i < 4; ++i)
+            memory.address(writeback)[4092 + i] =
+                static_cast<std::uint8_t>(0xFAU + i);
+        put(168, (1U << 16) | 0x01DCU);
+        put(169, 3U);
+        put(170, writeback_physical + 4092U);
+        put(171, (1U << 16) | 0x0578U);
+        put(172, 0x12345678U);
+        put(173, 0x87654321U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(174); },
+                     "TYPE0 scratch DMA validates every destination before committing");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 171 &&
+              dotm::vd_bound_read_gpu_register(0x0578U) == 0xCAFEBABEU &&
+              dotm::vd_bound_read_gpu_register(0x0579U) == 0x55667788U &&
+              memory.address(writeback)[4092] == 0xFA &&
+              memory.address(writeback)[4095] == 0xFD &&
+              memory.address(writeback)[3] == 171,
+              "TYPE0 invalid second scratch DMA leaves first register and fence intact");
+        put(171, 0x01DDU);
+        put(172, writeback_physical + 0x40U);
+        put(173, (1U << 16) | 0x0578U);
+        put(174, 0x0A0B0C0DU);
+        put(175, 0x01020304U);
+        check(dotm::vd_bound_execute_ring(176) == 2 &&
+              dotm::vd_bound_read_gpu_register(0x0578U) == 0x0A0B0C0DU &&
+              dotm::vd_bound_read_gpu_register(0x0579U) == 0x01020304U,
+              "TYPE0 scratch DMA resumes after fixing the physical destination");
+        put(176, 0x01DDU);
+        put(177, writeback_physical + 4092U);
+        put(178, 0x40000000U | (0x0579U << 11) | 0x0578U);
+        put(179, 0xFEEDBEEFU);
+        put(180, 0x11224488U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(181); },
+                     "TYPE1 scratch DMA validates both destinations before committing");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 178 &&
+              dotm::vd_bound_read_gpu_register(0x0578U) == 0x0A0B0C0DU &&
+              dotm::vd_bound_read_gpu_register(0x0579U) == 0x01020304U &&
+              memory.address(writeback)[4092] == 0xFA &&
+              memory.address(writeback)[4095] == 0xFD &&
+              memory.address(writeback)[3] == 178,
+              "TYPE1 invalid second scratch DMA leaves first register and fence intact");
+        put(178, 0x01DDU);
+        put(179, writeback_physical + 0x40U);
+        put(180, 0x40000000U | (0x0579U << 11) | 0x0578U);
+        put(181, 0xF1E2D3C4U);
+        put(182, 0xB1A2C3D4U);
+        check(dotm::vd_bound_execute_ring(183) == 2 &&
+              dotm::vd_bound_read_gpu_register(0x0578U) == 0xF1E2D3C4U &&
+              dotm::vd_bound_read_gpu_register(0x0579U) == 0xB1A2C3D4U &&
+              memory.address(writeback)[0x40] == 0xF1 &&
+              memory.address(writeback)[0x44] == 0xB1,
+              "TYPE1 scratch DMA resumes and writes both physical fences");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
