@@ -311,6 +311,61 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 engine.me_init_packet_submitted = true;
             } else if (opcode == 0x10U) {
                 // PM4_NOP has payload but does not change GPU state.
+            } else if (opcode == 0x3CU) {
+                // PM4_WAIT_REG_MEM: wait_info, poll address, reference, mask,
+                // poll interval. Do not consume the packet until its predicate
+                // is satisfied; a subsequent GPU kick can retry the same wait.
+                // Busy-spinning while holding gpu_mutex would prevent the
+                // guest CPU from updating MMIO state and deadlock the title.
+                if (payload != 5U)
+                    throw std::runtime_error("Invalid Xenos PM4 WAIT_REG_MEM payload size");
+                const auto wait_info = at(first);
+                const auto poll_address = at(first + 1);
+                const auto reference = at(first + 2);
+                const auto mask = at(first + 3);
+                // The fifth word controls hardware poll delay. Host-side
+                // execution retries on the next ring kick instead of sleeping.
+                const auto poll_interval = at(first + 4);
+                (void)poll_interval;
+                std::uint32_t value = 0;
+                if (wait_info & 0x10U) {
+                    // GPU physical-memory polls carry the endian mode in the
+                    // low two address bits. The guest bytes are big-endian,
+                    // while Xenos kNone reads a raw little-endian DWORD.
+                    const auto physical_address = poll_address & ~3U;
+                    const auto guest_address =
+                        mm_bound_resolve_physical_range(physical_address, 4);
+                    if (!guest_address || !readable(*guest_address, 4))
+                        throw std::runtime_error("Xenos PM4 WAIT_REG_MEM physical address invalid");
+                    const auto be = read_be32(*guest_address);
+                    switch (poll_address & 3U) {
+                    case 0: value = ((be & 0x000000FFU) << 24) |
+                                    ((be & 0x0000FF00U) << 8) |
+                                    ((be & 0x00FF0000U) >> 8) |
+                                    ((be & 0xFF000000U) >> 24); break;
+                    case 1: value = (be << 16) | (be >> 16); break;
+                    case 2: value = be; break;
+                    case 3: value = ((be & 0x00FF00FFU) << 8) |
+                                    ((be & 0xFF00FF00U) >> 8); break;
+                    }
+                } else {
+                    if (poll_address >= gpu_registers.size())
+                        throw std::runtime_error("Xenos PM4 WAIT_REG_MEM register out of range");
+                    value = read_gpu_register(poll_address);
+                }
+                const auto masked = value & mask;
+                bool satisfied = false;
+                switch (wait_info & 7U) {
+                case 0: satisfied = false; break;
+                case 1: satisfied = masked < reference; break;
+                case 2: satisfied = masked <= reference; break;
+                case 3: satisfied = masked == reference; break;
+                case 4: satisfied = masked != reference; break;
+                case 5: satisfied = masked >= reference; break;
+                case 6: satisfied = masked > reference; break;
+                case 7: satisfied = true; break;
+                }
+                if (!satisfied) return completed;
             } else if (opcode == 0x21U) {
                 // PM4_REG_RMW: register index, AND mask, OR mask.
                 // Apply the update only after validating the complete packet.
