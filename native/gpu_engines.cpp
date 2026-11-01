@@ -279,6 +279,11 @@ std::uint32_t vd_bound_retrain_edram(
     // Preserve the caller's output slots, which it initialized itself.
     return 0;
 }
+std::uint32_t vd_bound_is_hsio_training_succeeded() {
+    std::lock_guard lock(gpu_mutex);
+    return guest_memory && engine.edram_trained &&
+           engine.edram_backing_size == kEdramBytes ? 1U : 0U;
+}
 std::uint32_t vd_bound_enable_disable_clock_gating(std::uint32_t enabled) {
     std::lock_guard lock(gpu_mutex);
     if (!guest_memory || enabled > 1U)

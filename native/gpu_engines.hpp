@@ -72,6 +72,9 @@ std::uint32_t vd_bound_retrain_edram(
     std::uint32_t mode, std::uint32_t offset_pointer,
     std::uint32_t region_bytes, std::uint32_t status_pointer,
     std::uint32_t scratch_pointer, std::uint32_t scratch_bytes);
+// Report the result of the last native Xenos EDRAM training pass.
+// The original DOTM queries this after VdRetrainEDRAM at PPC 0x8251B978.
+std::uint32_t vd_bound_is_hsio_training_succeeded();
 std::uint32_t vd_bound_enable_disable_clock_gating(std::uint32_t enabled);
 std::uint32_t vd_bound_call_graphics_notification_routines(
     std::uint32_t notification, std::uint32_t scaling_pointer);

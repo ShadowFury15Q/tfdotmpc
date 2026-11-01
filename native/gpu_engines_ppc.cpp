@@ -20,6 +20,11 @@ PPC_FUNC(__imp__VdRetrainEDRAM) {
         ctx.r3.u32, ctx.r4.u32, ctx.r5.u32,
         ctx.r6.u32, ctx.r7.u32, ctx.r8.u32);
 }
+// Xbox 360 BOOL return in r3; query the actual host-backed training result.
+PPC_FUNC(__imp__VdIsHSIOTrainingSucceeded) {
+    (void)base;
+    ctx.r3.u64 = dotm::vd_bound_is_hsio_training_succeeded();
+}
 PPC_FUNC(__imp__VdEnableDisableClockGating) {
     (void)base;
     ctx.r3.u64 = dotm::vd_bound_enable_disable_clock_gating(ctx.r3.u32);

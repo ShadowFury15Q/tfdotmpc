@@ -10,6 +10,7 @@ PPC_EXTERN_FUNC(__imp__VdCallGraphicsNotificationRoutines);
 PPC_EXTERN_FUNC(__imp__VdShutdownEngines);
 PPC_EXTERN_FUNC(__imp__VdRetrainEDRAMWorker);
 PPC_EXTERN_FUNC(__imp__VdRetrainEDRAM);
+PPC_EXTERN_FUNC(__imp__VdIsHSIOTrainingSucceeded);
 PPC_EXTERN_FUNC(__imp__VdEnableDisableClockGating);
 PPC_EXTERN_FUNC(__imp__VdSetGraphicsInterruptCallback);
 PPC_EXTERN_FUNC(__imp__VdInitializeRingBuffer);
@@ -58,6 +59,8 @@ int main() {
         constexpr std::uint32_t edram_offset = image + 0x180U;
         constexpr std::uint32_t edram_status = image + 0x184U;
         constexpr std::uint32_t edram_scratch = image + 0x800U;
+        __imp__VdIsHSIOTrainingSucceeded(ctx, memory.base());
+        check(ctx.r3.u32 == 0U, "HSIO training is not reported before calibration");
         ctx.r3.u32 = 0;
         __imp__VdRetrainEDRAMWorker(ctx, memory.base());
         check(ctx.r3.u32 == 0 && dotm::vd_bound_gpu_snapshot().edram_worker_calls == 1,
@@ -76,6 +79,8 @@ int main() {
               memory.address(edram_offset)[0] == 0 &&
               memory.address(edram_status)[0] == 0,
               "EDRAM backing calibrated without corrupting original guest outputs");
+        __imp__VdIsHSIOTrainingSucceeded(ctx, memory.base());
+        check(ctx.r3.u32 == 1U, "HSIO training status reflects verified EDRAM backing");
         ctx.r4.u32 = 0xDEAD0000U;
         expect_throw([&] { __imp__VdRetrainEDRAM(ctx, memory.base()); },
                      "Uncommitted EDRAM guest output rejected");

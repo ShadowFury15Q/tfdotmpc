@@ -46,7 +46,7 @@ NATIVE = {"__imp__KeEnterCriticalRegion", "__imp__KeLeaveCriticalRegion", "__imp
           "__imp__XGetVideoMode", "__imp__VdQueryVideoMode", "__imp__VdGetCurrentDisplayGamma", "__imp__VdQueryVideoFlags", "__imp__KeQueryPerformanceFrequency",
           "__imp__VdCallGraphicsNotificationRoutines", "__imp__VdInitializeEngines", "__imp__VdShutdownEngines",
           "__imp__VdRetrainEDRAM", "__imp__VdRetrainEDRAMWorker",
-          "__imp__VdEnableDisableClockGating",
+          "__imp__VdEnableDisableClockGating", "__imp__VdIsHSIOTrainingSucceeded",
           "__imp__VdSetGraphicsInterruptCallback",
           "__imp__VdSetSystemCommandBufferGpuIdentifierAddress",
           # Private import mislabeled by an old xboxkrnl ordinal table: 0x1DF
