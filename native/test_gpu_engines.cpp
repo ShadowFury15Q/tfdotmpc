@@ -801,6 +801,54 @@ int main() {
               memory.address(ring)[188U * 4U] == 0xAA &&
               memory.address(ring)[188U * 4U + 3U] == 0xDD,
               "TYPE0 scratch DMA ring alias cannot mutate the fetched packet payload");
+        // SET_CONSTANT (PM4 0x55) can write the same scratch registers as
+        // type-0/type-1 packets. The second DMA is outside the allocated
+        // ring: the first register and physical fence must remain unchanged.
+        put(189, (1U << 16) | 0x01DCU);
+        put(190, 3U);
+        put(191, physical + 4092U);
+        check(dotm::vd_bound_execute_ring(192) == 1,
+              "Prepare both Xenos scratch writeback lanes");
+        put(192, 0xC0025500U);
+        put(193, 0x0578U);
+        put(194, 0xCAFED00DU);
+        put(195, 0xBADC0FFEU);
+        expect_throw([&] { dotm::vd_bound_execute_ring(196); },
+                     "SET_CONSTANT preflights all scratch DMA destinations");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 192 &&
+              dotm::vd_bound_read_gpu_register(0x0578U) == 0xAABBCCDDU &&
+              dotm::vd_bound_read_gpu_register(0x0579U) == 0x11223344U &&
+              memory.address(ring)[4092] == 0xFA &&
+              memory.address(ring)[4095] == 0xFD &&
+              memory.address(writeback)[3] == 192,
+              "Rejected SET_CONSTANT preserves registers, fence and ring pointer");
+        put(192, 0x01DDU);
+        put(193, writeback_physical + 0x40U);
+        put(194, 0xC0025500U);
+        put(195, 0x0578U);
+        put(196, 0xCAFED00DU);
+        put(197, 0xBADC0FFEU);
+        check(dotm::vd_bound_execute_ring(198) == 2 &&
+              dotm::vd_bound_read_gpu_register(0x0578U) == 0xCAFED00DU &&
+              dotm::vd_bound_read_gpu_register(0x0579U) == 0xBADC0FFEU &&
+              memory.address(writeback)[0x40] == 0xCA &&
+              memory.address(writeback)[0x44] == 0xBA,
+              "SET_CONSTANT commits both valid physical scratch fences");
+        // The first scratch DMA overwrites the next packet payload dword.
+        // Both register values must still be those fetched before execution.
+        put(198, (1U << 16) | 0x01DCU);
+        put(199, 1U);
+        put(200, physical + 204U * 4U);
+        put(201, 0xC0025500U);
+        put(202, 0x0578U);
+        put(203, 0x11223344U);
+        put(204, 0x55667788U);
+        check(dotm::vd_bound_execute_ring(205) == 2 &&
+              dotm::vd_bound_read_gpu_register(0x0578U) == 0x11223344U &&
+              dotm::vd_bound_read_gpu_register(0x0579U) == 0x55667788U &&
+              memory.address(ring)[204U * 4U] == 0x11 &&
+              memory.address(ring)[204U * 4U + 3U] == 0x44,
+              "SET_CONSTANT snapshots packet payload before scratch DMA alias");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
