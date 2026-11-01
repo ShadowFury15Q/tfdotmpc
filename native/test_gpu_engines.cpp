@@ -19,6 +19,7 @@ PPC_EXTERN_FUNC(__imp__VdSetSystemCommandBufferGpuIdentifierAddress);
 PPC_EXTERN_FUNC(__imp__VdGetSystemCommandBuffer);
 PPC_EXTERN_FUNC(__imp__VdSwap);
 PPC_EXTERN_FUNC(__imp__VdSetDisplayMode);
+PPC_EXTERN_FUNC(__imp__VdInitializeScalerCommandBuffer);
 PPC_EXTERN_FUNC(__imp__VdGetCurrentDisplayInformation);
 PPC_EXTERN_FUNC(__imp__VdPersistDisplay);
 PPC_EXTERN_FUNC(__imp__KiApcNormalRoutineNop);
@@ -198,6 +199,44 @@ int main() {
               memory.address(display_info)[0x4BU] == 0xD0U &&
               memory.address(display_info)[0x56U] == 0x05U,
               "X_DISPLAY_INFO matches actual DOTM PPC big-endian field reads");
+        // The original scaler import has 12 arguments: eight registers and
+        // four spill slots. Identity 720p scanout needs no scaler PM4 words.
+        // This is not a substitute for the GPU's actual frontbuffer present.
+        constexpr std::uint32_t scaler_commands = image + 0x200U;
+        constexpr std::uint32_t scaler_vfilter = image + 0x700U;
+        constexpr std::uint32_t scaler_hfilter = image + 0x720U;
+        swap_store(scaler_commands, 0xDEADBEEFU);
+        swap_store(swap_stack + 84U, scaler_hfilter);
+        swap_store(swap_stack + 92U, 0U);
+        swap_store(swap_stack + 100U, scaler_commands);
+        swap_store(swap_stack + 108U, 200U);
+        ctx.r1.u64 = swap_stack;
+        ctx.r3.u64 = 0U;
+        ctx.r4.u64 = (720U << 16U) | 1280U;
+        ctx.r5.u64 = 0U;
+        ctx.r6.u64 = (720U << 16U) | 1280U;
+        ctx.r7.u64 = (720U << 16U) | 1280U;
+        ctx.r8.u64 = 1U;
+        ctx.r9.u64 = scaler_vfilter;
+        ctx.r10.u64 = 1U;
+        __imp__VdInitializeScalerCommandBuffer(ctx, memory.base());
+        const auto scaler_state = dotm::vd_bound_gpu_snapshot();
+        check(ctx.r3.u32 == 0U && scaler_state.identity_scanout_configured &&
+              scaler_state.identity_scanout_requests == 1U &&
+              scaler_state.identity_scanout_width == 1280U &&
+              scaler_state.identity_scanout_height == 720U &&
+              swap_load(scaler_commands) == 0xDEADBEEFU,
+              "Identity 720p scanout records native dimensions without fake GPU commands");
+        ctx.r6.u64 = (1080U << 16U) | 1920U;
+        expect_throw([&] { __imp__VdInitializeScalerCommandBuffer(ctx, memory.base()); },
+                     "Non-identity scaler cannot silently return a fake command stream");
+        check(dotm::vd_bound_gpu_snapshot().identity_scanout_requests == 1U &&
+              swap_load(scaler_commands) == 0xDEADBEEFU,
+              "Rejected scaling preserves original guest buffer and GPU state");
+        ctx.r6.u64 = (720U << 16U) | 1280U;
+        swap_store(swap_stack + 100U, 0xDEAD0000U);
+        expect_throw([&] { __imp__VdInitializeScalerCommandBuffer(ctx, memory.base()); },
+                     "Uncommitted scaler output is rejected before any guest write");
         ctx.r3.u64 = 0x10000000U;
         expect_throw([&] { __imp__VdSetDisplayMode(ctx, memory.base()); },
                      "Unsupported display mode is not silently accepted");

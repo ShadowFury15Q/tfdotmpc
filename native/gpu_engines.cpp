@@ -487,6 +487,52 @@ void vd_bound_swap(std::uint32_t command_buffer, std::uint32_t texture_fetch,
     engine.last_swap_texture_format = texture_format;
     (void)gpu_identifier;
 }
+std::uint32_t vd_bound_initialize_scaler_command_buffer(
+    std::uint32_t source_xy, std::uint32_t source_wh,
+    std::uint32_t output_xy, std::uint32_t output_wh,
+    std::uint32_t frontbuffer_wh, std::uint32_t vertical_filter,
+    std::uint32_t vertical_parameters, std::uint32_t horizontal_filter,
+    std::uint32_t guest_stack) {
+    std::lock_guard lock(gpu_mutex);
+    // XDK PowerPC ABI: r3-r10, followed by four stack-spilled arguments.
+    // The original DOTM function at 0x82520070 initializes a 200-DWORD
+    // buffer with NOPs, then copies the returned DWORD count. A direct
+    // 1:1 scanout requires no scaler GPU commands, so return zero words.
+    // Never claim non-identity scaling or hardware presentation works.
+    if (!engine.initialized || !engine.display_mode_changes ||
+        (guest_stack & 15U) ||
+        !readable(std::uint64_t(guest_stack) + 84U, 28U))
+        throw std::runtime_error("Invalid Xbox scaler PPC stack arguments");
+    const auto horizontal_parameters = read_be32(guest_stack + 84U);
+    const auto unknown9 = read_be32(guest_stack + 92U);
+    const auto command_buffer = read_be32(guest_stack + 100U);
+    const auto command_capacity = read_be32(guest_stack + 108U);
+    if (!command_capacity || command_capacity > 4096U ||
+        (command_buffer & 3U) ||
+        !readable(command_buffer, std::size_t(command_capacity) * 4U) ||
+        (vertical_parameters && !readable(vertical_parameters, 12U)) ||
+        (horizontal_parameters && !readable(horizontal_parameters, 12U)) ||
+        (unknown9 && !readable(unknown9, 4U)))
+        throw std::runtime_error("Invalid Xbox scaler guest buffers");
+    const auto width = source_wh & 0xFFFFU;
+    const auto height = source_wh >> 16U;
+    if (source_xy != output_xy || source_wh != output_wh ||
+        source_wh != frontbuffer_wh || source_xy != 0U ||
+        !width || !height || width != engine.display_mode_width ||
+        height != engine.display_mode_height ||
+        (vertical_filter != 0U && vertical_filter != 1U) ||
+        (horizontal_filter != 0U && horizontal_filter != 1U))
+        throw std::runtime_error(
+            "Xbox VdInitializeScalerCommandBuffer: native non-identity scaler not implemented");
+    // A 1:1 scanout has no scaling coefficients or sampling passes.
+    // Leave the caller's buffer untouched, return 0 DWORDs and preserve
+    // the actual source dimensions for the future native GPU presenter.
+    engine.identity_scanout_configured = true;
+    ++engine.identity_scanout_requests;
+    engine.identity_scanout_width = width;
+    engine.identity_scanout_height = height;
+    return 0U;
+}
 std::uint32_t vd_bound_set_display_mode(std::uint32_t flags) {
     std::lock_guard lock(gpu_mutex);
     // DOTM passes 0x40000000 for its 1280x720 RGB mode. Bit 27 selects

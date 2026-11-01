@@ -58,6 +58,12 @@ struct GpuEngineSnapshot {
     std::uint32_t system_command_buffer_next_identifier = 0;
     std::uint64_t system_command_buffer_queries = 0;
     // Last original-title display scaling notification (four big-endian u16s).
+    // Direct scanout needs no scaling command stream when source, output
+    // and frontbuffer are the same size. Actual GPU presentation is separate.
+    bool identity_scanout_configured = false;
+    std::uint64_t identity_scanout_requests = 0;
+    std::uint32_t identity_scanout_width = 0;
+    std::uint32_t identity_scanout_height = 0;
     std::uint64_t graphics_notifications = 0;
     std::uint32_t last_graphics_notification = 0;
     std::uint16_t frontbuffer_width = 0;
@@ -119,6 +125,16 @@ void vd_bound_swap(std::uint32_t command_buffer, std::uint32_t texture_fetch,
                    std::uint32_t gpu_identifier, std::uint32_t frontbuffer_output,
                    std::uint32_t format_output, std::uint32_t color_space_output,
                    std::uint32_t guest_stack);
+// Original DOTM PPC 0x825201F0 passes 8 register arguments and 4 stack
+// arguments at SP+84,+92,+100,+108. For a 1:1 720p scanout there is no
+// scaling work: return zero PM4 words and register the native scanout
+// dimensions. Non-identity scaling remains unsupported and fails closed.
+std::uint32_t vd_bound_initialize_scaler_command_buffer(
+    std::uint32_t source_xy, std::uint32_t source_wh,
+    std::uint32_t output_xy, std::uint32_t output_wh,
+    std::uint32_t frontbuffer_wh, std::uint32_t vertical_filter,
+    std::uint32_t vertical_parameters, std::uint32_t horizontal_filter,
+    std::uint32_t guest_stack);
 // Retail DOTM display setup at 0x82512984 and the immediately following
 // X_DISPLAY_INFO query (88-byte Xbox big-endian ABI).
 std::uint32_t vd_bound_set_display_mode(std::uint32_t flags);
