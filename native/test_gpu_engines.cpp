@@ -467,14 +467,18 @@ int main() {
               memory.address(writeback + 48U)[2] == 0xD4 &&
               memory.address(writeback + 48U)[3] == 0xC3,
               "MEM_WRITE supports 16-in-32 endian mode");
-        memory.address(writeback + 4092U)[0] = 0x5A;
+        // The ring is the highest physical allocation, so its last DWORD
+        // is followed by the 512 MiB physical-space boundary. The
+        // writeback page sits directly below the ring and must not be
+        // treated as an unallocated neighbor.
+        memory.address(ring + 4092U)[0] = 0x5A;
         put(100, 0xC0023D00U);
-        put(101, (writeback_physical + 4092U) | 2U);
+        put(101, (physical + 4092U) | 2U);
         put(102, 0xFFFFFFFFU); put(103, 0x01020304U);
         expect_throw([&] { dotm::vd_bound_execute_ring(104); },
                      "MEM_WRITE rejects DMA crossing into unallocated memory");
         check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 100 &&
-              memory.address(writeback + 4092U)[0] == 0x5A,
+              memory.address(ring + 4092U)[0] == 0x5A,
               "Invalid MEM_WRITE cannot partially modify allocated memory");
         put(100, 0xC0013E00U);
         put(101, 0x202U); put(102, 0xFFFFFFF2U);
