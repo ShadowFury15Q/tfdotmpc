@@ -35,6 +35,12 @@ struct GpuEngineSnapshot {
     std::uint32_t ring_read_pointer_dwords = 0;
     std::uint64_t packets_executed = 0;
     std::uint32_t gpu_frame_counter = 0;
+    // VdSwap has constructed a guest PM4 fetch command, not presented a frame.
+    std::uint64_t swap_requests = 0;
+    std::uint32_t last_swap_physical_address = 0;
+    std::uint32_t last_swap_width = 0;
+    std::uint32_t last_swap_height = 0;
+    std::uint32_t last_swap_texture_format = 0;
     std::uint64_t register_writes = 0;
     // Xenos tiled-rendering bin predication state, written by PM4 packets.
     std::uint64_t bin_mask = 0;
@@ -100,6 +106,15 @@ std::uint32_t vd_bound_persist_display(std::uint32_t descriptor_address,
 // XAM-owned descriptor and advance its two-step GPU fence sequence.
 void vd_bound_get_system_command_buffer(std::uint32_t descriptor_address,
                                         std::uint32_t identifier_address);
+// Original DOTM 0x8251286C VdSwap: eight PPC register arguments and
+// two guest stack-spilled pointers at SP+84 and SP+92. Generate the
+// real fetch-constant PM4 register packet in the guest's 64-DWORD slot.
+// This does NOT mark a frame presented; a native renderer is still needed.
+void vd_bound_swap(std::uint32_t command_buffer, std::uint32_t texture_fetch,
+                   std::uint32_t system_writeback, std::uint32_t system_commands,
+                   std::uint32_t gpu_identifier, std::uint32_t frontbuffer_output,
+                   std::uint32_t format_output, std::uint32_t color_space_output,
+                   std::uint32_t guest_stack);
 // xboxkrnl ordinal 0x1DF: VdVerifyMEInitCommand, mislabeled as
 // KiApcNormalRoutineNop in some Xbox 360 export name tables.
 // Validate the original big-endian PM4_ME_INIT command in guest memory.

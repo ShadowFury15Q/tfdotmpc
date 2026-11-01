@@ -17,6 +17,7 @@ PPC_EXTERN_FUNC(__imp__VdInitializeRingBuffer);
 PPC_EXTERN_FUNC(__imp__VdEnableRingBufferRPtrWriteBack);
 PPC_EXTERN_FUNC(__imp__VdSetSystemCommandBufferGpuIdentifierAddress);
 PPC_EXTERN_FUNC(__imp__VdGetSystemCommandBuffer);
+PPC_EXTERN_FUNC(__imp__VdSwap);
 PPC_EXTERN_FUNC(__imp__VdPersistDisplay);
 PPC_EXTERN_FUNC(__imp__KiApcNormalRoutineNop);
 
@@ -107,6 +108,77 @@ int main() {
         ctx.r7.u64 = image + 64;
         __imp__VdInitializeEngines(ctx, memory.base());
         check(ctx.r3.u32 == 1, "PPC r3-r7 GPU initialization ABI");
+        // Actual DOTM PPC 0x8251286C uses r3-r10 plus width/height
+        // pointers spilled at SP+84 and SP+92. The fetch describes a
+        // virtual D3D frontbuffer, which the GPU needs as physical memory.
+        constexpr std::uint32_t swap_fetch = image + 0xA00U;
+        constexpr std::uint32_t swap_command = image + 0xB00U;
+        constexpr std::uint32_t swap_args = image + 0xC00U;
+        constexpr std::uint32_t swap_stack = image + 0xD00U;
+        constexpr std::uint32_t swap_system = image + 0xE00U;
+        auto swap_store = [&](std::uint32_t address, std::uint32_t value) {
+            auto* b = memory.address(address);
+            b[0] = static_cast<std::uint8_t>(value >> 24);
+            b[1] = static_cast<std::uint8_t>(value >> 16);
+            b[2] = static_cast<std::uint8_t>(value >> 8);
+            b[3] = static_cast<std::uint8_t>(value);
+        };
+        auto swap_load = [&](std::uint32_t address) -> std::uint32_t {
+            const auto* b = memory.address(address);
+            return (std::uint32_t(b[0]) << 24) | (std::uint32_t(b[1]) << 16) |
+                   (std::uint32_t(b[2]) << 8) | std::uint32_t(b[3]);
+        };
+        const auto swap_virtual = dotm::mm_bound_allocate_physical_memory_ex(
+            1U, 4096U, 4U, 0U, 0x1FFFFFFFU, 4096U);
+        check(swap_virtual != 0U, "VdSwap test allocates actual Xbox physical pages");
+        const auto swap_physical = dotm::mm_bound_get_physical_address(swap_virtual);
+        swap_store(swap_fetch, 2U);
+        swap_store(swap_fetch + 4U, (swap_virtual & 0xFFFFF000U) | 6U);
+        swap_store(swap_fetch + 8U, (1U << 13U) | 1U); // 2x2 frontbuffer
+        for (std::uint32_t i = 3U; i < 6U; ++i)
+            swap_store(swap_fetch + i * 4U, 0x100U + i);
+        swap_store(swap_args, swap_virtual);
+        swap_store(swap_args + 4U, 6U);
+        swap_store(swap_args + 8U, 0U);
+        swap_store(swap_args + 12U, 2U);
+        swap_store(swap_args + 16U, 2U);
+        swap_store(swap_stack + 84U, swap_args + 12U);
+        swap_store(swap_stack + 92U, swap_args + 16U);
+        swap_store(swap_command, 0xDEADBEEFU);
+        ctx.r1.u64 = swap_stack;
+        ctx.r3.u64 = swap_command;
+        ctx.r4.u64 = swap_fetch;
+        ctx.r5.u64 = swap_args + 32U;
+        ctx.r6.u64 = swap_system;
+        ctx.r7.u64 = 1U;
+        ctx.r8.u64 = swap_args;
+        ctx.r9.u64 = swap_args + 4U;
+        ctx.r10.u64 = swap_args + 8U;
+        swap_store(swap_args + 4U, 7U);
+        expect_throw([&] { __imp__VdSwap(ctx, memory.base()); },
+                     "VdSwap rejects mismatch between PPC texture and fetch format");
+        check(swap_load(swap_command) == 0xDEADBEEFU &&
+              dotm::vd_bound_gpu_snapshot().swap_requests == 0U,
+              "Rejected VdSwap leaves original guest command slot untouched");
+        swap_store(swap_args + 4U, 6U);
+        __imp__VdSwap(ctx, memory.base());
+        const auto swap_state = dotm::vd_bound_gpu_snapshot();
+        check(swap_state.swap_requests == 1U &&
+              swap_state.last_swap_physical_address == swap_physical &&
+              swap_state.last_swap_width == 2U &&
+              swap_state.last_swap_height == 2U &&
+              swap_state.last_swap_texture_format == 6U &&
+              swap_state.gpu_frame_counter == 0U &&
+              swap_load(swap_command) == 0x00054800U &&
+              swap_load(swap_command + 4U) == 2U &&
+              swap_load(swap_command + 8U) ==
+                  ((swap_physical & 0xFFFFF000U) | 6U) &&
+              swap_load(swap_command + 28U) == 0x80000000U &&
+              swap_load(swap_command + 252U) == 0x80000000U,
+              "VdSwap publishes real physical PM4 fetch without fake GPU present");
+        dotm::mm_bound_free_physical_memory(1U, swap_virtual);
+        check(dotm::mm_bound_query_physical_allocation_size(swap_virtual) == 0U,
+              "VdSwap frontbuffer test releases tracked physical pages");
         // Retail DOTM 0x82512C70 passes a guest display descriptor at r3
         // and receives a physical allocation through r4. The caller frees
         // it with MmFreePhysicalMemory(type=1). Do not fabricate a pointer.

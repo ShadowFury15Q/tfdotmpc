@@ -413,6 +413,80 @@ void vd_bound_get_system_command_buffer(std::uint32_t descriptor_address,
     engine.system_command_buffer_next_identifier += 2U;
     ++engine.system_command_buffer_queries;
 }
+void vd_bound_swap(std::uint32_t command_buffer, std::uint32_t texture_fetch,
+                   std::uint32_t system_writeback, std::uint32_t system_commands,
+                   std::uint32_t gpu_identifier, std::uint32_t frontbuffer_output,
+                   std::uint32_t format_output, std::uint32_t color_space_output,
+                   std::uint32_t guest_stack) {
+    std::lock_guard lock(gpu_mutex);
+    constexpr std::uint32_t kCommandWords = 64U;
+    constexpr std::uint32_t kFetchWords = 6U;
+    constexpr std::uint32_t kFetchRegister = 0x4800U;
+    // The ninth and tenth arguments are *pointers* in the PPC caller's
+    // stack frame, not immediate dimensions.
+    if (!engine.initialized || !guest_memory ||
+        (command_buffer & 3U) || (texture_fetch & 3U) ||
+        (frontbuffer_output & 3U) || (format_output & 3U) ||
+        (color_space_output & 3U) || (guest_stack & 0xFU) ||
+        !readable(command_buffer, kCommandWords * 4U) ||
+        !readable(texture_fetch, kFetchWords * 4U) ||
+        !readable(system_writeback, 4U) ||
+        !readable(system_commands, kSystemCommandBufferBytes) ||
+        !readable(frontbuffer_output, 4U) ||
+        !readable(format_output, 4U) ||
+        !readable(color_space_output, 4U) ||
+        !readable(guest_stack + 84U, 4U) ||
+        !readable(guest_stack + 92U, 4U))
+        throw std::runtime_error("Invalid original Xbox VdSwap guest arguments");
+    const auto width_output = read_be32(guest_stack + 84U);
+    const auto height_output = read_be32(guest_stack + 92U);
+    if ((width_output & 3U) || (height_output & 3U) ||
+        !readable(width_output, 4U) || !readable(height_output, 4U))
+        throw std::runtime_error("Invalid Xbox VdSwap dimension outputs");
+    const auto frontbuffer_virtual = read_be32(frontbuffer_output);
+    const auto texture_format = read_be32(format_output);
+    const auto color_space = read_be32(color_space_output);
+    const auto width = read_be32(width_output);
+    const auto height = read_be32(height_output);
+    std::array<std::uint32_t, kFetchWords> fetch{};
+    for (std::uint32_t i = 0; i < kFetchWords; ++i)
+        fetch[i] = read_be32(texture_fetch + i * 4U);
+    const auto fetch_virtual = (fetch[1] & 0xFFFFF000U);
+    const auto fetch_format = fetch[1] & 0x3FU;
+    const auto fetch_width = (fetch[2] & 0x1FFFU) + 1U;
+    const auto fetch_height = ((fetch[2] >> 13U) & 0x1FFFU) + 1U;
+    if ((fetch[0] & 3U) != 2U || !width || !height ||
+        width != fetch_width || height != fetch_height ||
+        frontbuffer_virtual != fetch_virtual ||
+        texture_format != fetch_format || color_space != 0U ||
+        (texture_format != 6U && texture_format != 54U))
+        throw std::runtime_error("Xbox VdSwap frontbuffer fetch mismatch");
+    const auto physical = mm_bound_get_physical_address(frontbuffer_virtual);
+    if (!physical ||
+        mm_bound_resolve_physical_range(physical, 4U) !=
+            std::optional<std::uint32_t>(frontbuffer_virtual) ||
+        (physical & 0xFFFU))
+        throw std::runtime_error("Xbox VdSwap frontbuffer has no physical backing");
+    // Convert the *real* D3D texture header's virtual page address into
+    // a GPU physical fetch address. Keep the original format, pitch, tiling,
+    // dimensions and sampling fields unchanged.
+    fetch[1] = (fetch[1] & 0xFFFU) | (physical & 0xFFFFF000U);
+    // The original caller reserves 64 DWORDs. Publish a real PM4 TYPE0
+    // six-register fetch update followed by valid TYPE2 no-op packets.
+    // There is no native Xenos "swap" PM4 opcode: do not inject Xenia's
+    // synthetic XE_SWAP or pretend that a frame has been displayed.
+    write_be32(command_buffer, ((kFetchWords - 1U) << 16U) | kFetchRegister);
+    for (std::uint32_t i = 0; i < kFetchWords; ++i)
+        write_be32(command_buffer + (i + 1U) * 4U, fetch[i]);
+    for (std::uint32_t i = kFetchWords + 1U; i < kCommandWords; ++i)
+        write_be32(command_buffer + i * 4U, 0x80000000U);
+    ++engine.swap_requests;
+    engine.last_swap_physical_address = physical;
+    engine.last_swap_width = width;
+    engine.last_swap_height = height;
+    engine.last_swap_texture_format = texture_format;
+    (void)gpu_identifier;
+}
 void vd_bound_verify_me_init_command(std::uint32_t address,
                                      std::uint32_t word_count) {
     std::lock_guard lock(gpu_mutex);
