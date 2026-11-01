@@ -568,6 +568,58 @@ int main() {
                      "Unknown Xenos shader constant bank is rejected");
         check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 119,
               "Unknown shader bank cannot advance GPU ring");
+        // COND_WRITE compares live Xenos MMIO or allocated physical data
+        // and commits only the matching register/physical-memory transfer.
+        put(119, 0xC0054500U); put(120, 3U);
+        put(121, 0x202U); put(122, 0xDEAD0000U);
+        put(123, 0xFFFF0000U); put(124, 0x220U);
+        put(125, 0xA1B2C3D4U);
+        check(dotm::vd_bound_execute_ring(126) == 1 &&
+              dotm::vd_bound_read_gpu_register(0x220U) == 0xA1B2C3D4U &&
+              dotm::vd_bound_read_gpu_mmio_register(0x220U) == 0xA1B2C3D4U &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 126,
+              "COND_WRITE matches masked live MMIO and writes a GPU register");
+        put(126, 0xC0054500U); put(127, 3U);
+        put(128, 0x202U); put(129, 0xBAD00000U);
+        put(130, 0xFFFF0000U); put(131, 0x220U);
+        put(132, 0U);
+        check(dotm::vd_bound_execute_ring(133) == 1 &&
+              dotm::vd_bound_read_gpu_register(0x220U) == 0xA1B2C3D4U &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 133,
+              "False COND_WRITE consumes packet without modifying MMIO");
+        put(133, 0xC0054500U); put(134, 0x113U);
+        put(135, (writeback_physical + 64U) | 2U);
+        put(136, 0x12345678U); put(137, 0xFFFFFFFFU);
+        put(138, (writeback_physical + 72U) | 3U);
+        put(139, 0xA1B2C3D4U);
+        check(dotm::vd_bound_execute_ring(140) == 1 &&
+              memory.address(writeback + 72U)[0] == 0xB2 &&
+              memory.address(writeback + 72U)[1] == 0xA1 &&
+              memory.address(writeback + 72U)[2] == 0xD4 &&
+              memory.address(writeback + 72U)[3] == 0xC3 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 140,
+              "COND_WRITE compares physical memory and writes 16-in-32 DMA");
+        put(140, 0xC0054500U); put(141, 0x107U);
+        put(142, 0x202U); put(143, 0U); put(144, 0U);
+        put(145, 0xFFFFFFF2U); put(146, 0x12345678U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(147); },
+                     "Matching COND_WRITE rejects unallocated physical destination");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 140 &&
+              memory.address(writeback)[3] == 140,
+              "Failed COND_WRITE preserves ring and read-pointer writeback");
+        put(141, 0x100U); // Never: invalid destination must not be accessed.
+        check(dotm::vd_bound_execute_ring(147) == 1 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 147 &&
+              dotm::vd_bound_read_gpu_register(0x220U) == 0xA1B2C3D4U,
+              "False COND_WRITE skips an inaccessible physical destination");
+        put(147, 0xC0054500U); put(148, 0x13U);
+        put(149, 0xFFFFFFF2U); put(150, 0U);
+        put(151, 0xFFFFFFFFU); put(152, 0x220U);
+        put(153, 0xFFFFFFFFU);
+        expect_throw([&] { dotm::vd_bound_execute_ring(154); },
+                     "COND_WRITE rejects an unallocated physical poll address");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 147,
+              "Invalid COND_WRITE source cannot advance GPU ring");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
