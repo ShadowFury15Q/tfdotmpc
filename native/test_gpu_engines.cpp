@@ -426,6 +426,72 @@ int main() {
                      "WAIT_REG_MEM rejects unallocated physical poll addresses");
         check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 87,
               "Invalid physical WAIT_REG_MEM leaves DMA state intact");
+        // GPU-to-CPU transfers must use allocated physical pages and the
+        // live MMIO register file, with the Xenos destination endian mode.
+        put(87, 0xC0013E00U); put(88, 0x202U);
+        put(89, (writeback_physical + 32U) | 2U);
+        check(dotm::vd_bound_execute_ring(90) == 1 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 90 &&
+              memory.address(writeback + 32U)[0] == 0xDE &&
+              memory.address(writeback + 32U)[1] == 0xAD &&
+              memory.address(writeback + 32U)[2] == 0xBE &&
+              memory.address(writeback + 32U)[3] == 0xEF,
+              "REG_TO_MEM writes live Xenos register with 8-in-32 endian mode");
+        put(90, 0xC0013E00U); put(91, 0x202U);
+        put(92, (writeback_physical + 36U) | 0U);
+        check(dotm::vd_bound_execute_ring(93) == 1 &&
+              memory.address(writeback + 36U)[0] == 0xEF &&
+              memory.address(writeback + 36U)[1] == 0xBE &&
+              memory.address(writeback + 36U)[2] == 0xAD &&
+              memory.address(writeback + 36U)[3] == 0xDE,
+              "REG_TO_MEM supports unswapped little-endian GPU writes");
+        put(93, 0xC0023D00U);
+        put(94, (writeback_physical + 40U) | 1U);
+        put(95, 0x11223344U); put(96, 0x55667788U);
+        check(dotm::vd_bound_execute_ring(97) == 1 &&
+              memory.address(writeback + 40U)[0] == 0x33 &&
+              memory.address(writeback + 40U)[1] == 0x44 &&
+              memory.address(writeback + 40U)[2] == 0x11 &&
+              memory.address(writeback + 40U)[3] == 0x22 &&
+              memory.address(writeback + 44U)[0] == 0x77 &&
+              memory.address(writeback + 44U)[1] == 0x88 &&
+              memory.address(writeback + 44U)[2] == 0x55 &&
+              memory.address(writeback + 44U)[3] == 0x66,
+              "MEM_WRITE writes consecutive physical DWORDs in 8-in-16 mode");
+        put(97, 0xC0013D00U);
+        put(98, (writeback_physical + 48U) | 3U);
+        put(99, 0xA1B2C3D4U);
+        check(dotm::vd_bound_execute_ring(100) == 1 &&
+              memory.address(writeback + 48U)[0] == 0xB2 &&
+              memory.address(writeback + 48U)[1] == 0xA1 &&
+              memory.address(writeback + 48U)[2] == 0xD4 &&
+              memory.address(writeback + 48U)[3] == 0xC3,
+              "MEM_WRITE supports 16-in-32 endian mode");
+        memory.address(writeback + 4092U)[0] = 0x5A;
+        put(100, 0xC0023D00U);
+        put(101, (writeback_physical + 4092U) | 2U);
+        put(102, 0xFFFFFFFFU); put(103, 0x01020304U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(104); },
+                     "MEM_WRITE rejects DMA crossing into unallocated memory");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 100 &&
+              memory.address(writeback + 4092U)[0] == 0x5A,
+              "Invalid MEM_WRITE cannot partially modify allocated memory");
+        put(100, 0xC0013E00U);
+        put(101, 0x202U); put(102, 0xFFFFFFF2U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(103); },
+                     "REG_TO_MEM rejects an unallocated physical destination");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 100,
+              "Invalid REG_TO_MEM preserves DMA ring read pointer");
+        put(100, 0xC0013D00U);
+        put(101, (writeback_physical + 52U) | 2U);
+        put(102, 0x12345678U);
+        check(dotm::vd_bound_execute_ring(103) == 1 &&
+              memory.address(writeback + 52U)[0] == 0x12 &&
+              memory.address(writeback + 52U)[1] == 0x34 &&
+              memory.address(writeback + 52U)[2] == 0x56 &&
+              memory.address(writeback + 52U)[3] == 0x78 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 103,
+              "MEM_WRITE 8-in-32 endian mode commits a validated GPU write");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
