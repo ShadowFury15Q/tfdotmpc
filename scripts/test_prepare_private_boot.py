@@ -96,7 +96,9 @@ class PrivateBootTests(unittest.TestCase):
     def test_private_original_boot_zip_sha256_and_no_overwrite(self):
         with TemporaryDirectory() as t:
             root = Path(t)
-            content = b"synthetic-only TOC test bytes"
+            content = (b"0 0 0 ..\\TransGame\\Xbox360TOC.txt 0\n"
+                       b"13 0 0 ..\\TransGame\\CookedXenon\\Missing.xxx abc\n"
+                       b"13 0 0 ..\\TransGame\\CookedXenon\\Missing.xxx abc\n")
             name = "TransGame/Xbox360TOC.txt"
             manifest = {"files": [{"path": name, "bytes": len(content),
                                    "sha256": hashlib.sha256(content).hexdigest()}]}
@@ -106,6 +108,9 @@ class PrivateBootTests(unittest.TestCase):
             output = root / "private" / "native_boot"
             staged = p.staged_boot_resources(root, output)
             self.assertEqual((staged / name).read_bytes(), content)
+            present, total, missing = p.inspect_boot_resource_coverage(staged)
+            self.assertEqual((present, total), (1, 2))
+            self.assertEqual(missing, ["TransGame/CookedXenon/Missing.xxx"])
             self.assertEqual(p.staged_boot_resources(root, output), staged)
             (staged / name).write_bytes(b"modified")
             with self.assertRaisesRegex(ValueError, "Refusing to overwrite"):
@@ -116,6 +121,17 @@ class PrivateBootTests(unittest.TestCase):
                 z.writestr("DOTM_BOOT_RESOURCES_HASHES.json", json.dumps(manifest))
             with self.assertRaisesRegex(ValueError, "SHA256 mismatch"):
                 p.staged_boot_resources(root, output)
+
+    def test_original_toc_conflicting_duplicates_are_rejected(self):
+        with TemporaryDirectory() as t:
+            root = Path(t)
+            toc = root / "TransGame" / "Xbox360TOC.txt"
+            toc.parent.mkdir(parents=True)
+            toc.write_bytes(
+                b"0 0 0 ..\\TransGame\\Xbox360TOC.txt 0\n"
+                b"10 0 0 ..\\TransGame\\Xbox360TOC.txt deadbeef\n")
+            with self.assertRaisesRegex(ValueError, "Conflicting original Xbox360TOC"):
+                p.inspect_boot_resource_coverage(root)
 
     def test_invalid_original_xex_refused(self):
         with TemporaryDirectory() as t:

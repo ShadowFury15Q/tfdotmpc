@@ -118,6 +118,42 @@ def verified_or_extracted_pe(root, output, extractor):
     return verify_pe(path)
 
 
+
+def inspect_boot_resource_coverage(root):
+    """Audit original TOC files; repeated identical rows are valid on retail discs."""
+    toc = root / "TransGame" / "Xbox360TOC.txt"
+    if not toc.is_file():
+        raise ValueError("Missing original TransGame/Xbox360TOC.txt")
+    present, missing, seen = 0, [], {}
+    for number, line in enumerate(toc.read_text(encoding="ascii").splitlines(), 1):
+        fields = line.split()
+        if len(fields) != 5 or not fields[0].isdigit():
+            raise ValueError(f"Invalid original Xbox360TOC row {number}")
+        expected_size = int(fields[0])
+        path = fields[3].replace("\\", "/")
+        if not path.startswith("../TransGame/"):
+            raise ValueError(f"Invalid original Xbox360TOC path on row {number}")
+        relative = path[3:]
+        parts = relative.split("/")
+        if any(part in ("", ".", "..") for part in parts) or ":" in relative:
+            raise ValueError(f"Unsafe original Xbox360TOC path on row {number}")
+        key = relative.casefold()
+        signature = (expected_size, fields[4].casefold())
+        if key in seen:
+            if seen[key] != signature:
+                raise ValueError(f"Conflicting original Xbox360TOC path on row {number}")
+            continue
+        seen[key] = signature
+        disk = root.joinpath(*parts)
+        if disk.is_file():
+            if expected_size and disk.stat().st_size != expected_size:
+                raise ValueError(f"Original title file size mismatch: {relative}")
+            present += 1
+        else:
+            missing.append(relative)
+    return present, len(seen), missing
+
+
 def staged_boot_resources(root, output):
     """Verify a private boot-resource ZIP and stage files without overwriting originals."""
     archive = next((p for p in (
@@ -160,7 +196,10 @@ def staged_boot_resources(root, output):
             destination.parent.mkdir(parents=True, exist_ok=True)
             with z.open(entry["path"]) as source, destination.open("xb") as dest:
                 shutil.copyfileobj(source, dest)
+    present, total, missing = inspect_boot_resource_coverage(target)
     print("Verified and staged private original boot resources:", len(entries), target)
+    print("Original TOC resource coverage:", present, "/", total,
+          "unique paths;", len(missing), "not present in private boot pack")
     return target
 
 
