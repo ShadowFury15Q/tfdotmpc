@@ -126,6 +126,33 @@ void write_gpu_register(std::uint32_t index, std::uint32_t value) {
     if (readable(address, 4U)) write_be32(address, value);
     if (scratch_writeback) write_be32(*scratch_writeback, value);
 }
+// Preflight an entire PM4 register packet before committing any MMIO or
+// scratch DMA writes. A later invalid scratch destination must not leave
+// earlier register writes visible while the ring read pointer stays pending.
+// Track UMSK/ADDR writes inside the same packet in their original order.
+template <typename RegisterAt, typename ValueAt>
+void validate_gpu_register_packet(std::uint32_t count,
+                                  RegisterAt register_at, ValueAt value_at) {
+    auto scratch_mask = read_gpu_register(0x01DCU);
+    auto scratch_address = read_gpu_register(0x01DDU);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const auto index = register_at(i);
+        const auto value = value_at(i);
+        if (index == 0x01DCU) {
+            scratch_mask = value;
+        } else if (index == 0x01DDU) {
+            scratch_address = value;
+        } else if (index >= 0x0578U && index <= 0x057FU &&
+                   (scratch_mask & (1U << (index - 0x0578U)))) {
+            const auto physical = std::uint64_t(scratch_address) +
+                                  std::uint64_t(index - 0x0578U) * 4U;
+            if ((physical & 3U) || physical > UINT32_MAX)
+                throw std::runtime_error("Xenos scratch writeback address invalid");
+            (void)gpu_physical_dword_address(
+                static_cast<std::uint32_t>(physical));
+        }
+    }
+}
 // Hash the actual big-endian packet words, including the type-3 header.
 // This also works for a packet wrapped around the physical GPU ring.
 constexpr std::uint64_t kPacketHashOffset = 14695981039346656037ULL;
@@ -340,6 +367,9 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
             if (base >= gpu_registers.size() ||
                 (!repeat && std::uint64_t(base) + payload > gpu_registers.size()))
                 throw std::runtime_error("Xenos PM4 type-0 register out of range");
+            validate_gpu_register_packet(
+                payload, [&](std::uint32_t i) { return base + (repeat ? 0U : i); },
+                [&](std::uint32_t i) { return at(first + i); });
             for (std::uint32_t i = 0; i < payload; ++i) {
                 write_gpu_register(base + (repeat ? 0 : i), at(first + i));
             }
@@ -347,6 +377,9 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
         } else if (type == 1) {
             const auto r0 = header & 0x7FFU;
             const auto r1 = (header >> 11) & 0x7FFU;
+            validate_gpu_register_packet(
+                2U, [&](std::uint32_t i) { return i ? r1 : r0; },
+                [&](std::uint32_t i) { return at(first + i); });
             write_gpu_register(r0, at(first));
             write_gpu_register(r1, at(first + 1));
             engine.register_writes += 2;
