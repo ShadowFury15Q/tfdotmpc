@@ -23,6 +23,16 @@ std::array<std::uint8_t, kSystemCommandBufferBytes> system_command_buffer{};
 bool system_command_buffer_installed = false;
 std::vector<std::uint8_t> edram_backing;
 std::array<std::vector<std::uint32_t>, 2> active_shader_microcode{};
+// Each indirect buffer retains its execution cursor across WAIT_REG_MEM kicks.
+// The parent PM4 packet is acknowledged only after all nested commands finish.
+struct IndirectFrame {
+    std::uint32_t physical_address;
+    std::uint32_t guest_address;
+    std::uint32_t word_count;
+    std::uint32_t read_offset;
+};
+std::vector<IndirectFrame> indirect_frames;
+constexpr std::size_t kMaxIndirectDepth = 8;
 constexpr std::uint32_t kXenosMmioBase = 0x7FC80000U;
 constexpr std::uint32_t kXenosMmioBytes = 0x00080000U;
 // Xenos COHER_STATUS_HOST register, 32-bit MMIO index.
@@ -207,6 +217,7 @@ void bind_gpu_engines(GuestMemory* memory) noexcept {
     std::lock_guard lock(gpu_mutex);
     guest_memory = memory;
     engine = {};
+    indirect_frames.clear();
     gpu_registers.fill(0);
     edram_backing.clear();
     for (auto& words : active_shader_microcode) words.clear();
@@ -226,6 +237,7 @@ std::uint32_t vd_bound_initialize_engines(
     if (!pfp_hash || !me_hash) return 0;
     const auto previous = engine;
     engine = {};
+    indirect_frames.clear();
     for (auto& words : active_shader_microcode) words.clear();
     system_command_buffer.fill(0);
     system_command_buffer_installed = false;
@@ -251,6 +263,7 @@ std::uint32_t vd_bound_initialize_engines(
 void vd_bound_shutdown_engines() noexcept {
     std::lock_guard lock(gpu_mutex);
     engine = {};
+    indirect_frames.clear();
     edram_backing.clear();
     for (auto& words : active_shader_microcode) words.clear();
     system_command_buffer.fill(0);
@@ -644,6 +657,7 @@ void vd_bound_initialize_ring_buffer(
     engine.ring_guest_address = *guest_address;
     engine.ring_size_bytes = bytes;
     engine.ring_read_pointer_dwords = 0;
+    indirect_frames.clear();
     engine.packets_executed = 0;
     engine.register_writes = 0;
     engine.read_pointer_writeback_enabled = false;
@@ -672,8 +686,8 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
     std::lock_guard lock(gpu_mutex);
     if (!engine.ring_initialized || !guest_memory || !max_packets)
         throw std::runtime_error("GPU command processor is not ready");
-    const auto capacity = engine.ring_size_bytes / 4;
-    if (write_pointer_dwords >= capacity ||
+    const auto ring_capacity = engine.ring_size_bytes / 4;
+    if (write_pointer_dwords >= ring_capacity ||
         mm_bound_resolve_physical_range(engine.ring_physical_address,
                                         engine.ring_size_bytes) !=
             std::optional<std::uint32_t>(engine.ring_guest_address) ||
@@ -685,13 +699,51 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
             std::optional<std::uint32_t>(engine.read_pointer_writeback_guest_address))
         throw std::runtime_error("GPU read-pointer writeback page freed");
     auto at = [&](std::uint32_t index) {
-        return read_be32(engine.ring_guest_address + (index % capacity) * 4);
+        if (!indirect_frames.empty()) {
+            const auto& frame = indirect_frames.back();
+            if (index >= frame.word_count)
+                throw std::runtime_error("Xenos indirect buffer read out of range");
+            return read_be32(frame.guest_address + index * 4U);
+        }
+        return read_be32(engine.ring_guest_address +
+                         (index % ring_capacity) * 4U);
     };
     std::uint32_t completed = 0;
-    while (engine.ring_read_pointer_dwords != write_pointer_dwords &&
+    while ((!indirect_frames.empty() ||
+            engine.ring_read_pointer_dwords != write_pointer_dwords) &&
            completed < max_packets) {
-        const auto start = engine.ring_read_pointer_dwords;
-        const auto available = (write_pointer_dwords + capacity - start) % capacity;
+        if (!indirect_frames.empty()) {
+            const auto& frame = indirect_frames.back();
+            const auto bytes = std::size_t(frame.word_count) * 4U;
+            if (mm_bound_resolve_physical_range(frame.physical_address, bytes) !=
+                    std::optional<std::uint32_t>(frame.guest_address) ||
+                !readable(frame.guest_address, bytes))
+                throw std::runtime_error("Xenos indirect buffer physical pages released");
+            if (frame.read_offset == frame.word_count) {
+                indirect_frames.pop_back();
+                // The parent opcode is three DWORDs: header, address, length.
+                if (indirect_frames.empty()) {
+                    engine.ring_read_pointer_dwords =
+                        (engine.ring_read_pointer_dwords + 3U) % ring_capacity;
+                    if (engine.read_pointer_writeback_enabled)
+                        write_be32(engine.read_pointer_writeback_guest_address,
+                                   engine.ring_read_pointer_dwords);
+                } else {
+                    indirect_frames.back().read_offset += 3U;
+                }
+                ++engine.packets_executed;
+                ++completed;
+                continue;
+            }
+        }
+        const bool indirect = !indirect_frames.empty();
+        const auto capacity = indirect
+            ? indirect_frames.back().word_count : ring_capacity;
+        const auto start = indirect
+            ? indirect_frames.back().read_offset : engine.ring_read_pointer_dwords;
+        const auto available = indirect
+            ? capacity - start
+            : (write_pointer_dwords + ring_capacity - start) % ring_capacity;
         const auto header = at(start);
         const auto type = header >> 30;
         const auto count = ((header >> 16) & 0x3FFFU) + 1;
@@ -709,8 +761,13 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
         // payload dword arrives. Preserve the header, read pointer and
         // writeback until a later kick supplies the entire packet. This is
         // normal producer/consumer flow, not a malformed GPU command.
-        if (payload >= available)
+        if (payload >= available) {
+            // Indirect lists are immutable submissions with a fixed length,
+            // unlike the ring where the CPU may still be publishing words.
+            if (indirect)
+                throw std::runtime_error("Truncated Xenos indirect PM4 packet");
             return completed;
+        }
         const auto first = (start + 1) % capacity;
         if (type == 0) {
             const auto base = header & 0x7FFFU;
@@ -760,6 +817,25 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 if (hash != engine.me_init_command_fingerprint)
                     throw std::runtime_error("Xenos PM4_ME_INIT differs from verified command");
                 engine.me_init_packet_submitted = true;
+            } else if (opcode == 0x3FU || opcode == 0x37U) {
+                // PM4_INDIRECT_BUFFER / PM4_INDIRECT_BUFFER_PFD reference
+                // real allocated GPU physical memory. Preserve the parent's
+                // cursor until the entire nested command list has executed.
+                if (payload != 2U)
+                    throw std::runtime_error("Invalid Xenos indirect buffer packet size");
+                const auto physical = at(first);
+                const auto length_field = at(first + 1U);
+                const auto words = length_field & 0xFFFFFU;
+                if ((physical & 3U) || !words ||
+                    (length_field & ~0xFFFFFU) ||
+                    indirect_frames.size() >= kMaxIndirectDepth)
+                    throw std::runtime_error("Invalid Xenos indirect buffer address, length or depth");
+                const auto bytes = std::size_t(words) * 4U;
+                const auto guest = mm_bound_resolve_physical_range(physical, bytes);
+                if (!guest || !readable(*guest, bytes))
+                    throw std::runtime_error("Xenos indirect buffer requires allocated physical memory");
+                indirect_frames.push_back({physical, *guest, words, 0U});
+                continue;
             } else if (opcode == 0x10U) {
                 // PM4_NOP has payload but does not change GPU state.
             } else if (opcode == 0x46U) {
@@ -1107,13 +1183,17 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 throw std::runtime_error("Unsupported Xenos PM4 type-3 operation");
             }
         }
-        engine.ring_read_pointer_dwords = (start + payload + 1) % capacity;
+        if (indirect) {
+            indirect_frames.back().read_offset = start + payload + 1U;
+        } else {
+            engine.ring_read_pointer_dwords =
+                (start + payload + 1U) % ring_capacity;
+            if (engine.read_pointer_writeback_enabled)
+                write_be32(engine.read_pointer_writeback_guest_address,
+                           engine.ring_read_pointer_dwords);
+        }
         ++engine.packets_executed;
         ++completed;
-        if (engine.read_pointer_writeback_enabled) {
-            write_be32(engine.read_pointer_writeback_guest_address,
-                       engine.ring_read_pointer_dwords);
-        }
     }
     return completed;
 }
