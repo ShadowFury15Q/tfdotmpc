@@ -235,8 +235,8 @@ int main() {
         check(dotm::vd_bound_gpu_snapshot().system_command_buffer_queries == 1 &&
               memory.address(system_descriptor)[0] == 0 &&
               memory.address(system_descriptor)[0x93] == 0 &&
-              memory.address(system_fence)[3] == 0,
-              "No XAM descriptor means no fabricated system GPU command/fence");
+              memory.address(system_fence)[3] == 1,
+              "No XAM descriptor means an empty record but a real GPU fence sequence");
         memory.address(system_descriptor)[0] = 0x12;
         memory.address(system_descriptor)[0x93] = 0x34;
         dotm::vd_bound_install_system_command_buffer(system_descriptor, 7U);
@@ -261,8 +261,9 @@ int main() {
         __imp__VdGetSystemCommandBuffer(ctx, memory.base());
         check(memory.address(system_descriptor)[0] == 0 &&
               memory.address(system_descriptor)[0x93] == 0 &&
-              memory.address(system_fence)[3] == 0,
-              "XAM system buffer detach invalidates the descriptor and fence");
+              memory.address(system_fence)[3] == 11 &&
+              dotm::vd_bound_gpu_snapshot().system_command_buffer_next_identifier == 13U,
+              "XAM descriptor detach retains the kernel GPU fence sequence");
         // Exercise actual big-endian PM4 packets from the allocated DMA ring.
         auto put = [&](std::uint32_t index, std::uint32_t value) {
             auto* b = memory.address(ring) + index * 4;

@@ -217,6 +217,7 @@ std::uint32_t vd_bound_initialize_engines(
     engine = {};
     system_command_buffer.fill(0);
     system_command_buffer_installed = false;
+    engine.system_command_buffer_next_identifier = 1U;
     engine.edram_trained = previous.edram_trained;
     engine.edram_backing_size = previous.edram_backing_size;
     engine.edram_last_training_mode = previous.edram_last_training_mode;
@@ -351,7 +352,6 @@ void vd_bound_install_system_command_buffer(std::uint32_t descriptor_address,
     if (!descriptor_address) {
         system_command_buffer.fill(0);
         system_command_buffer_installed = false;
-        engine.system_command_buffer_next_identifier = 0;
         return;
     }
     if ((descriptor_address & 3U) ||
@@ -372,18 +372,17 @@ void vd_bound_get_system_command_buffer(std::uint32_t descriptor_address,
         !readable(descriptor_address, kSystemCommandBufferBytes) ||
         !readable(identifier_address, 4U))
         throw std::runtime_error("Invalid Xbox VdGetSystemCommandBuffer output");
-    // Without an installed XAM descriptor the kernel has no system commands
-    // to submit. In particular, never report a synthetic GPU address/fence.
+    // Retail VdGet advances its fence by two on *every* query, including
+    // when XAM has no system commands (see hardware VdSwap probes).
     if (system_command_buffer_installed) {
         std::memcpy(guest_memory->address(descriptor_address),
                     system_command_buffer.data(), kSystemCommandBufferBytes);
-        write_be32(identifier_address, engine.system_command_buffer_next_identifier);
-        engine.system_command_buffer_next_identifier += 2U;
     } else {
         std::memset(guest_memory->address(descriptor_address), 0,
                     kSystemCommandBufferBytes);
-        write_be32(identifier_address, 0U);
     }
+    write_be32(identifier_address, engine.system_command_buffer_next_identifier);
+    engine.system_command_buffer_next_identifier += 2U;
     ++engine.system_command_buffer_queries;
 }
 void vd_bound_verify_me_init_command(std::uint32_t address,
