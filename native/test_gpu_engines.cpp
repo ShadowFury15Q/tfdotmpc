@@ -496,6 +496,24 @@ int main() {
               memory.address(writeback + 52U)[3] == 0x78 &&
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 103,
               "MEM_WRITE 8-in-32 endian mode commits a validated GPU write");
+        // A legal physical DMA can overlap the packet being executed.
+        // Both payload values must come from the original packet, even if
+        // the first destination overwrites the second source DWORD.
+        put(103, 0xC0023D00U);
+        put(104, (physical + 106U * 4U) | 2U);
+        put(105, 0xAABBCCDDU);
+        put(106, 0x11223344U);
+        check(dotm::vd_bound_execute_ring(107) == 1 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 107 &&
+              memory.address(ring + 106U * 4U)[0] == 0xAA &&
+              memory.address(ring + 106U * 4U)[1] == 0xBB &&
+              memory.address(ring + 106U * 4U)[2] == 0xCC &&
+              memory.address(ring + 106U * 4U)[3] == 0xDD &&
+              memory.address(ring + 107U * 4U)[0] == 0x11 &&
+              memory.address(ring + 107U * 4U)[1] == 0x22 &&
+              memory.address(ring + 107U * 4U)[2] == 0x33 &&
+              memory.address(ring + 107U * 4U)[3] == 0x44,
+              "MEM_WRITE snapshots payload before DMA overwrites its own ring");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
