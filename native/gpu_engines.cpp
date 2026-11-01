@@ -805,13 +805,14 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                     if (poll_address >= gpu_registers.size())
                         throw std::runtime_error("Xenos PM4 WAIT_REG_MEM register out of range");
                     if (poll_address == kCoherStatusHost &&
-                        (read_gpu_register(kCoherStatusHost) & 0x80000000U)) {
-                        // The native runtime currently has no separate GPU
-                        // resource cache: all allocated physical pages use
-                        // their committed guest backing. Publish host memory
-                        // writes before acknowledging the coherency request.
-                        // A future renderer must flush its texture/vertex
-                        // caches here before this completion can be trusted.
+                        read_gpu_register(kCoherStatusHost) != 0U) {
+                        // Direct original PPC MMIO writes bypass
+                        // write_gpu_register(), so they do not set our
+                        // synthetic pending bit 31. A nonzero coherency
+                        // request must complete regardless of whether the
+                        // guest submitted it through PM4 or CPU MMIO.
+                        // Native physical pages share committed host backing;
+                        // a future renderer must flush its resource caches.
                         std::atomic_thread_fence(std::memory_order_seq_cst);
                         gpu_registers[kCoherStatusHost] = 0U;
                         const auto mmio = kXenosMmioBase +

@@ -1251,6 +1251,26 @@ int main() {
               dotm::vd_bound_read_gpu_register(0x0A31U) == 0U &&
               dotm::vd_bound_read_gpu_mmio_register(0x0A31U) == 0U,
               "WAIT_REG_MEM completes a shared-memory Xenos coherency barrier");
+        // Original PPC also writes GPU MMIO directly, bypassing the native
+        // PM4 register-write hook. A raw CPU coherency request does not have
+        // the synthetic pending bit, but still must complete when polled.
+        constexpr std::uint32_t coher_mmio = 0x7FC80000U + 0x0A31U * 4U;
+        auto* coher_bytes = memory.address(coher_mmio);
+        coher_bytes[0] = 0x02U;
+        coher_bytes[1] = 0U;
+        coher_bytes[2] = 0U;
+        coher_bytes[3] = 0U;
+        check(dotm::vd_bound_read_gpu_register(0x0A31U) == 0x02000000U,
+              "Original PPC direct MMIO coherency request reaches Xenos register");
+        put(244, 0xC0043C00U); // WAIT_REG_MEM on CPU-originated request.
+        put(245, 3U); put(246, 0x0A31U);
+        put(247, 0U); put(248, 0xFFFFFFFFU); put(249, 0U);
+        check(dotm::vd_bound_execute_ring(250) == 1 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 250U &&
+              dotm::vd_bound_read_gpu_register(0x0A31U) == 0U &&
+              dotm::vd_bound_read_gpu_mmio_register(0x0A31U) == 0U &&
+              memory.address(writeback)[3] == 250U,
+              "WAIT_REG_MEM completes direct PPC MMIO coherency without stalling ring");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
