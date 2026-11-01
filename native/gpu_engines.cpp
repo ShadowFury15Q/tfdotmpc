@@ -533,6 +533,22 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 engine.me_init_packet_submitted = true;
             } else if (opcode == 0x10U) {
                 // PM4_NOP has payload but does not change GPU state.
+            } else if (opcode == 0x58U) {
+                // PM4_EVENT_WRITE_SHD: shader-done event, physical fence
+                // address (with Xenos dword endian selector), fence value.
+                // VS_DONE_TS=2 and PS_DONE_TS=3 are verified hardware events.
+                // Other events require independent GPU timing semantics.
+                if (payload != 3U)
+                    throw std::runtime_error("Invalid Xenos EVENT_WRITE_SHD payload size");
+                const auto initiator = at(first);
+                const auto encoded_address = at(first + 1);
+                const auto fence_value = at(first + 2);
+                if (initiator != 2U && initiator != 3U)
+                    throw std::runtime_error("Unsupported Xenos shader-done event");
+                // Resolve the entire physical destination before consuming
+                // the packet, preserving RPTR and writeback on invalid DMA.
+                (void)gpu_physical_dword_address(encoded_address);
+                write_gpu_physical_dword(encoded_address, fence_value);
             } else if (opcode == 0x3CU) {
                 // PM4_WAIT_REG_MEM: wait_info, poll address, reference, mask,
                 // poll interval. Do not consume the packet until its predicate

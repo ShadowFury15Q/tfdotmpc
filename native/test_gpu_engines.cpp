@@ -891,6 +891,42 @@ int main() {
               memory.address(ring)[204U * 4U] == 0x11 &&
               memory.address(ring)[204U * 4U + 3U] == 0x44,
               "SET_CONSTANT snapshots packet payload before scratch DMA alias");
+        // Real Xenos PM4 EVENT_WRITE_SHD (opcode 0x58) writes a shader
+        // completion fence to GPU physical memory. The low address bits
+        // select the 32-bit endian mode, not additional address bits.
+        put(205, 0xC0025800U);
+        put(206, 3U); // PS_DONE_TS
+        put(207, (writeback_physical + 0x100U) | 2U);
+        put(208, 0xA1B2C3D4U);
+        check(dotm::vd_bound_execute_ring(209) == 1 &&
+              memory.address(writeback)[0x100] == 0xA1 &&
+              memory.address(writeback)[0x103] == 0xD4 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 209 &&
+              memory.address(writeback)[3] == 209,
+              "EVENT_WRITE_SHD PS_DONE_TS commits a physical GPU fence");
+        put(209, 0xC0025800U);
+        put(210, 4U); // CACHE_FLUSH_TS requires different GPU semantics
+        put(211, (writeback_physical + 0x104U) | 2U);
+        put(212, 0x11223344U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(213); },
+                     "Unsupported shader-done event is not silently acknowledged");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 209 &&
+              memory.address(writeback)[0x104] == 0 &&
+              memory.address(writeback)[3] == 209,
+              "Rejected shader event leaves the physical fence and RPTR unchanged");
+        put(210, 2U); // VS_DONE_TS
+        put(211, 0xFFFFFFFEU);
+        expect_throw([&] { dotm::vd_bound_execute_ring(213); },
+                     "EVENT_WRITE_SHD refuses unallocated physical fence pages");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 209 &&
+              memory.address(writeback)[3] == 209,
+              "Invalid physical event write preserves the pending packet");
+        put(211, (writeback_physical + 0x104U) | 2U);
+        check(dotm::vd_bound_execute_ring(213) == 1 &&
+              memory.address(writeback)[0x104] == 0x11 &&
+              memory.address(writeback)[0x107] == 0x44 &&
+              memory.address(writeback)[3] == 213,
+              "EVENT_WRITE_SHD VS_DONE_TS retries after fixing physical address");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
