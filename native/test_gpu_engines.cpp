@@ -902,8 +902,10 @@ int main() {
               memory.address(writeback)[0x100] == 0xA1 &&
               memory.address(writeback)[0x103] == 0xD4 &&
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 209 &&
-              memory.address(writeback)[3] == 209,
-              "EVENT_WRITE_SHD PS_DONE_TS commits a physical GPU fence");
+              memory.address(writeback)[3] == 209 &&
+              dotm::vd_bound_read_gpu_register(0x21F9U) == 3U &&
+              dotm::vd_bound_read_gpu_mmio_register(0x21F9U) == 3U,
+              "EVENT_WRITE_SHD commits both physical fence and VGT event register");
         put(209, 0xC0025800U);
         put(210, 4U); // CACHE_FLUSH_TS requires different GPU semantics
         put(211, (writeback_physical + 0x104U) | 2U);
@@ -912,21 +914,24 @@ int main() {
                      "Unsupported shader-done event is not silently acknowledged");
         check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 209 &&
               memory.address(writeback)[0x104] == 0 &&
-              memory.address(writeback)[3] == 209,
-              "Rejected shader event leaves the physical fence and RPTR unchanged");
+              memory.address(writeback)[3] == 209 &&
+              dotm::vd_bound_read_gpu_register(0x21F9U) == 3U,
+              "Rejected shader event leaves the physical fence, VGT event and RPTR unchanged");
         put(210, 2U); // VS_DONE_TS
         put(211, 0xFFFFFFFEU);
         expect_throw([&] { dotm::vd_bound_execute_ring(213); },
                      "EVENT_WRITE_SHD refuses unallocated physical fence pages");
         check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 209 &&
-              memory.address(writeback)[3] == 209,
-              "Invalid physical event write preserves the pending packet");
+              memory.address(writeback)[3] == 209 &&
+              dotm::vd_bound_read_gpu_register(0x21F9U) == 3U,
+              "Invalid physical event write preserves pending packet and event register");
         put(211, (writeback_physical + 0x104U) | 2U);
         check(dotm::vd_bound_execute_ring(213) == 1 &&
               memory.address(writeback)[0x104] == 0x11 &&
               memory.address(writeback)[0x107] == 0x44 &&
-              memory.address(writeback)[3] == 213,
-              "EVENT_WRITE_SHD VS_DONE_TS retries after fixing physical address");
+              memory.address(writeback)[3] == 213 &&
+              dotm::vd_bound_read_gpu_register(0x21F9U) == 2U,
+              "EVENT_WRITE_SHD VS_DONE_TS retries and publishes the event");
         // Initiator bit 31 selects the GPU frame counter, not the packet's
         // immediate value. No frames have been presented by this test.
         put(213, 0xC0025800U);
@@ -938,6 +943,26 @@ int main() {
               memory.address(writeback)[0x10B] == 0 &&
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 217,
               "EVENT_WRITE_SHD counter mode never invents presented GPU frames");
+        // PM4_EVENT_WRITE with a single initiator has no DMA destination.
+        // Its low six bits are visible in VGT_EVENT_INITIATOR (0x21F9).
+        put(217, 0xC0004600U);
+        put(218, 0x80000006U); // CACHE_FLUSH event, no fake GPU frame.
+        check(dotm::vd_bound_execute_ring(219) == 1 &&
+              dotm::vd_bound_read_gpu_register(0x21F9U) == 6U &&
+              dotm::vd_bound_read_gpu_mmio_register(0x21F9U) == 6U &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 219 &&
+              memory.address(writeback)[3] == 219,
+              "EVENT_WRITE publishes the real VGT initiator through guest MMIO");
+        put(219, 0xC0014600U); // Unsupported two-DWORD memory variant.
+        put(220, 2U);
+        put(221, (writeback_physical + 0x10CU) | 2U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(222); },
+                     "EVENT_WRITE memory variant must not fake a GPU completion");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 219 &&
+              dotm::vd_bound_read_gpu_register(0x21F9U) == 6U &&
+              memory.address(writeback)[3] == 219 &&
+              memory.address(writeback)[0x10C] == 0,
+              "Unsupported EVENT_WRITE preserves event, fence and ring state");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
