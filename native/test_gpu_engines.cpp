@@ -8,6 +8,9 @@
 PPC_EXTERN_FUNC(__imp__VdInitializeEngines);
 PPC_EXTERN_FUNC(__imp__VdCallGraphicsNotificationRoutines);
 PPC_EXTERN_FUNC(__imp__VdShutdownEngines);
+PPC_EXTERN_FUNC(__imp__VdRetrainEDRAMWorker);
+PPC_EXTERN_FUNC(__imp__VdRetrainEDRAM);
+PPC_EXTERN_FUNC(__imp__VdEnableDisableClockGating);
 PPC_EXTERN_FUNC(__imp__VdSetGraphicsInterruptCallback);
 PPC_EXTERN_FUNC(__imp__VdInitializeRingBuffer);
 PPC_EXTERN_FUNC(__imp__VdEnableRingBufferRPtrWriteBack);
@@ -50,6 +53,46 @@ int main() {
         expect_throw([&] { (void)dotm::vd_bound_read_gpu_mmio_register(0x5000U); },
                      "GPU MMIO register reads reject out-of-range indexes");
         PPCContext ctx{};
+        // Original DOTM 0x82525808 EDRAM retrain ABI: two BE32 guest
+        // slots, 4096-byte calibration region, 2048-byte stack scratch.
+        constexpr std::uint32_t edram_offset = image + 0x180U;
+        constexpr std::uint32_t edram_status = image + 0x184U;
+        constexpr std::uint32_t edram_scratch = image + 0x800U;
+        ctx.r3.u32 = 0;
+        __imp__VdRetrainEDRAMWorker(ctx, memory.base());
+        check(ctx.r3.u32 == 0 && dotm::vd_bound_gpu_snapshot().edram_worker_calls == 1,
+              "Original PPC EDRAM worker ABI");
+        ctx.r3.u32 = 0;
+        ctx.r4.u32 = edram_offset;
+        ctx.r5.u32 = 4096;
+        ctx.r6.u32 = edram_status;
+        ctx.r7.u32 = edram_scratch;
+        ctx.r8.u32 = 2048;
+        __imp__VdRetrainEDRAM(ctx, memory.base());
+        auto edram_state = dotm::vd_bound_gpu_snapshot();
+        check(ctx.r3.u32 == 0 && edram_state.edram_trained &&
+              edram_state.edram_backing_size == 10U * 1024U * 1024U &&
+              edram_state.edram_retrain_calls == 1 &&
+              memory.address(edram_offset)[0] == 0 &&
+              memory.address(edram_status)[0] == 0,
+              "EDRAM backing calibrated without corrupting original guest outputs");
+        ctx.r4.u32 = 0xDEAD0000U;
+        expect_throw([&] { __imp__VdRetrainEDRAM(ctx, memory.base()); },
+                     "Uncommitted EDRAM guest output rejected");
+        check(dotm::vd_bound_gpu_snapshot().edram_retrain_calls == 1,
+              "Invalid EDRAM retrain leaves prior state intact");
+        ctx.r3.u32 = 0;
+        __imp__VdEnableDisableClockGating(ctx, memory.base());
+        check(ctx.r3.u32 == 0 && !dotm::vd_bound_gpu_snapshot().clock_gating_enabled,
+              "DOTM GPU clock-gating disable");
+        ctx.r3.u32 = 1;
+        __imp__VdEnableDisableClockGating(ctx, memory.base());
+        check(dotm::vd_bound_gpu_snapshot().clock_gating_enabled &&
+              dotm::vd_bound_gpu_snapshot().clock_gating_changes == 2,
+              "DOTM GPU clock-gating enable");
+        ctx.r3.u32 = 2;
+        expect_throw([&] { __imp__VdEnableDisableClockGating(ctx, memory.base()); },
+                     "Invalid GPU clock-gating mode rejected");
         ctx.r3.u64 = 0x4F810001U;
         ctx.r4.u64 = image + 128;
         ctx.r5.u64 = 0xCAFEU;

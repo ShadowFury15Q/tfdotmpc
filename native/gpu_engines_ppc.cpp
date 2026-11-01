@@ -10,6 +10,20 @@ PPC_FUNC(__imp__VdShutdownEngines) {
     (void)base;
     dotm::vd_bound_shutdown_engines();
 }
+PPC_FUNC(__imp__VdRetrainEDRAMWorker) {
+    (void)base;
+    ctx.r3.u64 = dotm::vd_bound_retrain_edram_worker(ctx.r3.u32);
+}
+PPC_FUNC(__imp__VdRetrainEDRAM) {
+    (void)base;
+    ctx.r3.u64 = dotm::vd_bound_retrain_edram(
+        ctx.r3.u32, ctx.r4.u32, ctx.r5.u32,
+        ctx.r6.u32, ctx.r7.u32, ctx.r8.u32);
+}
+PPC_FUNC(__imp__VdEnableDisableClockGating) {
+    (void)base;
+    ctx.r3.u64 = dotm::vd_bound_enable_disable_clock_gating(ctx.r3.u32);
+}
 PPC_FUNC(__imp__VdCallGraphicsNotificationRoutines) {
     (void)base;
     ctx.r3.u64 = dotm::vd_bound_call_graphics_notification_routines(

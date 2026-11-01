@@ -7,6 +7,14 @@ namespace dotm {
 // command-buffer setup path, not a renderer or a substitute for game output.
 struct GpuEngineSnapshot {
     bool initialized = false;
+    // Native Xenos EDRAM backing and GPU clock-gating state (not a renderer).
+    bool edram_trained = false;
+    bool clock_gating_enabled = false;
+    std::uint32_t edram_backing_size = 0;
+    std::uint32_t edram_last_training_mode = 0;
+    std::uint64_t edram_worker_calls = 0;
+    std::uint64_t edram_retrain_calls = 0;
+    std::uint64_t clock_gating_changes = 0;
     bool ring_initialized = false;
     bool read_pointer_writeback_enabled = false;
     std::uint32_t flags = 0;
@@ -57,6 +65,14 @@ std::uint32_t vd_bound_initialize_engines(
     std::uint32_t flags, std::uint32_t callback, std::uint32_t callback_context,
     std::uint32_t pfp_microcode, std::uint32_t me_microcode);
 void vd_bound_shutdown_engines() noexcept;
+// Original PPC 0x82525808 calls worker(0), then retrain(mode, &offset,
+// 4096, &status, scratch, 2048). Validate the actual guest memory ABI.
+std::uint32_t vd_bound_retrain_edram_worker(std::uint32_t mode);
+std::uint32_t vd_bound_retrain_edram(
+    std::uint32_t mode, std::uint32_t offset_pointer,
+    std::uint32_t region_bytes, std::uint32_t status_pointer,
+    std::uint32_t scratch_pointer, std::uint32_t scratch_bytes);
+std::uint32_t vd_bound_enable_disable_clock_gating(std::uint32_t enabled);
 std::uint32_t vd_bound_call_graphics_notification_routines(
     std::uint32_t notification, std::uint32_t scaling_pointer);
 void vd_bound_set_graphics_interrupt_callback(

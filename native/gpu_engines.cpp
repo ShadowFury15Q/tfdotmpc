@@ -1,5 +1,6 @@
 #include "gpu_engines.hpp"
 #include "kernel_guest_memory.hpp"
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -14,6 +15,8 @@ std::mutex gpu_mutex;
 GuestMemory* guest_memory = nullptr;
 GpuEngineSnapshot engine;
 std::array<std::uint32_t, 0x5000> gpu_registers{};
+constexpr std::uint32_t kEdramBytes = 10U * 1024U * 1024U;
+std::vector<std::uint8_t> edram_backing;
 constexpr std::uint32_t kXenosMmioBase = 0x7FC80000U;
 constexpr std::uint32_t kXenosMmioBytes = 0x00080000U;
 
@@ -192,6 +195,7 @@ void bind_gpu_engines(GuestMemory* memory) noexcept {
     guest_memory = memory;
     engine = {};
     gpu_registers.fill(0);
+    edram_backing.clear();
 }
 std::uint32_t vd_bound_initialize_engines(
     std::uint32_t flags, std::uint32_t callback, std::uint32_t callback_context,
@@ -204,7 +208,15 @@ std::uint32_t vd_bound_initialize_engines(
     const auto pfp_hash = microcode_fingerprint(pfp_microcode);
     const auto me_hash = microcode_fingerprint(me_microcode);
     if (!pfp_hash || !me_hash) return 0;
+    const auto previous = engine;
     engine = {};
+    engine.edram_trained = previous.edram_trained;
+    engine.edram_backing_size = previous.edram_backing_size;
+    engine.edram_last_training_mode = previous.edram_last_training_mode;
+    engine.edram_worker_calls = previous.edram_worker_calls;
+    engine.edram_retrain_calls = previous.edram_retrain_calls;
+    engine.clock_gating_enabled = previous.clock_gating_enabled;
+    engine.clock_gating_changes = previous.clock_gating_changes;
     reset_gpu_registers();
     engine.initialized = true;
     engine.flags = flags;
@@ -219,7 +231,61 @@ std::uint32_t vd_bound_initialize_engines(
 void vd_bound_shutdown_engines() noexcept {
     std::lock_guard lock(gpu_mutex);
     engine = {};
+    edram_backing.clear();
     reset_gpu_registers();
+}
+std::uint32_t vd_bound_retrain_edram_worker(std::uint32_t mode) {
+    std::lock_guard lock(gpu_mutex);
+    if (!guest_memory || mode != 0U)
+        throw std::runtime_error("Invalid Xenos EDRAM worker invocation");
+    ++engine.edram_worker_calls;
+    engine.edram_trained = false;
+    if (!edram_backing.empty())
+        std::fill(edram_backing.begin(), edram_backing.end(), 0);
+    return 0;
+}
+std::uint32_t vd_bound_retrain_edram(
+    std::uint32_t mode, std::uint32_t offset_pointer,
+    std::uint32_t region_bytes, std::uint32_t status_pointer,
+    std::uint32_t scratch_pointer, std::uint32_t scratch_bytes) {
+    std::lock_guard lock(gpu_mutex);
+    // The original r4/r6 are writable BE32 guest slots, r7 is a
+    // 2048-byte scratch region. Reject uncommitted or malformed pointers.
+    if ((offset_pointer & 3U) || (status_pointer & 3U) ||
+        !region_bytes || region_bytes > kEdramBytes ||
+        !scratch_bytes || scratch_bytes > 0x100000U ||
+        !readable(offset_pointer, 4U) || !readable(status_pointer, 4U) ||
+        !readable(scratch_pointer, scratch_bytes))
+        throw std::runtime_error("Invalid Xenos EDRAM retraining guest buffers");
+    // Native PC backing replaces the console's physical 10 MiB EDRAM.
+    // Check memory integrity, then clear it for future tile/resolve use.
+    // This does not implement a GPU renderer or actual Xenos PHY training.
+    if (edram_backing.size() != kEdramBytes)
+        edram_backing.assign(kEdramBytes, 0);
+    for (std::uint32_t i = 0; i < region_bytes; ++i)
+        edram_backing[i] = static_cast<std::uint8_t>((i * 131U + 0x5AU) & 0xFFU);
+    for (std::uint32_t i = 0; i < region_bytes; ++i) {
+        if (edram_backing[i] != static_cast<std::uint8_t>((i * 131U + 0x5AU) & 0xFFU)) {
+            engine.edram_trained = false;
+            return 1;
+        }
+    }
+    std::fill(edram_backing.begin(), edram_backing.end(), 0);
+    engine.edram_trained = true;
+    engine.edram_backing_size = kEdramBytes;
+    engine.edram_last_training_mode = mode;
+    ++engine.edram_retrain_calls;
+    // PPC branch at 0x82525868 treats zero as successful retraining.
+    // Preserve the caller's output slots, which it initialized itself.
+    return 0;
+}
+std::uint32_t vd_bound_enable_disable_clock_gating(std::uint32_t enabled) {
+    std::lock_guard lock(gpu_mutex);
+    if (!guest_memory || enabled > 1U)
+        throw std::runtime_error("Invalid Xenos GPU clock-gating mode");
+    engine.clock_gating_enabled = enabled != 0U;
+    ++engine.clock_gating_changes;
+    return 0;
 }
 std::uint32_t vd_bound_call_graphics_notification_routines(
     std::uint32_t notification, std::uint32_t scaling_pointer) {
