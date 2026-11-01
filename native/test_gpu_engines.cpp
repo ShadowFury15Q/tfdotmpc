@@ -1161,7 +1161,7 @@ int main() {
               "IM_LOAD_IMMEDIATE captures original pixel shader words");
         const auto previous_shader = dotm::vd_bound_copy_shader_microcode(0U);
         put(228, 0xC0012700U);
-        put(229, 0x1FFFF000U); // Unallocated physical source.
+        put(229, 0x3FFFF000U); // Outside the 512 MiB physical aperture.
         put(230, 3U);
         expect_throw([&] { dotm::vd_bound_execute_ring(231); },
                      "IM_LOAD rejects unallocated shader DMA source");
