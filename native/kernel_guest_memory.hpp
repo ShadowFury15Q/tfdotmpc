@@ -85,6 +85,11 @@ void bind_kernel_guest_memory(GuestMemory* memory,
 // deferred routine and context in big-endian guest memory.
 void ke_bound_initialize_dpc(std::uint32_t dpc, std::uint32_t routine,
                              std::uint32_t context);
+// Xbox 360 32-bit KSPIN_LOCK: 0 is free, 1 is owned. These variants
+// require the caller to have already raised IRQL; they do not change it.
+void ke_bound_acquire_spin_lock_at_raised_irql(std::uint32_t guest_lock);
+void ke_bound_release_spin_lock_from_raised_irql(std::uint32_t guest_lock);
+
 // Xbox 360 ExAllocatePool/ExAllocatePoolWithTag/ExFreePool: page-backed
 // guest allocations with exact-pointer ownership and synchronized release.
 std::uint32_t ex_bound_allocate_pool(std::uint32_t pool_type,

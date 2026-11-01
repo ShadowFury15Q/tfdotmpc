@@ -11,6 +11,16 @@
 #include <x86intrin.h>
 #endif
 
+// The AtRaisedIrql variants preserve PPC r3 and do not change IRQL.
+PPC_FUNC(__imp__KeAcquireSpinLockAtRaisedIrql) {
+    (void)base;
+    dotm::ke_bound_acquire_spin_lock_at_raised_irql(ctx.r3.u32);
+}
+PPC_FUNC(__imp__KeReleaseSpinLockFromRaisedIrql) {
+    (void)base;
+    dotm::ke_bound_release_spin_lock_from_raised_irql(ctx.r3.u32);
+}
+
 // KeInitializeDpc(PKDPC, PKDEFERRED_ROUTINE, DeferredContext) is void.
 PPC_FUNC(__imp__KeInitializeDpc) {
     (void)base;

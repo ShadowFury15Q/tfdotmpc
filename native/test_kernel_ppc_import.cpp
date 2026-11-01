@@ -4,6 +4,8 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <atomic>
+#include <thread>
 
 PPC_EXTERN_FUNC(__imp__NtAllocateVirtualMemory);
 PPC_EXTERN_FUNC(__imp__ExAllocatePool);
@@ -15,6 +17,8 @@ PPC_EXTERN_FUNC(__imp__NtQueryVirtualMemory);
 PPC_EXTERN_FUNC(__imp__KeGetCurrentProcessType);
 PPC_EXTERN_FUNC(__imp__KeQuerySystemTime);
 PPC_EXTERN_FUNC(__imp__DbgPrint);
+PPC_EXTERN_FUNC(__imp__KeAcquireSpinLockAtRaisedIrql);
+PPC_EXTERN_FUNC(__imp__KeReleaseSpinLockFromRaisedIrql);
 
 namespace {
 void check(bool ok, const char* message) {
@@ -40,6 +44,52 @@ int main() {
         memory.commit(ptr, 4096);
         dotm::bind_kernel_guest_memory(&memory, &heap);
         PPCContext ctx{};
+        // Original Xbox spinlock is a big-endian word; void imports preserve r3.
+        constexpr std::uint32_t spin = ptr + 0x180U;
+        write32(memory, spin, 0);
+        ctx.r3.u32 = spin;
+        __imp__KeAcquireSpinLockAtRaisedIrql(ctx, memory.base());
+        check(ctx.r3.u32 == spin && read32(memory, spin) == 1U,
+              "Raised-IRQL acquire sets BE32 KSPIN_LOCK and preserves r3");
+        __imp__KeReleaseSpinLockFromRaisedIrql(ctx, memory.base());
+        check(ctx.r3.u32 == spin && read32(memory, spin) == 0U,
+              "Raised-IRQL release clears BE32 KSPIN_LOCK and preserves r3");
+        bool bad_spin = false;
+        try { __imp__KeReleaseSpinLockFromRaisedIrql(ctx, memory.base()); }
+        catch (const std::runtime_error&) { bad_spin = true; }
+        check(bad_spin, "Double-release must fail closed");
+        bad_spin = false;
+        try {
+            ctx.r3.u32 = spin + 1U;
+            __imp__KeAcquireSpinLockAtRaisedIrql(ctx, memory.base());
+        } catch (const std::runtime_error&) { bad_spin = true; }
+        check(bad_spin && read32(memory, spin) == 0U,
+              "Misaligned spinlock cannot mutate guest memory");
+        // Two host workers contend for one guest KSPIN_LOCK, with no host
+        // mutex around the protected counter: the guest lock must serialize.
+        std::atomic<int> in_critical{0};
+        std::atomic<int> violations{0};
+        int protected_counter = 0;
+        auto worker = [&] {
+            PPCContext local{};
+            local.r3.u32 = spin;
+            for (int i = 0; i < 200; ++i) {
+                __imp__KeAcquireSpinLockAtRaisedIrql(local, memory.base());
+                if (in_critical.fetch_add(1) != 0) ++violations;
+                const int old = protected_counter;
+                std::this_thread::yield();
+                protected_counter = old + 1;
+                in_critical.fetch_sub(1);
+                __imp__KeReleaseSpinLockFromRaisedIrql(local, memory.base());
+            }
+        };
+        std::thread other(worker);
+        worker();
+        other.join();
+        check(protected_counter == 400 && violations.load() == 0 &&
+              read32(memory, spin) == 0U,
+              "Two PPC workers must serialize on one guest KSPIN_LOCK");
+        ctx.r3.u32 = spin;
         // The original startup calls KeInitializeDpc before creating workers.
         // Validate its PPC register ABI and 32-bit big-endian KDPC layout.
         constexpr std::uint32_t dpc = ptr + 0x200U;

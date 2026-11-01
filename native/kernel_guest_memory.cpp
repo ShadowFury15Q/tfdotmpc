@@ -9,6 +9,8 @@
 #include <map>
 #include <unordered_map>
 #include <mutex>
+#include <atomic>
+#include <thread>
 #include <new>
 #include <stdexcept>
 
@@ -644,6 +646,40 @@ std::optional<std::uint32_t> mm_bound_resolve_physical_range(
     const auto guest = it->second.guest_address + static_cast<std::uint32_t>(delta);
     if (!bound_memory->committed_range(guest, length)) return std::nullopt;
     return guest;
+}
+
+namespace {
+std::uint32_t* validated_guest_spin_lock(std::uint32_t guest_lock) {
+    std::lock_guard lock(binding_mutex);
+    if (!bound_memory || (guest_lock & 3U) ||
+        !writable_word(*bound_memory, guest_lock))
+        throw std::runtime_error("Xbox KSPIN_LOCK is not a committed aligned guest word");
+    return reinterpret_cast<std::uint32_t*>(bound_memory->address(guest_lock));
+}
+}
+void ke_bound_acquire_spin_lock_at_raised_irql(std::uint32_t guest_lock) {
+    auto* word = validated_guest_spin_lock(guest_lock);
+    std::atomic_ref<std::uint32_t> lock(*word);
+    // Guest memory is big-endian, including the 32-bit lock state.
+    constexpr std::uint32_t owned = 0x01000000U;
+    for (;;) {
+        std::uint32_t expected = 0;
+        if (lock.compare_exchange_weak(expected, owned,
+                                       std::memory_order_acquire,
+                                       std::memory_order_relaxed)) return;
+        if (expected != owned && expected != 0)
+            throw std::runtime_error("Invalid Xbox KSPIN_LOCK state");
+        std::this_thread::yield();
+    }
+}
+void ke_bound_release_spin_lock_from_raised_irql(std::uint32_t guest_lock) {
+    auto* word = validated_guest_spin_lock(guest_lock);
+    std::atomic_ref<std::uint32_t> lock(*word);
+    std::uint32_t expected = 0x01000000U;
+    if (!lock.compare_exchange_strong(expected, 0U,
+                                      std::memory_order_release,
+                                      std::memory_order_relaxed))
+        throw std::runtime_error("Xbox KSPIN_LOCK release without ownership");
 }
 
 void ke_bound_initialize_dpc(std::uint32_t dpc, std::uint32_t routine,
