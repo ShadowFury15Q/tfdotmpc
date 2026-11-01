@@ -428,6 +428,37 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                     write_gpu_physical_dword(
                         (base_address + i * 4U) | (destination & 3U),
                         data[i]);
+            } else if (opcode == 0x2FU) {
+                // PM4_LOAD_ALU_CONSTANT: DMA shader constants from allocated
+                // Xenos physical memory into the live register file.
+                // The source is big-endian Xbox data, not host-endian words.
+                if (payload != 3U)
+                    throw std::runtime_error("Invalid Xenos PM4 LOAD_ALU_CONSTANT payload size");
+                const auto source = at(first) & 0x3FFFFFFFU;
+                const auto offset_type = at(first + 1);
+                const auto count_dwords = at(first + 2) & 0xFFFU;
+                std::uint32_t index = offset_type & 0x7FFU;
+                switch ((offset_type >> 16) & 0xFFU) {
+                case 0: index += 0x4000U; break; // ALU
+                case 1: index += 0x4800U; break; // fetch
+                case 2: index += 0x4900U; break; // bool
+                case 3: index += 0x4908U; break; // loop
+                case 4: index += 0x2000U; break; // general registers
+                default: throw std::runtime_error("Unsupported Xenos LOAD_ALU_CONSTANT bank");
+                }
+                if ((source & 3U) ||
+                    std::uint64_t(index) + count_dwords > gpu_registers.size())
+                    throw std::runtime_error("Xenos LOAD_ALU_CONSTANT alignment or register overflow");
+                const auto guest_address = mm_bound_resolve_physical_range(
+                    source, std::size_t(count_dwords) * 4U);
+                if (!guest_address ||
+                    !readable(*guest_address, std::size_t(count_dwords) * 4U))
+                    throw std::runtime_error("Xenos LOAD_ALU_CONSTANT requires allocated physical source");
+                // Validate the entire source and register span before writes.
+                // CPU-side MMIO and PM4 see the same committed values.
+                for (std::uint32_t i = 0; i < count_dwords; ++i)
+                    write_gpu_register(index + i, read_be32(*guest_address + i * 4U));
+                engine.register_writes += count_dwords;
             } else if (opcode == 0x21U) {
                 // PM4_REG_RMW: register index, AND mask, OR mask.
                 // Apply the update only after validating the complete packet.
