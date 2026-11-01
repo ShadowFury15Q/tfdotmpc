@@ -696,9 +696,23 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 if (index >= gpu_registers.size() ||
                     std::uint64_t(index) + payload - 1 > gpu_registers.size())
                     throw std::runtime_error("Xenos PM4 constant register overflow");
-                for (std::uint32_t i = 1; i < payload; ++i)
-                    write_gpu_register(index + i - 1, at(first + i));
-                engine.register_writes += payload - 1;
+                // Constant writes may target SCRATCH_REG0..7. Those registers
+                // perform physical DMA when SCRATCH_UMSK is enabled, so a
+                // later invalid fence must not partially commit this packet.
+                // Snapshot the FIFO first: scratch DMA may alias a subsequent
+                // word of the packet currently being consumed.
+                const auto word_count = payload - 1U;
+                std::vector<std::uint32_t> values;
+                values.reserve(word_count);
+                for (std::uint32_t i = 0; i < word_count; ++i)
+                    values.push_back(at(first + i + 1U));
+                validate_gpu_register_packet(
+                    word_count,
+                    [&](std::uint32_t i) { return index + i; },
+                    [&](std::uint32_t i) { return values[i]; });
+                for (std::uint32_t i = 0; i < word_count; ++i)
+                    write_gpu_register(index + i, values[i]);
+                engine.register_writes += word_count;
             } else {
                 throw std::runtime_error("Unsupported Xenos PM4 type-3 operation");
             }
