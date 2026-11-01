@@ -34,6 +34,7 @@ struct GpuEngineSnapshot {
     std::uint32_t read_pointer_writeback_block_log2 = 0;
     std::uint32_t ring_read_pointer_dwords = 0;
     std::uint64_t packets_executed = 0;
+    std::uint32_t gpu_frame_counter = 0;
     std::uint64_t register_writes = 0;
     // Xenos tiled-rendering bin predication state, written by PM4 packets.
     std::uint64_t bin_mask = 0;

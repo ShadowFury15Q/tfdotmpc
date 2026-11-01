@@ -927,6 +927,17 @@ int main() {
               memory.address(writeback)[0x107] == 0x44 &&
               memory.address(writeback)[3] == 213,
               "EVENT_WRITE_SHD VS_DONE_TS retries after fixing physical address");
+        // Initiator bit 31 selects the GPU frame counter, not the packet's
+        // immediate value. No frames have been presented by this test.
+        put(213, 0xC0025800U);
+        put(214, 0x80000003U);
+        put(215, (writeback_physical + 0x108U) | 2U);
+        put(216, 0xFFFFFFFFU);
+        check(dotm::vd_bound_execute_ring(217) == 1 &&
+              memory.address(writeback)[0x108] == 0 &&
+              memory.address(writeback)[0x10B] == 0 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 217,
+              "EVENT_WRITE_SHD counter mode never invents presented GPU frames");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },

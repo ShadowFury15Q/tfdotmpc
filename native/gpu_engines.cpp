@@ -543,12 +543,18 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 const auto initiator = at(first);
                 const auto encoded_address = at(first + 1);
                 const auto fence_value = at(first + 2);
-                if (initiator != 2U && initiator != 3U)
+                const auto event = initiator & 0x7FFFFFFFU;
+                if (event != 2U && event != 3U)
                     throw std::runtime_error("Unsupported Xenos shader-done event");
+                // Initiator bit 31 selects the GPU swap counter rather than
+                // the immediate payload. Without presented frames this stays
+                // zero; never invent a completed frame or fence.
+                const auto result = (initiator & 0x80000000U)
+                    ? engine.gpu_frame_counter : fence_value;
                 // Resolve the entire physical destination before consuming
                 // the packet, preserving RPTR and writeback on invalid DMA.
                 (void)gpu_physical_dword_address(encoded_address);
-                write_gpu_physical_dword(encoded_address, fence_value);
+                write_gpu_physical_dword(encoded_address, result);
             } else if (opcode == 0x3CU) {
                 // PM4_WAIT_REG_MEM: wait_info, poll address, reference, mask,
                 // poll interval. Do not consume the packet until its predicate
