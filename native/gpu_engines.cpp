@@ -312,8 +312,12 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
         // Only type-2 packets have no payload; treating header zero as
         // padding silently desynchronizes the command processor.
         const auto payload = type == 2 ? 0U : type == 1 ? 2U : count;
+        // A CPU producer may publish its write pointer before the final
+        // payload dword arrives. Preserve the header, read pointer and
+        // writeback until a later kick supplies the entire packet. This is
+        // normal producer/consumer flow, not a malformed GPU command.
         if (payload >= available)
-            throw std::runtime_error("Incomplete Xenos PM4 packet in physical ring");
+            return completed;
         const auto first = (start + 1) % capacity;
         if (type == 0) {
             const auto base = header & 0x7FFFU;
