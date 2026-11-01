@@ -436,6 +436,17 @@ int main() {
             b[2] = static_cast<std::uint8_t>(value >> 8);
             b[3] = static_cast<std::uint8_t>(value);
         };
+        // The physical ring has 1024 DWORDs. A packet requesting all
+        // 1024 as payload can never fit together with its own header.
+        // Reject it rather than leaving the original title in an infinite
+        // command-processor stall on every subsequent write-pointer kick.
+        put(0, (1023U << 16) | 0x123U);
+        expect_throw([&] { (void)dotm::vd_bound_execute_ring(1U); },
+                     "Oversized Xenos PM4 packet rejected instead of stalling");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 0U &&
+              memory.address(writeback)[0] == 0U &&
+              memory.address(writeback)[3] == 0U,
+              "Rejected oversized PM4 packet preserves physical RPTR writeback");
         put(0, (1U << 16) | 0x123U);
         put(1, 0x11223344U);
         put(2, 0x55667788U);

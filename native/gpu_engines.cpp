@@ -675,6 +675,12 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
         // Only type-2 packets have no payload; treating header zero as
         // padding silently desynchronizes the command processor.
         const auto payload = type == 2 ? 0U : type == 1 ? 2U : count;
+        // A PM4 packet cannot occupy more than the entire physical ring.
+        // A malformed count at or above capacity can never become complete:
+        // without this check every future GPU kick silently stalls forever.
+        // Reject it without consuming the header or touching RPTR writeback.
+        if (payload >= capacity)
+            throw std::runtime_error("Xenos PM4 packet exceeds ring capacity");
         // A CPU producer may publish its write pointer before the final
         // payload dword arrives. Preserve the header, read pointer and
         // writeback until a later kick supplies the entire packet. This is
