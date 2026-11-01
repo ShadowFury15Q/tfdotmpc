@@ -74,6 +74,22 @@ void write_gpu_physical_dword(std::uint32_t encoded_address, std::uint32_t value
     }
     write_be32(guest, value);
 }
+// Read the same physical DWORD format used by GPU writes. Xenos embeds
+// the endian selector in the low two bits of the physical address.
+std::uint32_t read_gpu_physical_dword(std::uint32_t encoded_address) {
+    const auto guest = gpu_physical_dword_address(encoded_address);
+    const auto value = read_be32(guest);
+    switch (encoded_address & 3U) {
+    case 0: return ((value & 0x000000FFU) << 24) |
+                   ((value & 0x0000FF00U) << 8) |
+                   ((value & 0x00FF0000U) >> 8) |
+                   ((value & 0xFF000000U) >> 24);
+    case 1: return (value << 16) | (value >> 16);
+    case 2: return value;
+    default: return ((value & 0x00FF00FFU) << 8) |
+                    ((value & 0xFF00FF00U) >> 8);
+    }
+}
 // CPU-side Xenos MMIO and PM4 packet writes address the same register file.
 // Guest PPC accesses the MMIO pages directly, so the guest bytes are the
 // authoritative register state whenever the aperture has been mapped.
@@ -354,25 +370,7 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 (void)poll_interval;
                 std::uint32_t value = 0;
                 if (wait_info & 0x10U) {
-                    // GPU physical-memory polls carry the endian mode in the
-                    // low two address bits. The guest bytes are big-endian,
-                    // while Xenos kNone reads a raw little-endian DWORD.
-                    const auto physical_address = poll_address & ~3U;
-                    const auto guest_address =
-                        mm_bound_resolve_physical_range(physical_address, 4);
-                    if (!guest_address || !readable(*guest_address, 4))
-                        throw std::runtime_error("Xenos PM4 WAIT_REG_MEM physical address invalid");
-                    const auto be = read_be32(*guest_address);
-                    switch (poll_address & 3U) {
-                    case 0: value = ((be & 0x000000FFU) << 24) |
-                                    ((be & 0x0000FF00U) << 8) |
-                                    ((be & 0x00FF0000U) >> 8) |
-                                    ((be & 0xFF000000U) >> 24); break;
-                    case 1: value = (be << 16) | (be >> 16); break;
-                    case 2: value = be; break;
-                    case 3: value = ((be & 0x00FF00FFU) << 8) |
-                                    ((be & 0xFF00FF00U) >> 8); break;
-                    }
+                    value = read_gpu_physical_dword(poll_address);
                 } else {
                     if (poll_address >= gpu_registers.size())
                         throw std::runtime_error("Xenos PM4 WAIT_REG_MEM register out of range");
@@ -428,6 +426,49 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                     write_gpu_physical_dword(
                         (base_address + i * 4U) | (destination & 3U),
                         data[i]);
+            } else if (opcode == 0x45U) {
+                // PM4_COND_WRITE: condition, poll address, reference, mask,
+                // destination, data. Both polling and writing can target
+                // live MMIO registers or allocated GPU physical memory.
+                if (payload != 6U)
+                    throw std::runtime_error("Invalid Xenos PM4 COND_WRITE payload size");
+                const auto info = at(first);
+                const auto poll = at(first + 1);
+                const auto reference = at(first + 2);
+                const auto mask = at(first + 3);
+                const auto destination = at(first + 4);
+                const auto data = at(first + 5);
+                std::uint32_t value;
+                if (info & 0x10U) {
+                    value = read_gpu_physical_dword(poll);
+                } else {
+                    if (poll >= gpu_registers.size())
+                        throw std::runtime_error("Xenos PM4 COND_WRITE poll register out of range");
+                    value = read_gpu_register(poll);
+                }
+                const auto masked = value & mask;
+                bool matched = false;
+                switch (info & 7U) {
+                case 0: matched = false; break;
+                case 1: matched = masked < reference; break;
+                case 2: matched = masked <= reference; break;
+                case 3: matched = masked == reference; break;
+                case 4: matched = masked != reference; break;
+                case 5: matched = masked >= reference; break;
+                case 6: matched = masked > reference; break;
+                case 7: matched = true; break;
+                }
+                if (matched) {
+                    if (info & 0x100U) {
+                        // Validate the destination before committing DMA.
+                        write_gpu_physical_dword(destination, data);
+                    } else {
+                        if (destination >= gpu_registers.size())
+                            throw std::runtime_error("Xenos PM4 COND_WRITE target register out of range");
+                        write_gpu_register(destination, data);
+                        ++engine.register_writes;
+                    }
+                }
             } else if (opcode == 0x2FU) {
                 // PM4_LOAD_ALU_CONSTANT: DMA shader constants from allocated
                 // Xenos physical memory into the live register file.
