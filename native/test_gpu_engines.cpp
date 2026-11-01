@@ -212,13 +212,15 @@ int main() {
         swap_store(swap_stack + 108U, 200U);
         ctx.r1.u64 = swap_stack;
         ctx.r3.u64 = 0U;
-        ctx.r4.u64 = (720U << 16U) | 1280U;
+        // Original _xstart call passes 0x050002D0 (width:height),
+        // with both filter modes set to 7.
+        ctx.r4.u64 = (1280U << 16U) | 720U;
         ctx.r5.u64 = 0U;
-        ctx.r6.u64 = (720U << 16U) | 1280U;
-        ctx.r7.u64 = (720U << 16U) | 1280U;
-        ctx.r8.u64 = 1U;
+        ctx.r6.u64 = (1280U << 16U) | 720U;
+        ctx.r7.u64 = (1280U << 16U) | 720U;
+        ctx.r8.u64 = 7U;
         ctx.r9.u64 = scaler_vfilter;
-        ctx.r10.u64 = 1U;
+        ctx.r10.u64 = 7U;
         __imp__VdInitializeScalerCommandBuffer(ctx, memory.base());
         const auto scaler_state = dotm::vd_bound_gpu_snapshot();
         check(ctx.r3.u32 == 0U && scaler_state.identity_scanout_configured &&
@@ -227,13 +229,13 @@ int main() {
               scaler_state.identity_scanout_height == 720U &&
               swap_load(scaler_commands) == 0xDEADBEEFU,
               "Identity 720p scanout records native dimensions without fake GPU commands");
-        ctx.r6.u64 = (1080U << 16U) | 1920U;
+        ctx.r6.u64 = (1920U << 16U) | 1080U;
         expect_throw([&] { __imp__VdInitializeScalerCommandBuffer(ctx, memory.base()); },
                      "Non-identity scaler cannot silently return a fake command stream");
         check(dotm::vd_bound_gpu_snapshot().identity_scanout_requests == 1U &&
               swap_load(scaler_commands) == 0xDEADBEEFU,
               "Rejected scaling preserves original guest buffer and GPU state");
-        ctx.r6.u64 = (720U << 16U) | 1280U;
+        ctx.r6.u64 = (1280U << 16U) | 720U;
         swap_store(swap_stack + 100U, 0xDEAD0000U);
         expect_throw([&] { __imp__VdInitializeScalerCommandBuffer(ctx, memory.base()); },
                      "Uncommitted scaler output is rejected before any guest write");

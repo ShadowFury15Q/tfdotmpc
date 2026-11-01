@@ -8,6 +8,7 @@
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace dotm {
@@ -526,17 +527,32 @@ std::uint32_t vd_bound_initialize_scaler_command_buffer(
         (horizontal_parameters && !readable(horizontal_parameters, 12U)) ||
         (unknown9 && !readable(unknown9, 4U)))
         throw std::runtime_error("Invalid Xbox scaler guest buffers");
-    const auto width = source_wh & 0xFFFFU;
-    const auto height = source_wh >> 16U;
+    // Original DOTM at PPC 0x825201EC passes 0x050002D0 for its 1280x720
+    // source/output/frontbuffer. The XDK packs width in the high 16 bits,
+    // height in the low 16 bits (opposite the earlier synthetic fixture).
+    const auto width = source_wh >> 16U;
+    const auto height = source_wh & 0xFFFFU;
     if (source_xy != output_xy || source_wh != output_wh ||
         source_wh != frontbuffer_wh || source_xy != 0U ||
         !width || !height || width != engine.display_mode_width ||
         height != engine.display_mode_height ||
-        (vertical_filter != 0U && vertical_filter != 1U) ||
-        (horizontal_filter != 0U && horizontal_filter != 1U))
+        (vertical_filter != 0U && vertical_filter != 1U &&
+         vertical_filter != 7U) ||
+        (horizontal_filter != 0U && horizontal_filter != 1U &&
+         horizontal_filter != 7U))
         throw std::runtime_error(
-            "Xbox VdInitializeScalerCommandBuffer: native non-identity scaler not implemented");
-    // A 1:1 scanout has no scaling coefficients or sampling passes.
+            "Xbox VdInitializeScalerCommandBuffer: native non-identity scaler not implemented"
+            " source_xy=" + std::to_string(source_xy) +
+            " source_wh=" + std::to_string(source_wh) +
+            " output_xy=" + std::to_string(output_xy) +
+            " output_wh=" + std::to_string(output_wh) +
+            " frontbuffer_wh=" + std::to_string(frontbuffer_wh) +
+            " vertical_filter=" + std::to_string(vertical_filter) +
+            " horizontal_filter=" + std::to_string(horizontal_filter));
+    // Retail DOTM passes filter mode 7 even for its 1:1 720p scanout.
+    // No resampling occurs when source and destination rectangles match;
+    // accept that mode only in this verified identity path. This does not
+    // implement a non-identity 7-tap scaler or GPU presentation.
     // Leave the caller's buffer untouched, return 0 DWORDs and preserve
     // the actual source dimensions for the future native GPU presenter.
     engine.identity_scanout_configured = true;
