@@ -20,6 +20,7 @@ constexpr std::size_t kSystemCommandBufferBytes = 0x94U;
 std::array<std::uint8_t, kSystemCommandBufferBytes> system_command_buffer{};
 bool system_command_buffer_installed = false;
 std::vector<std::uint8_t> edram_backing;
+std::array<std::vector<std::uint32_t>, 2> active_shader_microcode{};
 constexpr std::uint32_t kXenosMmioBase = 0x7FC80000U;
 constexpr std::uint32_t kXenosMmioBytes = 0x00080000U;
 
@@ -199,6 +200,7 @@ void bind_gpu_engines(GuestMemory* memory) noexcept {
     engine = {};
     gpu_registers.fill(0);
     edram_backing.clear();
+    for (auto& words : active_shader_microcode) words.clear();
     system_command_buffer.fill(0);
     system_command_buffer_installed = false;
 }
@@ -215,6 +217,7 @@ std::uint32_t vd_bound_initialize_engines(
     if (!pfp_hash || !me_hash) return 0;
     const auto previous = engine;
     engine = {};
+    for (auto& words : active_shader_microcode) words.clear();
     system_command_buffer.fill(0);
     system_command_buffer_installed = false;
     engine.system_command_buffer_next_identifier = 1U;
@@ -240,6 +243,7 @@ void vd_bound_shutdown_engines() noexcept {
     std::lock_guard lock(gpu_mutex);
     engine = {};
     edram_backing.clear();
+    for (auto& words : active_shader_microcode) words.clear();
     system_command_buffer.fill(0);
     system_command_buffer_installed = false;
     reset_gpu_registers();
@@ -881,6 +885,48 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                         ++engine.register_writes;
                     }
                 }
+            } else if (opcode == 0x27U || opcode == 0x2BU) {
+                // Xenos PM4_IM_LOAD / PM4_IM_LOAD_IMMEDIATE. Preserve exact
+                // sequencer instructions for native shader translation.
+                const bool immediate = opcode == 0x2BU;
+                if (payload < 2U || (!immediate && payload != 2U))
+                    throw std::runtime_error("Invalid Xenos shader upload packet size");
+                const auto address_or_stage = at(first);
+                const auto start_size = at(first + 1U);
+                const auto stage = immediate ? address_or_stage :
+                    (address_or_stage & 3U);
+                const auto start = start_size >> 16U;
+                const auto words = start_size & 0xFFFFU;
+                if (stage > 1U || start != 0U || words == 0U ||
+                    (immediate && std::uint64_t(words) + 2U != payload))
+                    throw std::runtime_error("Invalid Xenos shader stage or microcode length");
+                std::vector<std::uint32_t> shader;
+                shader.reserve(words);
+                if (immediate) {
+                    // Snapshot FIFO before any subsequent GPU DMA can modify it.
+                    for (std::uint32_t i = 0; i < words; ++i)
+                        shader.push_back(at(first + 2U + i));
+                } else {
+                    const auto physical = address_or_stage & ~3U;
+                    const auto bytes = words * 4U;
+                    const auto guest = mm_bound_resolve_physical_range(physical, bytes);
+                    if (!guest || !readable(*guest, bytes))
+                        throw std::runtime_error("Xenos shader source is not allocated physical memory");
+                    for (std::uint32_t i = 0; i < words; ++i)
+                        shader.push_back(read_be32(*guest + i * 4U));
+                }
+                auto fingerprint = kPacketHashOffset;
+                for (const auto word : shader)
+                    fingerprint = hash_packet_word(fingerprint, word);
+                active_shader_microcode[stage].swap(shader);
+                ++engine.shader_uploads;
+                if (stage == 0U) {
+                    engine.vertex_shader_dwords = words;
+                    engine.vertex_shader_fingerprint = fingerprint;
+                } else {
+                    engine.pixel_shader_dwords = words;
+                    engine.pixel_shader_fingerprint = fingerprint;
+                }
             } else if (opcode == 0x2FU) {
                 // PM4_LOAD_ALU_CONSTANT: DMA shader constants from allocated
                 // Xenos physical memory into the live register file.
@@ -1008,6 +1054,12 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
         }
     }
     return completed;
+}
+std::vector<std::uint32_t> vd_bound_copy_shader_microcode(std::uint32_t stage) {
+    std::lock_guard lock(gpu_mutex);
+    if (stage > 1U)
+        throw std::runtime_error("Invalid Xenos shader stage");
+    return active_shader_microcode[stage];
 }
 std::uint32_t vd_bound_read_gpu_register(std::uint32_t index) {
     std::lock_guard lock(gpu_mutex);

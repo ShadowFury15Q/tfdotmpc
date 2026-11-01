@@ -1127,6 +1127,59 @@ int main() {
               memory.address(writeback)[3] == 219 &&
               memory.address(writeback)[0x10C] == 0,
               "Unsupported EVENT_WRITE preserves event, fence and ring state");
+        // Xenos shader uploads preserve actual BE instruction words.
+        auto* shader_bytes = memory.address(writeback + 0x120U);
+        constexpr std::uint32_t vertex_words[] = {
+            0x01234567U, 0x89ABCDEFU, 0xFEDCBA98U
+        };
+        for (std::uint32_t i = 0; i < 3U; ++i) {
+            shader_bytes[i * 4U] = static_cast<std::uint8_t>(vertex_words[i] >> 24);
+            shader_bytes[i * 4U + 1U] = static_cast<std::uint8_t>(vertex_words[i] >> 16);
+            shader_bytes[i * 4U + 2U] = static_cast<std::uint8_t>(vertex_words[i] >> 8);
+            shader_bytes[i * 4U + 3U] = static_cast<std::uint8_t>(vertex_words[i]);
+        }
+        put(219, 0xC0012700U); // PM4_IM_LOAD, two payload words.
+        put(220, writeback_physical + 0x120U); // Vertex shader.
+        put(221, 3U);
+        check(dotm::vd_bound_execute_ring(222) == 1 &&
+              dotm::vd_bound_copy_shader_microcode(0U) ==
+                  std::vector<std::uint32_t>(vertex_words, vertex_words + 3) &&
+              dotm::vd_bound_gpu_snapshot().vertex_shader_dwords == 3U &&
+              dotm::vd_bound_gpu_snapshot().vertex_shader_fingerprint != 0U,
+              "IM_LOAD preserves allocated physical vertex shader microcode");
+        put(222, 0xC0042B00U); // IM_LOAD_IMMEDIATE, five payload words.
+        put(223, 1U); // Pixel shader.
+        put(224, 3U);
+        put(225, 0xAABBCCDDU);
+        put(226, 0x12345678U);
+        put(227, 0x11223344U);
+        check(dotm::vd_bound_execute_ring(228) == 1 &&
+              dotm::vd_bound_copy_shader_microcode(1U) ==
+                  std::vector<std::uint32_t>({0xAABBCCDDU, 0x12345678U, 0x11223344U}) &&
+              dotm::vd_bound_gpu_snapshot().shader_uploads == 2U &&
+              dotm::vd_bound_gpu_snapshot().pixel_shader_dwords == 3U,
+              "IM_LOAD_IMMEDIATE captures original pixel shader words");
+        const auto previous_shader = dotm::vd_bound_copy_shader_microcode(0U);
+        put(228, 0xC0012700U);
+        put(229, 0x1FFFF000U); // Unallocated physical source.
+        put(230, 3U);
+        expect_throw([&] { dotm::vd_bound_execute_ring(231); },
+                     "IM_LOAD rejects unallocated shader DMA source");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 228U &&
+              dotm::vd_bound_copy_shader_microcode(0U) == previous_shader &&
+              dotm::vd_bound_gpu_snapshot().shader_uploads == 2U,
+              "Rejected shader DMA preserves shader and ring state");
+        put(228, 0xC0022B00U);
+        put(229, 1U);
+        put(230, 3U);
+        put(231, 0x11111111U); // Declared 3 words, packet contains 1.
+        expect_throw([&] { dotm::vd_bound_execute_ring(232); },
+                     "IM_LOAD_IMMEDIATE rejects inconsistent shader length");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 228U &&
+              dotm::vd_bound_gpu_snapshot().shader_uploads == 2U,
+              "Malformed shader upload does not consume command ring");
+        expect_throw([&] { (void)dotm::vd_bound_copy_shader_microcode(2U); },
+                     "Unknown shader stage rejected");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
@@ -1144,8 +1197,10 @@ int main() {
         check(dotm::vd_bound_gpu_snapshot().interrupt_callback == 0,
               "Guest GPU interrupt unregister supported");
         __imp__VdShutdownEngines(ctx, memory.base());
-        check(!dotm::vd_bound_gpu_snapshot().initialized,
-              "VdShutdownEngines clears real command processor state");
+        check(!dotm::vd_bound_gpu_snapshot().initialized &&
+              dotm::vd_bound_copy_shader_microcode(0U).empty() &&
+              dotm::vd_bound_copy_shader_microcode(1U).empty(),
+              "VdShutdownEngines clears original shader microcode and engine state");
         check(dotm::vd_bound_read_gpu_register(0x123U) == 0U &&
               dotm::vd_bound_read_gpu_mmio_register(0x123U) == 0U &&
               memory.committed_range(0x7FC80000U, 0x80000U),

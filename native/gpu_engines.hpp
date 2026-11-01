@@ -1,6 +1,7 @@
 #pragma once
 #include "guest_memory.hpp"
 #include <cstdint>
+#include <vector>
 
 namespace dotm {
 // State of the Xbox 360 video-engine kernel interface. This is the real
@@ -46,6 +47,13 @@ struct GpuEngineSnapshot {
     std::uint32_t display_mode_height = 0;
     std::uint64_t display_mode_changes = 0;
     std::uint64_t register_writes = 0;
+    // Original Xenos sequencer microcode, captured from PM4 uploads.
+    // Capturing is not executing or rendering a shader.
+    std::uint64_t shader_uploads = 0;
+    std::uint32_t vertex_shader_dwords = 0;
+    std::uint32_t pixel_shader_dwords = 0;
+    std::uint64_t vertex_shader_fingerprint = 0;
+    std::uint64_t pixel_shader_fingerprint = 0;
     // Xenos tiled-rendering bin predication state, written by PM4 packets.
     std::uint64_t bin_mask = 0;
     std::uint64_t bin_select = 0;
@@ -153,6 +161,9 @@ void vd_bound_enable_ring_buffer_read_pointer_writeback(
 // Unsupported GPU commands fail closed rather than pretending to render.
 std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                                     std::uint32_t max_packets = 4096);
+// Copy currently bound original Xenos microcode (0=vertex, 1=pixel)
+// for a future native shader translator. Does not render it.
+std::vector<std::uint32_t> vd_bound_copy_shader_microcode(std::uint32_t stage);
 std::uint32_t vd_bound_read_gpu_register(std::uint32_t index);
 GpuEngineSnapshot vd_bound_gpu_snapshot();
 }
