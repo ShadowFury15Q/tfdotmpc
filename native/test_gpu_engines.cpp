@@ -736,6 +736,21 @@ int main() {
               memory.address(writeback)[0x40] == 0xF1 &&
               memory.address(writeback)[0x44] == 0xB1,
               "TYPE1 scratch DMA resumes and writes both physical fences");
+        // Xenos scratch DMA may alias a later word in the same command
+        // packet. Fetching into a FIFO snapshot must preserve that word's
+        // original value for the second register write.
+        put(183, (1U << 16) | 0x01DCU);
+        put(184, 1U);
+        put(185, physical + 188U * 4U);
+        put(186, (1U << 16) | 0x0578U);
+        put(187, 0xAABBCCDDU);
+        put(188, 0x11223344U);
+        check(dotm::vd_bound_execute_ring(189) == 2 &&
+              dotm::vd_bound_read_gpu_register(0x0578U) == 0xAABBCCDDU &&
+              dotm::vd_bound_read_gpu_register(0x0579U) == 0x11223344U &&
+              memory.address(ring)[188U * 4U] == 0xAA &&
+              memory.address(ring)[188U * 4U + 3U] == 0xDD,
+              "TYPE0 scratch DMA ring alias cannot mutate the fetched packet payload");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
