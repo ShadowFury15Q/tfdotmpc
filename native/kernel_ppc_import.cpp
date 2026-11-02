@@ -5,11 +5,64 @@
 #include <chrono>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 #if defined(_MSC_VER)
 #include <intrin.h>
 #elif defined(__i386__) || defined(__x86_64__)
 #include <x86intrin.h>
 #endif
+
+// KfAcquireSpinLock raises the caller's IRQL to DISPATCH_LEVEL and returns
+// the previous IRQL in PPC r3. KfReleaseSpinLock restores that exact value.
+// Keep ownership per native guest thread; never release a lock acquired by a
+// different thread or silently accept a mismatched restore IRQL.
+namespace {
+struct GuestSpinFrame {
+    std::uint32_t guest_address;
+    std::uint32_t previous_irql;
+};
+thread_local std::uint32_t current_guest_irql = 0U;
+thread_local std::vector<GuestSpinFrame> guest_spin_frames;
+}
+PPC_FUNC(__imp__KfAcquireSpinLock) {
+    (void)base;
+    const auto address = ctx.r3.u32;
+    if (current_guest_irql > 2U)
+        throw std::runtime_error("KfAcquireSpinLock: invalid guest IRQL");
+    for (const auto& frame : guest_spin_frames)
+        if (frame.guest_address == address)
+            throw std::runtime_error("KfAcquireSpinLock: recursive guest lock");
+    const auto previous = current_guest_irql;
+    current_guest_irql = 2U;
+    try {
+        dotm::ke_bound_acquire_spin_lock_at_raised_irql(address);
+    } catch (...) {
+        current_guest_irql = previous;
+        throw;
+    }
+    try {
+        guest_spin_frames.push_back({address, previous});
+    } catch (...) {
+        dotm::ke_bound_release_spin_lock_from_raised_irql(address);
+        current_guest_irql = previous;
+        throw;
+    }
+    ctx.r3.u64 = previous;
+}
+PPC_FUNC(__imp__KfReleaseSpinLock) {
+    (void)base;
+    const auto address = ctx.r3.u32;
+    const auto restore_irql = ctx.r4.u32;
+    if (guest_spin_frames.empty() ||
+        guest_spin_frames.back().guest_address != address ||
+        guest_spin_frames.back().previous_irql != restore_irql ||
+        current_guest_irql != 2U)
+        throw std::runtime_error("KfReleaseSpinLock: invalid owner, order or IRQL");
+    dotm::ke_bound_release_spin_lock_from_raised_irql(address);
+    guest_spin_frames.pop_back();
+    current_guest_irql = restore_irql;
+    // This import is void: r3 retains the guest lock pointer.
+}
 
 // The AtRaisedIrql variants preserve PPC r3 and do not change IRQL.
 PPC_FUNC(__imp__KeAcquireSpinLockAtRaisedIrql) {
