@@ -298,7 +298,7 @@ add_executable(dotm_xam_ppc_import_test
   test_xam_ppc_import.cpp xam_ppc_import.cpp)
 target_include_directories(dotm_xam_ppc_import_test
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures)
-target_link_libraries(dotm_xam_ppc_import_test PRIVATE dotm_xam_input)
+target_link_libraries(dotm_xam_ppc_import_test PRIVATE dotm_xam_input dotm_kernel_guest_memory)
 add_test(NAME xenonrecomp_xam_input_original_import_abi
   COMMAND dotm_xam_ppc_import_test)
 
