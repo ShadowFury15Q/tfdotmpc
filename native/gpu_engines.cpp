@@ -1197,6 +1197,15 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
     }
     return completed;
 }
+std::uint32_t vd_bound_drain_mmio_ring(std::uint32_t max_packets) {
+    // CP_RB_WPTR is register 0x01C5 (byte offset 0x714). The original PPC
+    // driver updates its MMIO page directly, not via a kernel import.
+    const auto state = vd_bound_gpu_snapshot();
+    if (!state.ring_initialized || !max_packets) return 0U;
+    const auto write_pointer = vd_bound_read_gpu_mmio_register(0x01C5U);
+    if (write_pointer == state.ring_read_pointer_dwords) return 0U;
+    return vd_bound_execute_ring(write_pointer, max_packets);
+}
 std::vector<std::uint32_t> vd_bound_copy_shader_microcode(std::uint32_t stage) {
     std::lock_guard lock(gpu_mutex);
     if (stage > 1U)
