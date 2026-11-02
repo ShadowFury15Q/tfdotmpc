@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repair omitted PPC update-form operations in private XenonRecomp C++.
+"""Repair omitted PPC update-form and EQV operations in private XenonRecomp C++.
 
 Patched copies remain in the private build directory; game code is never
 modified in-place or copied to the public repository.
@@ -30,6 +30,14 @@ MISSING = re.compile(
 )
 D_ARGS = re.compile(r"([rf])(\d+),(-?\d+)\(r(\d+)\)")
 X_ARGS = re.compile(r"([rf])(\d+),r(\d+),r(\d+)")
+
+# XenonRecomp also silently omits PPC EQV (64-bit bitwise XNOR).
+# Restore the register operation without changing XER or CR.
+EQV_MISSING = re.compile(
+    r"(?m)^(?P<indent>[ \t]*)// eqv (?P<args>[^\r\n]+)\r?\n(?=[ \t]*(?:// |loc_|\}))"
+)
+EQV_ARGS = re.compile(r"r(\d+),r(\d+),r(\d+)")
+
 
 def repair(text: str, counts: Counter) -> str:
     def replace(match: re.Match) -> str:
@@ -107,7 +115,21 @@ def repair(text: str, counts: Counter) -> str:
         counts[op] += 1
         return "\n".join(lines) + "\n"
     fixed = MISSING.sub(replace, text)
-    if MISSING.search(fixed):
+
+    def replace_eqv(match: re.Match) -> str:
+        parsed = EQV_ARGS.fullmatch(match["args"])
+        if parsed is None or any(int(reg) > 31 for reg in parsed.groups()):
+            raise ValueError(f"Invalid PPC eqv operands: {match['args']}")
+        dest, source_a, source_b = map(int, parsed.groups())
+        indent = match["indent"]
+        counts["eqv"] += 1
+        return (
+            f"{indent}// eqv {match['args']}\n"
+            f"{indent}ctx.r{dest}.u64 = ~(ctx.r{source_a}.u64 ^ ctx.r{source_b}.u64);\n"
+        )
+
+    fixed = EQV_MISSING.sub(replace_eqv, fixed)
+    if MISSING.search(fixed) or EQV_MISSING.search(fixed):
         raise ValueError("PPC update-form instruction remains untranslated")
     return fixed
 
