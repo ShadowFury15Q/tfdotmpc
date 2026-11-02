@@ -126,17 +126,50 @@ struct GpuDrawCommand {
     std::vector<XenosVertexFetchConstant> vertex_fetch_constants;
     std::vector<std::uint32_t> vertex_shader_words;
     std::vector<std::uint32_t> pixel_shader_words;
-    // Copy only the binding requested by a real shader. Unused fetch
-    // constants can reference unallocated memory and must not be read eagerly.
-    // The physical reader enforces allocation bounds and callback lifetime.
-    std::vector<std::uint8_t> copy_vertex_fetch_buffer(std::uint32_t slot) const {
+    // Fetch only the vertex bytes actually referenced by a shader. Xenos
+    // endian permutations operate on complete 32-bit DMA lanes, so expand
+    // partial requests to physical DWORD boundaries before decoding.
+    // Never read outside the bound fetch constant or wrap physical addresses.
+    // The reader additionally checks live allocation and draw lifetime.
+    std::vector<std::uint8_t> copy_vertex_fetch_range(
+        std::uint32_t slot, std::uint32_t byte_offset,
+        std::uint32_t byte_count) const {
         for (const auto& binding : vertex_fetch_constants) {
             if (binding.slot != slot) continue;
             if (!copy_physical_memory)
                 throw std::runtime_error("No active Xenos draw physical reader");
+            const auto total = std::uint64_t(binding.size_dwords) * 4U;
+            const auto end = std::uint64_t(byte_offset) + byte_count;
+            if (end > total)
+                throw std::runtime_error("Xenos vertex fetch exceeds bound buffer");
+            if (!byte_count) return {};
+            const auto aligned_start = byte_offset & ~std::uint32_t(3U);
+            const auto aligned_end = (end + 3U) & ~std::uint64_t(3U);
+            const auto fetch_bytes = aligned_end - aligned_start;
+            const auto physical = std::uint64_t(binding.physical_address) +
+                                  aligned_start;
+            if (physical + fetch_bytes > 0x100000000ULL)
+                throw std::runtime_error("Xenos vertex fetch physical address wraps");
             const auto raw = copy_physical_memory(
-                binding.physical_address, binding.size_dwords * 4U);
-            return decode_xenos_vertex_fetch_bytes(binding, raw);
+                static_cast<std::uint32_t>(physical),
+                static_cast<std::uint32_t>(fetch_bytes));
+            const XenosVertexFetchConstant segment{
+                slot, static_cast<std::uint32_t>(physical),
+                static_cast<std::uint32_t>(fetch_bytes / 4U),
+                binding.endian_mode};
+            const auto decoded = decode_xenos_vertex_fetch_bytes(segment, raw);
+            const auto skip = byte_offset - aligned_start;
+            return {decoded.begin() + skip,
+                    decoded.begin() + skip + byte_count};
+        }
+        throw std::runtime_error("Xenos vertex fetch slot is not bound");
+    }
+    // Full-buffer compatibility for backends that need the entire binding.
+    std::vector<std::uint8_t> copy_vertex_fetch_buffer(std::uint32_t slot) const {
+        for (const auto& binding : vertex_fetch_constants) {
+            if (binding.slot == slot)
+                return copy_vertex_fetch_range(
+                    slot, 0U, binding.size_dwords * 4U);
         }
         throw std::runtime_error("Xenos vertex fetch slot is not bound");
     }
