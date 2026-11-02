@@ -657,6 +657,9 @@ void vd_bound_initialize_ring_buffer(
     engine.ring_guest_address = *guest_address;
     engine.ring_size_bytes = bytes;
     engine.ring_read_pointer_dwords = 0;
+    // CP_RB_RPTR (0x710) is CPU-visible MMIO, not just the optional
+    // physical writeback slot. Reset both views when a new ring is bound.
+    write_gpu_register(0x01C4U, 0U);
     indirect_frames.clear();
     engine.packets_executed = 0;
     engine.register_writes = 0;
@@ -725,6 +728,7 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 if (indirect_frames.empty()) {
                     engine.ring_read_pointer_dwords =
                         (engine.ring_read_pointer_dwords + 3U) % ring_capacity;
+                    write_gpu_register(0x01C4U, engine.ring_read_pointer_dwords);
                     if (engine.read_pointer_writeback_enabled)
                         write_be32(engine.read_pointer_writeback_guest_address,
                                    engine.ring_read_pointer_dwords);
@@ -1188,6 +1192,9 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
         } else {
             engine.ring_read_pointer_dwords =
                 (start + payload + 1U) % ring_capacity;
+            // PPC can poll CP_RB_RPTR directly, even with DMA writeback
+            // disabled. Publish only after the whole packet completes.
+            write_gpu_register(0x01C4U, engine.ring_read_pointer_dwords);
             if (engine.read_pointer_writeback_enabled)
                 write_be32(engine.read_pointer_writeback_guest_address,
                            engine.ring_read_pointer_dwords);
