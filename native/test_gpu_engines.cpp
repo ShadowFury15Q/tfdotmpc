@@ -1296,6 +1296,7 @@ int main() {
         put(250, 0xC0013F00U); put(251, ib_physical); put(252, 11U);
         check(dotm::vd_bound_execute_ring(253) == 1 &&
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 250U &&
+              dotm::vd_bound_read_gpu_mmio_register(0x01C4U) == 250U &&
               dotm::vd_bound_read_gpu_register(0x204U) == 0x13579BDFU &&
               memory.address(writeback)[3] == 250U,
               "Indirect PM4 prefix executes without acknowledging pending WAIT");
@@ -1305,6 +1306,7 @@ int main() {
               "Nested WAIT_REG_MEM resumes from its saved offset");
         check(dotm::vd_bound_execute_ring(253) == 3 &&
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 253U &&
+              dotm::vd_bound_read_gpu_mmio_register(0x01C4U) == 253U &&
               dotm::vd_bound_read_gpu_register(0x206U) == 0xCAFEBABEU &&
               memory.address(writeback)[3] == 253U,
               "Nested completion commits parent ring and RPTR writeback");
@@ -1343,6 +1345,8 @@ int main() {
         wptr_mmio[2] = 1U; wptr_mmio[3] = 7U; // 263 dwords, big-endian.
         check(dotm::vd_bound_drain_mmio_ring() == 1 &&
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 263U &&
+              dotm::vd_bound_read_gpu_mmio_register(0x01C4U) == 263U &&
+              dotm::vd_bound_read_gpu_register(0x01C4U) == 263U &&
               memory.address(writeback)[2] == 1U &&
               memory.address(writeback)[3] == 7U &&
               dotm::vd_bound_drain_mmio_ring() == 0,
