@@ -46,6 +46,15 @@ void mm_bound_set_address_protect(std::uint32_t guest_address,
 // Resolve GPU DMA offsets only within a real physical allocation.
 std::optional<std::uint32_t> mm_bound_resolve_physical_range(
     std::uint32_t physical_address, std::uint32_t length);
+// Original XamAlloc(flags, bytes, guest_pointer_to_result) and XamFree(pointer).
+// XAM allocations are backed by committed guest pages, with independent
+// ownership from ExAllocatePool. The original DOTM callers use flags=0.
+inline constexpr std::uint32_t kXamAllocInvalidArgument = 0x80070057U;
+inline constexpr std::uint32_t kXamAllocOutOfMemory = 0x8007000EU;
+std::uint32_t xam_bound_allocate(std::uint32_t flags, std::uint32_t bytes,
+                                 std::uint32_t output_pointer);
+void xam_bound_free(std::uint32_t guest_pointer);
+
 // Xbox 360 ExGetXConfigSetting with 16-bit big-endian required-size output.
 std::uint32_t ex_get_xconfig_setting_guest(GuestMemory& memory,
     std::uint16_t category, std::uint16_t setting, std::uint32_t buffer,
