@@ -417,13 +417,13 @@ int main() {
               !large_memory.committed_range(0x50100000U, 1),
               "Xbox NOZERO allocation can be released");
         // The original title calls NtQueryVirtualMemory when extending its CRT heap.
-        auto query = [&](std::uint32_t address, std::uint32_t output = ptr) {
+        auto query = [&](std::uint32_t address, std::uint32_t output) {
             ctx.r3.u64 = address;
             ctx.r4.u64 = output;
             __imp__NtQueryVirtualMemory(ctx, large_memory.base());
             return static_cast<std::uint32_t>(ctx.r3.u64);
         };
-        check(query(0x50000001U) == dotm::kNtSuccess &&
+        check(query(0x50000001U, ptr) == dotm::kNtSuccess &&
               read32(large_memory, ptr) == 0x50000000U &&
               read32(large_memory, ptr + 4) == 0x50000000U &&
               read32(large_memory, ptr + 12) == 0x10000U &&
@@ -431,26 +431,26 @@ int main() {
               read32(large_memory, ptr + 20) == 4U &&
               read32(large_memory, ptr + 24) == 0x20000U,
               "NtQueryVirtualMemory reports a committed 64 KiB guest run");
-        check(query(0x50010000U) == dotm::kNtSuccess &&
+        check(query(0x50010000U, ptr) == dotm::kNtSuccess &&
               read32(large_memory, ptr) == 0x50010000U &&
               read32(large_memory, ptr + 12) == 0xF0000U &&
               read32(large_memory, ptr + 16) == 0x2000U &&
               read32(large_memory, ptr + 20) == 0U,
               "NtQueryVirtualMemory reports remaining reserved pages");
-        check(query(0x50100000U) == dotm::kNtSuccess &&
+        check(query(0x50100000U, ptr) == dotm::kNtSuccess &&
               read32(large_memory, ptr) == 0x50100000U &&
               read32(large_memory, ptr + 4) == 0U &&
               read32(large_memory, ptr + 16) == 0x10000U,
               "NtQueryVirtualMemory reports released guest pages as free");
         write32(large_memory, ptr, 0xAABBCCDDU);
-        check(query(0x82000000U) == dotm::kNtInvalidParameter &&
+        check(query(0x82000000U, ptr) == dotm::kNtInvalidParameter &&
               read32(large_memory, ptr) == 0xAABBCCDDU,
               "Unknown address must not corrupt query output");
         check(query(0x50000000U, dotm::GuestMemory::kFunctionTableOffset) ==
                   dotm::kNtInvalidParameter,
               "Query output must never overwrite the native PPC dispatch table");
         large_memory.decommit(ptr, 4096);
-        check(query(0x50000000U) == dotm::kNtInvalidParameter,
+        check(query(0x50000000U, ptr) == dotm::kNtInvalidParameter,
               "Uncommitted output rejected");
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
         check(dotm::nt_bound_query_virtual_memory(0x50000000U, ptr) ==
