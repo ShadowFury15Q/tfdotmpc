@@ -168,6 +168,46 @@ struct GpuDrawCommand {
         }
         throw std::runtime_error("Xenos vertex fetch slot is not bound");
     }
+    // Read original texture DMA with the Xenos byte-lane permutation.
+    // Returned texels are still in their original tiled/compressed layout;
+    // this does not perform format decoding, detiling, or shader sampling.
+    // The physical reader validates the live allocation and draw lifetime.
+    std::vector<std::uint8_t> copy_texture_fetch_range(
+        std::uint32_t slot, std::uint32_t byte_offset,
+        std::uint32_t byte_count) const {
+        for (const auto& binding : texture_fetch_constants) {
+            if (binding.slot != slot) continue;
+            if (!copy_physical_memory)
+                throw std::runtime_error("No active Xenos draw physical reader");
+            if (binding.endian_mode > 3U)
+                throw std::runtime_error("Invalid Xenos texture fetch endian mode");
+            const auto end = std::uint64_t(byte_offset) + byte_count;
+            if (end > 0x100000000ULL)
+                throw std::runtime_error("Xenos texture fetch range wraps");
+            if (!byte_count) return {};
+            const auto aligned_start = byte_offset & ~std::uint32_t(3U);
+            const auto aligned_end = (end + 3U) & ~std::uint64_t(3U);
+            const auto fetch_bytes = aligned_end - aligned_start;
+            const auto physical = std::uint64_t(binding.base_physical_address) +
+                                  aligned_start;
+            if (fetch_bytes > 0xFFFFFFFFULL ||
+                physical + fetch_bytes > 0x100000000ULL)
+                throw std::runtime_error("Xenos texture fetch physical address wraps");
+            const auto raw = copy_physical_memory(
+                static_cast<std::uint32_t>(physical),
+                static_cast<std::uint32_t>(fetch_bytes));
+            if (raw.size() != fetch_bytes)
+                throw std::runtime_error("Incomplete Xenos texture DMA read");
+            constexpr std::size_t kLaneXor[4] = {0U, 1U, 3U, 2U};
+            std::vector<std::uint8_t> decoded(raw.size());
+            for (std::size_t i = 0; i < raw.size(); ++i)
+                decoded[i] = raw[i ^ kLaneXor[binding.endian_mode]];
+            const auto skip = byte_offset - aligned_start;
+            return {decoded.begin() + skip,
+                    decoded.begin() + skip + byte_count};
+        }
+        throw std::runtime_error("Xenos texture fetch slot is not bound");
+    }
     // Full-buffer compatibility for backends that need the entire binding.
     std::vector<std::uint8_t> copy_vertex_fetch_buffer(std::uint32_t slot) const {
         for (const auto& binding : vertex_fetch_constants) {
