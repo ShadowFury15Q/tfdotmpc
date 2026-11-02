@@ -20,7 +20,7 @@ class PrivatePreflightTests(unittest.TestCase):
     def test_missing_middle_unit_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)
-            for name in ("ppc_recomp_shared.h", "ppc_context.h", "ppc_func_mapping.cpp"):
+            for name in ("ppc_config.h", "ppc_recomp_shared.h", "ppc_context.h", "ppc_func_mapping.cpp"):
                 (path / name).touch()
             for i in range(EXPECTED_UNITS):
                 if i != 400:
@@ -33,6 +33,24 @@ class PrivatePreflightTests(unittest.TestCase):
                 self.assertEqual(run(path), 1)
             (path / "ppc_recomp.400.cpp").touch()
             self.assertEqual(inspect_units(path), (EXPECTED_UNITS, [], [], []))
+
+    def test_directory_missing_ppc_config_cannot_be_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("ppc_recomp_shared.h", "ppc_context.h",
+                         "ppc_func_mapping.cpp"):
+                (root / name).touch()
+            for index in range(EXPECTED_UNITS):
+                (root / f"ppc_recomp.{index}.cpp").touch()
+            count, missing, extra, headers = inspect_units(root)
+            self.assertEqual(count, EXPECTED_UNITS)
+            self.assertFalse(missing or extra)
+            self.assertIn("ppc_config.h", headers)
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(run(root), 1)
+            self.assertNotIn("READY: 697 contiguous units", output.getvalue())
+            (root / "ppc_config.h").touch()
+            self.assertEqual(inspect_units(root), (EXPECTED_UNITS, [], [], []))
 
     def test_numbered_unit_aliases_do_not_pass_private_preflight(self):
         # A leading-zero alias can hide an extra translation unit behind a
