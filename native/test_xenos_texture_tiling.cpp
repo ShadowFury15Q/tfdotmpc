@@ -99,6 +99,7 @@ int main() {
         dotm::XenosTextureFetchConstant binding{};
         binding.slot = 11U;
         binding.base_physical_address = 0x2000U;
+        binding.format = 6U; // Xenos RGBA8, 4 bytes per pixel.
         binding.tiled = true;
         binding.dimension = 1U;
         binding.width = 32U;
@@ -118,6 +119,62 @@ int main() {
                 }
             }
         }
+        // A BC1 fetch is measured in pixels (128x128) while the physical
+        // storage layout is measured in 4x4 blocks (32x32, 8 bytes each).
+        // BC3 and DXN use the same block geometry with 16-byte blocks.
+        for (const auto format : {18U, 20U, 49U}) {
+            const std::uint32_t block_bytes = format == 18U ? 8U : 16U;
+            const dotm::XenosTiled2DLayout blocks{32U, 32U, 32U, block_bytes};
+            test_tiled_guest_bytes.assign(
+                dotm::xenos_tiled_2d_required_bytes(blocks), 0xCC);
+            for (std::uint32_t y = 0; y < 32U; ++y) {
+                for (std::uint32_t x = 0; x < 32U; ++x) {
+                    const auto offset = dotm::xenos_tiled_2d_offset(
+                        x, y, 32U, block_bytes);
+                    for (std::uint32_t lane = 0; lane < block_bytes; ++lane)
+                        test_tiled_guest_bytes[offset + lane] =
+                            static_cast<std::uint8_t>((x * 7U + y * 11U + lane) & 255U);
+                }
+            }
+            auto& texture = draw.texture_fetch_constants[0];
+            texture.format = format;
+            texture.width = 128U;
+            texture.height = 128U;
+            texture.pitch_pixels = 128U;
+            const auto decoded = draw.copy_tiled_texture_2d_elements(11U, blocks);
+            check(decoded.size() == 32U * 32U * block_bytes,
+                  "BC texture DMA preserves compressed block dimensions");
+            for (std::uint32_t y = 0; y < 32U; ++y) {
+                for (std::uint32_t x = 0; x < 32U; ++x) {
+                    for (std::uint32_t lane = 0; lane < block_bytes; ++lane)
+                        check(decoded[(y * 32U + x) * block_bytes + lane] ==
+                                  static_cast<std::uint8_t>(
+                                      (x * 7U + y * 11U + lane) & 255U),
+                              "BC1/BC3/DXN draw-scoped block DMA");
+                }
+            }
+            rejects([&] {
+                (void)draw.copy_tiled_texture_2d_elements(
+                    11U, {32U, 32U, 32U, 4U});
+            }, "BC texture cannot be interpreted as RGBA8 pixels");
+            texture.pitch_pixels = 256U;
+            rejects([&] {
+                (void)draw.copy_tiled_texture_2d_elements(11U, blocks);
+            }, "BC texture cannot ignore original fetch pitch");
+        }
+        auto& texture = draw.texture_fetch_constants[0];
+        texture.format = 6U;
+        texture.width = 32U;
+        texture.height = 32U;
+        texture.pitch_pixels = 0U;
+        rejects([&] {
+            (void)draw.copy_tiled_texture_2d_elements(11U, {8U, 8U, 32U, 4U});
+        }, "RGBA8 layout cannot silently crop bound texture");
+        texture.format = 0U;
+        rejects([&] {
+            (void)draw.copy_tiled_texture_2d_elements(11U, layout);
+        }, "unknown Xenos format cannot be interpreted as RGBA8");
+        texture.format = 6U;
         draw.texture_fetch_constants[0].stacked = true;
         rejects([&] { (void)draw.copy_tiled_texture_2d_elements(11U, layout); },
                 "stacked Xenos texture must not be guessed as 2D");
