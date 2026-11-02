@@ -1,10 +1,19 @@
 #include "xenos_texture_tiling.hpp"
+#include "gpu_engines.hpp"
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
 
 namespace {
+std::vector<std::uint8_t> test_tiled_guest_bytes;
+std::vector<std::uint8_t> test_tiled_reader(std::uint32_t physical,
+                                             std::uint32_t length) {
+    if (physical != 0x2000U || length > test_tiled_guest_bytes.size())
+        throw std::runtime_error("Invalid test tiled physical allocation");
+    return {test_tiled_guest_bytes.begin(),
+            test_tiled_guest_bytes.begin() + length};
+}
 void check(bool result, const char* why) {
     if (!result) throw std::runtime_error(why);
 }
@@ -73,6 +82,53 @@ int main() {
                 "oversized texture rejected");
         rejects([] { (void)dotm::xenos_tiled_2d_offset(32, 0, 32, 4); },
                 "out-of-pitch access rejected");
+        // Drive the actual GPU submission interface: fetch through the
+        // allocated physical-reader callback, endian-normalize, then detile.
+        const dotm::XenosTiled2DLayout layout{32, 32, 32, 4};
+        test_tiled_guest_bytes.assign(
+            dotm::xenos_tiled_2d_required_bytes(layout), 0xEE);
+        for (std::uint32_t y = 0; y < 32U; ++y) {
+            for (std::uint32_t x = 0; x < 32U; ++x) {
+                const auto i = dotm::xenos_tiled_2d_offset(x, y, 32, 4);
+                for (std::uint32_t lane = 0; lane < 4U; ++lane)
+                    test_tiled_guest_bytes[i + lane] =
+                        static_cast<std::uint8_t>((x + y * 3U + lane) & 255U);
+            }
+        }
+        dotm::GpuDrawCommand draw;
+        dotm::XenosTextureFetchConstant binding{};
+        binding.slot = 11U;
+        binding.base_physical_address = 0x2000U;
+        binding.tiled = true;
+        binding.dimension = 1U;
+        binding.width = 32U;
+        binding.height = 32U;
+        draw.texture_fetch_constants.push_back(binding);
+        draw.copy_physical_memory = &test_tiled_reader;
+        const auto host = draw.copy_tiled_texture_2d_elements(11U, layout);
+        check(host.size() == 32U * 32U * 4U,
+              "draw-scoped native tiled texture upload dimensions");
+        for (std::uint32_t y = 0; y < 32U; ++y) {
+            for (std::uint32_t x = 0; x < 32U; ++x) {
+                for (std::uint32_t lane = 0; lane < 4U; ++lane) {
+                    const auto expected = static_cast<std::uint8_t>(
+                        (x + y * 3U + lane) & 255U);
+                    check(host[(y * 32U + x) * 4U + lane] == expected,
+                          "draw-scoped Xenos DMA texture detiled exactly");
+                }
+            }
+        }
+        draw.texture_fetch_constants[0].stacked = true;
+        rejects([&] { (void)draw.copy_tiled_texture_2d_elements(11U, layout); },
+                "stacked Xenos texture must not be guessed as 2D");
+        draw.texture_fetch_constants[0].stacked = false;
+        draw.texture_fetch_constants[0].tiled = false;
+        rejects([&] { (void)draw.copy_tiled_texture_2d_elements(11U, layout); },
+                "linear textures must not be detiled");
+        draw.texture_fetch_constants[0].tiled = true;
+        draw.copy_physical_memory = nullptr;
+        rejects([&] { (void)draw.copy_tiled_texture_2d_elements(11U, layout); },
+                "texture DMA requires active native graphics submission");
         std::cout << "Xenos 2D tiled RGBA/BC block detiling PASS\n";
         return 0;
     } catch (const std::exception& e) {
