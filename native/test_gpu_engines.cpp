@@ -57,7 +57,7 @@ int main() {
               dotm::vd_bound_read_gpu_register(0x714U / 4U) == 0x12345678U,
               "Original PPC MMIO writes are visible to the native PM4 register file");
         dotm::vd_bound_map_gpu_mmio(); // idempotent
-        expect_throw([&] { (void)dotm::vd_bound_read_gpu_mmio_register(0x5000U); },
+        expect_throw([&] { (void)dotm::vd_bound_read_gpu_mmio_register(0x5003U); },
                      "GPU MMIO register reads reject out-of-range indexes");
         PPCContext ctx{};
         // Original DOTM 0x82525808 EDRAM retrain ABI: two BE32 guest
@@ -517,14 +517,15 @@ int main() {
               dotm::vd_bound_read_gpu_register(0x151) == 0xCAFE4567U &&
               memory.address(writeback)[3] == 2,
               "PM4 payload wraps across physical ring boundary");
-        // A zero header is TYPE0, count=1, register=0; it is not padding.
-        put(2, 0);
-        put(3, 0x13572468U);
-        check(dotm::vd_bound_execute_ring(4) == 1 &&
-              dotm::vd_bound_read_gpu_register(0) == 0x13572468U &&
-              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 4 &&
-              memory.address(writeback)[3] == 4,
-              "Zero-header PM4 type-0 writes register zero and advances by two dwords");
+        // Retail Xenos treats a zero dword as a single padding NOP.
+        const auto register_zero_before_padding = dotm::vd_bound_read_gpu_register(0U);
+        put(2, 0U);
+        put(3, 0x80000000U);
+        check(dotm::vd_bound_execute_ring(4) == 2U &&
+              dotm::vd_bound_read_gpu_register(0U) == register_zero_before_padding &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 4U &&
+              memory.address(writeback)[3] == 4U,
+              "Zero PM4 header is a one-dword NOP, not a register-zero write");
         // Original PPC can write Xenos MMIO directly between PM4 packets.
         // REG_RMW must read that CPU-written value, not a stale shadow copy.
         auto* cpu_register = memory.address(0x7FC80000U + 0x123U * 4U);
@@ -1337,7 +1338,6 @@ int main() {
         check(dotm::vd_bound_execute_ring(262) == 2 &&
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 262U,
               "PFD indirect-buffer opcode executes physical command list");
-        dotm::mm_bound_free_physical_memory(1U, ib);
         // CP_RB_WPTR is written directly by the original PPC at 0x7FC80714.
         put(262, 0x80000000U); // PM4 type-2 no-op, real ring dword.
         auto* wptr_mmio = memory.address(0x7FC80714U);
@@ -1351,6 +1351,48 @@ int main() {
               memory.address(writeback)[3] == 7U &&
               dotm::vd_bound_drain_mmio_ring() == 0,
               "Original PPC MMIO CP_RB_WPTR drives native ring and writeback");
+        // Retail Xenos zero padding must not desynchronize an indirect list.
+        put_ib(0, 0U); put_ib(1, 0U);
+        put_ib(2, 0x00000209U); put_ib(3, 0xD00DCAFEU);
+        put(263, 0xC0013F00U); put(264, ib_physical); put(265, 4U);
+        const auto reg_zero_before = dotm::vd_bound_read_gpu_register(0U);
+        check(dotm::vd_bound_execute_ring(266U) == 4U &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 266U &&
+              dotm::vd_bound_read_gpu_mmio_register(0x01C4U) == 266U &&
+              dotm::vd_bound_read_gpu_register(0x209U) == 0xD00DCAFEU &&
+              dotm::vd_bound_read_gpu_register(0U) == reg_zero_before,
+              "Zero-padded indirect PM4 list preserves packet alignment");
+        put(266, 0U); put(267, 0x0000020AU); put(268, 0xA5A5F00DU);
+        check(dotm::vd_bound_execute_ring(269U) == 2U &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 269U &&
+              dotm::vd_bound_read_gpu_register(0x20AU) == 0xA5A5F00DU &&
+              dotm::vd_bound_read_gpu_register(0U) == reg_zero_before,
+              "Zero-word ring padding consumes one PM4 dword");
+        // A final type-0 payload dword may extend one word past the IB
+        // count, but only within the same validated physical allocation.
+        put_ib(0, 0x0001020BU); put_ib(1, 0x11112222U);
+        put_ib(2, 0x33334444U);
+        put(269, 0xC0013F00U); put(270, ib_physical); put(271, 2U);
+        check(dotm::vd_bound_execute_ring(272U) == 2U &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 272U &&
+              dotm::vd_bound_read_gpu_register(0x20BU) == 0x11112222U &&
+              dotm::vd_bound_read_gpu_register(0x20CU) == 0x33334444U,
+              "Indirect packet completes one validated physical tail word");
+        // Retail DOTM writes the final Xenos registers 0x5000..0x5002.
+        put(272, 0x00025000U); put(273, 0x12345678U);
+        put(274, 0x9ABCDEF0U); put(275, 0x13572468U);
+        check(dotm::vd_bound_execute_ring(276U) == 1U &&
+              dotm::vd_bound_read_gpu_register(0x5000U) == 0x12345678U &&
+              dotm::vd_bound_read_gpu_register(0x5002U) == 0x13572468U &&
+              dotm::vd_bound_read_gpu_mmio_register(0x5002U) == 0x13572468U,
+              "Xenos type-0 accepts actual 0x5000..0x5002 registers");
+        put(276, 0xC0003B00U); put(277, 0x7FFFU);
+        check(dotm::vd_bound_execute_ring(278U) == 1U &&
+              dotm::vd_bound_gpu_snapshot().state_invalidations == 1U &&
+              dotm::vd_bound_gpu_snapshot().last_state_invalidation_mask == 0x7FFFU &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 278U,
+              "PM4_INVALIDATE_STATE retains original state-pointer mask");
+        dotm::mm_bound_free_physical_memory(1U, ib);
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
