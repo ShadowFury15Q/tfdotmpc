@@ -1392,6 +1392,64 @@ int main() {
               dotm::vd_bound_gpu_snapshot().last_state_invalidation_mask == 0x7FFFU &&
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 278U,
               "PM4_INVALIDATE_STATE retains original state-pointer mask");
+        // The original DRAW_INDX_2 is a GPU draw, never a NOP. Without
+        // a native backend it must keep the packet and RPTR pending.
+        put(278, 0xC0003600U);
+        put(279, (3U << 16U) | (2U << 6U) | 4U);
+        expect_throw([&] { (void)dotm::vd_bound_execute_ring(280U); },
+                     "Original auto-index draw requires native renderer");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 278U &&
+              dotm::vd_bound_gpu_snapshot().draws_submitted == 0U &&
+              memory.address(writeback)[3] == 22U,
+              "Rejected draw does not fake a GPU submission or advance RPTR");
+        bool draw_checked = false;
+        dotm::vd_bound_set_draw_submitter(
+            +[](const dotm::GpuDrawCommand& draw, void* context) -> bool {
+                const bool valid = draw.initiator == ((3U << 16U) | (2U << 6U) | 4U) &&
+                    draw.primitive_type == 4U && draw.source_select == 2U &&
+                    draw.index_count == 3U && draw.dma_index_bytes.empty() &&
+                    draw.register_words.size() == 0x5003U &&
+                    draw.register_words[0x21FCU] == draw.initiator &&
+                    !draw.vertex_shader_words.empty();
+                *static_cast<bool*>(context) = valid;
+                return valid;
+            }, &draw_checked);
+        check(dotm::vd_bound_execute_ring(280U) == 1U && draw_checked &&
+              dotm::vd_bound_gpu_snapshot().draws_submitted == 1U &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 280U &&
+              dotm::vd_bound_read_gpu_register(0x21FCU) == ((3U << 16U) | (2U << 6U) | 4U),
+              "Draw submitter receives original shader, register and initiator state");
+        // DMA-indexed draws resolve and copy real guest physical index bytes.
+        const auto dma_address = ib_physical + 0x100U;
+        put_ib(64U, 0x11223344U);
+        put(280, 0xC0023600U);
+        put(281, (2U << 16U) | 4U);
+        put(282, dma_address);
+        put(283, (2U << 30U) | 2U);
+        dotm::vd_bound_set_draw_submitter(
+            +[](const dotm::GpuDrawCommand& draw, void* context) -> bool {
+                const bool valid = draw.source_select == 0U &&
+                    draw.index_count == 2U && draw.index_size_bytes == 2U &&
+                    draw.dma_swap_mode == 2U &&
+                    draw.dma_index_bytes.size() == 4U &&
+                    draw.dma_index_bytes[0] == 0x11U &&
+                    draw.dma_index_bytes[3] == 0x44U &&
+                    draw.register_words[0x21FAU] == draw.dma_physical_address;
+                *static_cast<bool*>(context) = valid;
+                return valid;
+            }, &draw_checked);
+        check(dotm::vd_bound_execute_ring(284U) == 1U && draw_checked &&
+              dotm::vd_bound_gpu_snapshot().draws_submitted == 2U &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 284U,
+              "DMA draw supplies real physical index bytes and Xenos endian mode");
+        dotm::vd_bound_set_draw_submitter(nullptr, nullptr);
+        put(284, 0xC0003600U);
+        put(285, (3U << 16U) | (3U << 6U) | 4U);
+        expect_throw([&] { (void)dotm::vd_bound_execute_ring(286U); },
+                     "Reserved draw source is rejected without backend");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 284U &&
+              dotm::vd_bound_gpu_snapshot().draws_submitted == 2U,
+              "Invalid draw preserves completed GPU submissions");
         dotm::mm_bound_free_physical_memory(1U, ib);
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");

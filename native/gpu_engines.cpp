@@ -32,6 +32,8 @@ struct IndirectFrame {
     std::uint32_t read_offset;
 };
 std::vector<IndirectFrame> indirect_frames;
+GpuDrawSubmitter draw_submitter = nullptr;
+void* draw_submitter_context = nullptr;
 constexpr std::size_t kMaxIndirectDepth = 8;
 constexpr std::uint32_t kXenosMmioBase = 0x7FC80000U;
 constexpr std::uint32_t kXenosMmioBytes = 0x00080000U;
@@ -213,9 +215,16 @@ std::uint32_t vd_bound_read_gpu_mmio_register(std::uint32_t index) {
         throw std::runtime_error("Invalid Xbox GPU MMIO register read");
     return read_be32(kXenosMmioBase + index * 4U);
 }
+void vd_bound_set_draw_submitter(GpuDrawSubmitter submitter, void* context) {
+    std::lock_guard lock(gpu_mutex);
+    draw_submitter = submitter;
+    draw_submitter_context = submitter ? context : nullptr;
+}
 void bind_gpu_engines(GuestMemory* memory) noexcept {
     std::lock_guard lock(gpu_mutex);
     guest_memory = memory;
+    draw_submitter = nullptr;
+    draw_submitter_context = nullptr;
     engine = {};
     indirect_frames.clear();
     gpu_registers.fill(0);
@@ -262,6 +271,8 @@ std::uint32_t vd_bound_initialize_engines(
 }
 void vd_bound_shutdown_engines() noexcept {
     std::lock_guard lock(gpu_mutex);
+    draw_submitter = nullptr;
+    draw_submitter_context = nullptr;
     engine = {};
     indirect_frames.clear();
     edram_backing.clear();
@@ -662,6 +673,8 @@ void vd_bound_initialize_ring_buffer(
     write_gpu_register(0x01C4U, 0U);
     indirect_frames.clear();
     engine.packets_executed = 0;
+    engine.draws_submitted = 0;
+    engine.last_draw_initiator = 0;
     engine.register_writes = 0;
     engine.read_pointer_writeback_enabled = false;
     engine.read_pointer_writeback_physical_address = 0;
@@ -851,6 +864,76 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                     throw std::runtime_error("Xenos indirect buffer requires allocated physical memory");
                 indirect_frames.push_back({physical, *guest, words, 0U});
                 continue;
+            } else if (opcode == 0x36U || opcode == 0x22U) {
+                // Original Xenos DRAW_INDX_2 / DRAW_INDX. Decode the
+                // hardware VGT_DRAW_INITIATOR, not an invented PC draw.
+                // DRAW_INDX carries an additional visibility-query token.
+                const bool has_query = opcode == 0x22U;
+                const auto initiator_offset = has_query ? 1U : 0U;
+                if (payload <= initiator_offset)
+                    throw std::runtime_error("Truncated Xenos DRAW_INDX initiator");
+                if (has_query && at(first) != 0U)
+                    throw std::runtime_error("Conditional Xenos draw requires visibility-query results");
+                GpuDrawCommand draw;
+                draw.initiator = at(first + initiator_offset);
+                draw.primitive_type = draw.initiator & 0x3FU;
+                draw.source_select = (draw.initiator >> 6U) & 3U;
+                draw.major_mode = (draw.initiator >> 8U) & 3U;
+                draw.index_size_bytes = (draw.initiator & 0x800U) ? 4U : 2U;
+                draw.index_count = draw.initiator >> 16U;
+                const auto arguments = payload - initiator_offset - 1U;
+                std::uint32_t dma_size = 0U;
+                if (draw.source_select == 0U) {
+                    if (arguments != 2U)
+                        throw std::runtime_error("Invalid Xenos DMA indexed-draw packet size");
+                    const auto raw_base = at(first + initiator_offset + 1U);
+                    dma_size = at(first + initiator_offset + 2U);
+                    draw.dma_physical_address = raw_base & ~(draw.index_size_bytes - 1U);
+                    draw.dma_swap_mode = dma_size >> 30U;
+                    if (draw.index_count > (dma_size & 0xFFFFFFU))
+                        throw std::runtime_error("Xenos DMA draw exceeds index-buffer bounds");
+                    const auto bytes = std::size_t(draw.index_count) * draw.index_size_bytes;
+                    if (bytes) {
+                        const auto guest = mm_bound_resolve_physical_range(
+                            draw.dma_physical_address, bytes);
+                        if (!guest || !readable(*guest, bytes))
+                            throw std::runtime_error("Xenos draw index data requires allocated physical memory");
+                        const auto* data = guest_memory->address(*guest);
+                        draw.dma_index_bytes.assign(data, data + bytes);
+                    }
+                } else if (draw.source_select == 2U) {
+                    if (arguments != 0U)
+                        throw std::runtime_error("Invalid Xenos auto-index draw packet size");
+                } else {
+                    // Immediate indices and reserved source modes must not
+                    // be silently interpreted as a successful draw.
+                    throw std::runtime_error("Unsupported Xenos draw index source");
+                }
+                if (!draw_submitter)
+                    throw std::runtime_error("Xenos draw requires a native graphics backend");
+                draw.register_words.reserve(gpu_registers.size());
+                for (std::uint32_t i = 0; i < gpu_registers.size(); ++i)
+                    draw.register_words.push_back(read_gpu_register(i));
+                draw.register_words[0x21FCU] = draw.initiator;
+                if (draw.source_select == 0U) {
+                    draw.register_words[0x21FAU] = draw.dma_physical_address;
+                    draw.register_words[0x21FBU] = dma_size;
+                }
+                draw.vertex_shader_words = active_shader_microcode[0];
+                draw.pixel_shader_words = active_shader_microcode[1];
+                if (!draw_submitter(draw, draw_submitter_context))
+                    throw std::runtime_error("Native graphics backend rejected Xenos draw");
+                // Only a successful real backend submission can advance
+                // RPTR. Presentation and frame completion are separate.
+                write_gpu_register(0x21FCU, draw.initiator);
+                ++engine.register_writes;
+                if (draw.source_select == 0U) {
+                    write_gpu_register(0x21FAU, draw.dma_physical_address);
+                    write_gpu_register(0x21FBU, dma_size);
+                    engine.register_writes += 2U;
+                }
+                ++engine.draws_submitted;
+                engine.last_draw_initiator = draw.initiator;
             } else if (opcode == 0x3BU) {
                 // PM4_INVALIDATE_STATE: synchronize shared physical memory
                 // and retain the actual state-pointer invalidation mask.

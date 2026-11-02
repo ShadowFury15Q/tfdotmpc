@@ -35,6 +35,9 @@ struct GpuEngineSnapshot {
     std::uint32_t read_pointer_writeback_block_log2 = 0;
     std::uint32_t ring_read_pointer_dwords = 0;
     std::uint64_t packets_executed = 0;
+    // Actual draw submissions accepted by a native graphics backend.
+    std::uint64_t draws_submitted = 0;
+    std::uint32_t last_draw_initiator = 0;
     std::uint32_t gpu_frame_counter = 0;
     // VdSwap has constructed a guest PM4 fetch command, not presented a frame.
     std::uint64_t swap_requests = 0;
@@ -82,6 +85,29 @@ struct GpuEngineSnapshot {
     std::uint16_t backbuffer_width = 0;
     std::uint16_t backbuffer_height = 0;
 };
+
+// A native graphics backend receives the complete original Xenos draw state.
+// No draw is acknowledged without a backend that actually accepts the work.
+// The callback runs synchronously under the GPU state lock; it must not call
+// vd_bound_* functions or retain references to the command.
+struct GpuDrawCommand {
+    std::uint32_t initiator = 0;
+    std::uint32_t primitive_type = 0;
+    std::uint32_t source_select = 0;
+    std::uint32_t major_mode = 0;
+    std::uint32_t index_count = 0;
+    std::uint32_t index_size_bytes = 0;
+    std::uint32_t dma_physical_address = 0;
+    std::uint32_t dma_swap_mode = 0;
+    // Exact guest bytes, including the Xenos DMA endian representation.
+    std::vector<std::uint8_t> dma_index_bytes;
+    // CPU MMIO writes are included, not only the PM4 register shadow.
+    std::vector<std::uint32_t> register_words;
+    std::vector<std::uint32_t> vertex_shader_words;
+    std::vector<std::uint32_t> pixel_shader_words;
+};
+using GpuDrawSubmitter = bool (*)(const GpuDrawCommand&, void*);
+void vd_bound_set_draw_submitter(GpuDrawSubmitter submitter, void* context);
 
 // The binding must be removed before the guest address space is destroyed.
 void bind_gpu_engines(GuestMemory* memory) noexcept;
