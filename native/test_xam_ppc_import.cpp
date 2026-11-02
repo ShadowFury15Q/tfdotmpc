@@ -3,6 +3,7 @@
 #include "native_input.hpp"
 #include "xam_guest_input.hpp"
 #include "xam_system_version.hpp"
+#include "kernel_guest_memory.hpp"
 #include <array>
 #include <cstdint>
 #include <iostream>
@@ -12,6 +13,8 @@ PPC_EXTERN_FUNC(__imp__XamInputGetState);
 PPC_EXTERN_FUNC(__imp__XamInputGetCapabilities);
 PPC_EXTERN_FUNC(__imp__XamGetSystemVersion);
 PPC_EXTERN_FUNC(__imp__XGetLanguage);
+PPC_EXTERN_FUNC(__imp__XamAlloc);
+PPC_EXTERN_FUNC(__imp__XamFree);
 
 namespace {
 void require(bool pass,const char* message){if(!pass)throw std::runtime_error(message);}
@@ -25,8 +28,41 @@ int main(){
     memory.commit(0x82033000U,dotm::kXboxInputCapabilitiesBytes);
     dotm::bind_xam_guest_input(&service,&memory);
 
+    dotm::GuestVirtualAllocator xam_heap(memory, 0x40000000U, 0x40010000U);
+    dotm::bind_kernel_guest_memory(&memory, &xam_heap);
     constexpr std::uint32_t guest_ptr=0x82032000u;
     PPCContext ctx{};
+    constexpr std::uint32_t xam_output=guest_ptr+0x20U;
+    ctx.r3.u64=0U; ctx.r4.u64=1088U; ctx.r5.u64=xam_output;
+    __imp__XamAlloc(ctx,memory.base());
+    require(ctx.r3.u32==0U,"XamAlloc returns success for a real guest allocation");
+    const auto* xam_pointer_bytes=memory.address(xam_output);
+    const auto xam_pointer=(std::uint32_t(xam_pointer_bytes[0])<<24)|
+        (std::uint32_t(xam_pointer_bytes[1])<<16)|
+        (std::uint32_t(xam_pointer_bytes[2])<<8)|xam_pointer_bytes[3];
+    require(xam_pointer==0x40000000U && xam_heap.allocation_count()==1U,
+            "XamAlloc writes a big-endian guest pointer, not a host pointer");
+    memory.address(xam_pointer)[1087]=0xA5U;
+    ctx.r3.u64=xam_pointer;
+    __imp__XamFree(ctx,memory.base());
+    require(ctx.r3.u32==xam_pointer && !memory.committed_range(xam_pointer,1) &&
+            xam_heap.allocation_count()==0U,
+            "XamFree revokes real guest pages and preserves the void PPC ABI");
+    bool double_free_rejected=false;
+    try { __imp__XamFree(ctx,memory.base()); }
+    catch (const std::runtime_error&) { double_free_rejected=true; }
+    require(double_free_rejected,"XamFree rejects an already released pointer");
+    ctx.r3.u64=0U; ctx.r4.u64=32U;
+    ctx.r5.u64=dotm::GuestMemory::kFunctionTableOffset;
+    __imp__XamAlloc(ctx,memory.base());
+    require(ctx.r3.u32==dotm::kXamAllocInvalidArgument &&
+            xam_heap.allocation_count()==0U,
+            "XamAlloc rejects writes to the native dispatch table");
+    ctx.r3.u64=1U; ctx.r4.u64=32U; ctx.r5.u64=xam_output;
+    __imp__XamAlloc(ctx,memory.base());
+    require(ctx.r3.u32==dotm::kXamAllocInvalidArgument &&
+            xam_heap.allocation_count()==0U,
+            "Unsupported XamAlloc flags cannot allocate guest memory");
     ctx.r3.u64=~std::uint64_t{0};
     __imp__XamGetSystemVersion(ctx,memory.base());
     require(ctx.r3.u64==dotm::xam_system_version(),
@@ -90,6 +126,7 @@ int main(){
     require(ctx.r3.u64==dotm::kXamBadArguments,
             "XAM capabilities cannot write to null guest destination");
     dotm::bind_xam_guest_input(nullptr,nullptr);
+    dotm::bind_kernel_guest_memory(nullptr,nullptr);
     ctx.r3.u64=0;
     ctx.r5.u64=guest_ptr;
     __imp__XamInputGetState(ctx,memory.base());
@@ -99,6 +136,7 @@ int main(){
     return 0;
  }catch(const std::exception& e) {
     dotm::bind_xam_guest_input(nullptr,nullptr);
+    dotm::bind_kernel_guest_memory(nullptr,nullptr);
     std::cerr<<"FAIL: "<<e.what()<<"\n";
     return 1;
  }
