@@ -1,5 +1,6 @@
 #include "ppc_recomp_shared.h" // Private XenonRecomp header; public CI uses a synthetic fixture.
 #include "kernel_guest_memory.hpp"
+#include "kernel_process_type.hpp"
 #include <cstdint>
 #include <array>
 #include <chrono>
@@ -194,9 +195,16 @@ PPC_FUNC(__imp__RtlTimeFieldsToTime) {
     ctx.r3.u64 = dotm::rtl_bound_time_fields_to_time(ctx.r3.u32, ctx.r4.u32);
 }
 
-// The original title runs in Xbox 360 user process type 1.
+// Read the calling thread's current Xbox process context, rather than
+// returning title type 1 after the original code switches to system/idle.
 PPC_FUNC(__imp__KeGetCurrentProcessType) {
-    ctx.r3.u64 = 1U;
+    (void)base;
+    ctx.r3.u64 = dotm::ke_get_current_process_type();
+}
+// KeSetCurrentProcessType is void: the PPC r3 argument must be preserved.
+PPC_FUNC(__imp__KeSetCurrentProcessType) {
+    (void)base;
+    dotm::ke_set_current_process_type(ctx.r3.u32);
 }
 
 namespace {
