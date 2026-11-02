@@ -1,4 +1,5 @@
 #include "gpu_engines.hpp"
+#include "xenos_index_decode.hpp"
 #include "kernel_guest_memory.hpp"
 #include <algorithm>
 #include <atomic>
@@ -896,14 +897,26 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                     if (draw.index_count > (dma_size & 0xFFFFFFU))
                         throw std::runtime_error("Xenos DMA draw exceeds index-buffer bounds");
                     const auto bytes = std::size_t(draw.index_count) * draw.index_size_bytes;
-                    if (bytes) {
+                    // Xenos 8-in-32 and 16-in-32 endian modes permute whole
+                    // physical DWORD lanes, including a trailing odd 16-bit
+                    // index. Fetch the complete final lane, never invent its
+                    // missing bytes or decode only half a swapped DWORD.
+                    const auto fetch_bytes = draw.dma_swap_mode >= 2U
+                        ? (bytes + 3U) & ~std::size_t(3U) : bytes;
+                    if (fetch_bytes) {
+                        if (draw.dma_swap_mode >= 2U &&
+                            (draw.dma_physical_address & 3U))
+                            throw std::runtime_error("Xenos dword-swapped index DMA is unaligned");
                         const auto guest = mm_bound_resolve_physical_range(
-                            draw.dma_physical_address, bytes);
-                        if (!guest || !readable(*guest, bytes))
+                            draw.dma_physical_address, fetch_bytes);
+                        if (!guest || !readable(*guest, fetch_bytes))
                             throw std::runtime_error("Xenos draw index data requires allocated physical memory");
                         const auto* data = guest_memory->address(*guest);
-                        draw.dma_index_bytes.assign(data, data + bytes);
+                        draw.dma_index_bytes.assign(data, data + fetch_bytes);
                     }
+                    draw.decoded_indices = decode_xenos_index_buffer(
+                        draw.dma_index_bytes, draw.index_count,
+                        draw.index_size_bytes, draw.dma_swap_mode);
                 } else if (draw.source_select == 2U) {
                     if (arguments != 0U)
                         throw std::runtime_error("Invalid Xenos auto-index draw packet size");

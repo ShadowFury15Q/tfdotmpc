@@ -1,5 +1,6 @@
 #include "ppc_recomp_shared.h"
 #include "gpu_engines.hpp"
+#include "xenos_index_decode.hpp"
 #include "kernel_guest_memory.hpp"
 #include <cstdint>
 #include <iostream>
@@ -1420,6 +1421,24 @@ int main() {
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 280U &&
               dotm::vd_bound_read_gpu_register(0x21FCU) == ((3U << 16U) | (2U << 6U) | 4U),
               "Draw submitter receives original shader, register and initiator state");
+        // Xenos index DMA endian modes permute byte lanes, not index order
+        // by guesswork. These are the actual 16/32-bit host index values.
+        check(dotm::decode_xenos_index_buffer({0x00U, 0x01U, 0x00U, 0x02U},
+                                              2U, 2U, 1U) ==
+                  std::vector<std::uint32_t>({1U, 2U}) &&
+              dotm::decode_xenos_index_buffer({0x11U, 0x22U, 0x33U, 0x44U},
+                                              2U, 2U, 3U) ==
+                  std::vector<std::uint32_t>({0x4433U, 0x2211U}) &&
+              dotm::decode_xenos_index_buffer({0x11U, 0x22U, 0x33U, 0x44U},
+                                              1U, 4U, 2U) ==
+                  std::vector<std::uint32_t>({0x11223344U}) &&
+              dotm::decode_xenos_index_buffer({0x11U, 0x22U, 0x33U, 0x44U},
+                                              1U, 2U, 2U) ==
+                  std::vector<std::uint32_t>({0x3344U}),
+              "Xenos DMA endian modes decode 16/32-bit host indices");
+        expect_throw([&] {
+            (void)dotm::decode_xenos_index_buffer({0x11U, 0x22U}, 1U, 2U, 2U);
+        }, "Dword-swapped DMA rejects a missing trailing index lane");
         // DMA-indexed draws resolve and copy real guest physical index bytes.
         const auto dma_address = ib_physical + 0x100U;
         put_ib(64U, 0x11223344U);
@@ -1435,6 +1454,8 @@ int main() {
                     draw.dma_index_bytes.size() == 4U &&
                     draw.dma_index_bytes[0] == 0x11U &&
                     draw.dma_index_bytes[3] == 0x44U &&
+                    draw.decoded_indices ==
+                        std::vector<std::uint32_t>({0x3344U, 0x1122U}) &&
                     draw.register_words[0x21FAU] == draw.dma_physical_address;
                 *static_cast<bool*>(context) = valid;
                 return valid;

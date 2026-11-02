@@ -106,6 +106,9 @@ struct GpuDrawCommand {
     std::uint32_t dma_swap_mode = 0;
     // Exact guest bytes, including the Xenos DMA endian representation.
     std::vector<std::uint8_t> dma_index_bytes;
+    // Host-native indices after the real Xenos DMA byte-lane permutation.
+    // Auto-index draws use source_select=2 and do not supply this vector.
+    std::vector<std::uint32_t> decoded_indices;
     // CPU MMIO writes are included, not only the PM4 register shadow.
     std::vector<std::uint32_t> register_words;
     std::vector<std::uint32_t> vertex_shader_words;
