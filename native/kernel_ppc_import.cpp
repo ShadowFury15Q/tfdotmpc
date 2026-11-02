@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <array>
 #include <chrono>
+#include <cstdio>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -62,6 +63,26 @@ PPC_FUNC(__imp__KfReleaseSpinLock) {
     guest_spin_frames.pop_back();
     current_guest_irql = restore_irql;
     // This import is void: r3 retains the guest lock pointer.
+}
+
+// Xbox kernel bugchecks never return to the guest. Surface the original
+// stop code and four PPC parameters to the host instead of continuing after
+// a fatal title/kernel invariant failure or terminating without diagnostics.
+PPC_FUNC(__imp__KeBugCheck) {
+    (void)base;
+    char detail[96]{};
+    std::snprintf(detail, sizeof(detail),
+                  "Xbox 360 KeBugCheck: stop=0x%08X", ctx.r3.u32);
+    throw std::runtime_error(detail);
+}
+PPC_FUNC(__imp__KeBugCheckEx) {
+    (void)base;
+    char detail[192]{};
+    std::snprintf(detail, sizeof(detail),
+                  "Xbox 360 KeBugCheckEx: stop=0x%08X args=%08X,%08X,%08X,%08X",
+                  ctx.r3.u32, ctx.r4.u32, ctx.r5.u32,
+                  ctx.r6.u32, ctx.r7.u32);
+    throw std::runtime_error(detail);
 }
 
 // The AtRaisedIrql variants preserve PPC r3 and do not change IRQL.
