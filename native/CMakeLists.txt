@@ -79,6 +79,11 @@ add_test(NAME xbox360_nt_calendar_time_fields_ppc_abi COMMAND dotm_kernel_time_p
 
 # Real Xbox kernel thread-local slots, including per-thread value isolation.
 find_package(Threads REQUIRED)
+# Per-thread Xbox kernel process context: title, system and idle transitions.
+add_executable(dotm_kernel_process_type_test test_kernel_process_type.cpp)
+target_link_libraries(dotm_kernel_process_type_test PRIVATE Threads::Threads)
+add_test(NAME xbox360_kernel_process_type_thread_isolation
+  COMMAND dotm_kernel_process_type_test)
 # Implement actual Xbox 360 RTL ULONG memory primitives on committed guest pages.
 add_library(dotm_kernel_rtl_memory STATIC kernel_rtl_memory.cpp)
 target_link_libraries(dotm_kernel_rtl_memory PUBLIC dotm_kernel_guest_memory)
