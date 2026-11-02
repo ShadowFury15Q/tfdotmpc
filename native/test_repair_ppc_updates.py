@@ -45,6 +45,22 @@ assert counts["bdzf"] == 1
 assert "ctx.ctr.u64 -= 1U;" in fixed
 assert "if (ctx.ctr.u64 == 0U && !ctx.cr6.eq) { goto loc_82500020; }" in fixed
 assert repair(fixed, Counter()) == fixed
+# Earlier update-form expansions shift source offsets. The bdzf repair must
+# search the already-patched source, not the original pre-expansion string.
+shifted_branch = (
+    "PPC_FUNC_IMPL(__imp__sub_82500000) {\n"
+    "  // lhzu r10,2(r8)\n"
+    "  // next instruction\n"
+    "  // bdzf 4*cr6+eq,0x82500020\n"
+    "  // next instruction\n"
+    "loc_82500020:\n"
+    "  return;\n"
+    "}\n"
+    "PPC_FUNC_IMPL(__imp__sub_82500030) { return; }\n"
+)
+fixed = repair(shifted_branch, Counter())
+assert "if (ctx.ctr.u64 == 0U && !ctx.cr6.eq) { goto loc_82500020; }" in fixed
+assert "sub_82500020(ctx, base)" not in fixed
 tail_branch = (
     "PPC_FUNC_IMPL(__imp__sub_82500000) {\n"
     "  // bdzf 4*cr6+eq,0x82500030\n"
