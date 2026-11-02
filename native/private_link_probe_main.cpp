@@ -208,7 +208,7 @@ void execute_guest_entry(dotm::GuestMemory& memory, std::uint32_t entry) {
                 (void)dotm::vd_bound_drain_mmio_ring(4096U);
             } catch (const std::exception& error) {
                 std::fprintf(stderr,
-                    "Original Xenos PM4 processing stopped: %s\\n",
+                    "Original Xenos PM4 processing stopped: %s\n",
                     error.what());
                 std::fflush(stderr);
                 break;
