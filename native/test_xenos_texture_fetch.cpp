@@ -1,8 +1,19 @@
-#include "xenos_texture_fetch.hpp"
+#include "gpu_engines.hpp"
 #include <cstdint>
+#include <array>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+static std::vector<std::uint8_t> test_read_texture_physical(
+    std::uint32_t address, std::uint32_t count) {
+    if (address < 0x1000U || std::uint64_t(address) + count > 0x1010U)
+        throw std::runtime_error("Unallocated test texture memory");
+    std::vector<std::uint8_t> bytes(count);
+    for (std::uint32_t i = 0; i < count; ++i)
+        bytes[i] = static_cast<std::uint8_t>(address - 0x1000U + i);
+    return bytes;
+}
+
 int main() {
     std::vector<std::uint32_t> regs(0x5003U);
     const auto off = 0x4800U + 6U * 7U;
@@ -41,6 +52,33 @@ int main() {
             std::vector<std::uint32_t>(0x48BFU));
         return 6;
     } catch (const std::runtime_error&) {}
+    // Real DMA lanes must be aligned to physical DWORDs even for partial
+    // shader reads; this is not a tiled texture decoder or a renderer.
+    dotm::GpuDrawCommand draw;
+    draw.texture_fetch_constants = out;
+    draw.texture_fetch_constants[0].base_physical_address = 0x1000U;
+    draw.copy_physical_memory = &test_read_texture_physical;
+    const std::array<std::array<std::uint8_t, 6>, 4> expected = {{
+        {{1, 2, 3, 4, 5, 6}}, {{0, 3, 2, 5, 4, 7}},
+        {{2, 1, 0, 7, 6, 5}}, {{3, 0, 1, 6, 7, 4}}
+    }};
+    for (std::uint32_t mode = 0; mode < 4U; ++mode) {
+        draw.texture_fetch_constants[0].endian_mode = mode;
+        const auto bytes = draw.copy_texture_fetch_range(7U, 1U, 6U);
+        if (bytes != std::vector<std::uint8_t>(
+                expected[mode].begin(), expected[mode].end())) return 7;
+    }
+    if (!draw.copy_texture_fetch_range(7U, 0U, 0U).empty()) return 8;
+    const auto rejects = [](auto&& operation) {
+        try { operation(); } catch (const std::runtime_error&) { return true; }
+        return false;
+    };
+    if (!rejects([&] { draw.copy_texture_fetch_range(7U, 15U, 2U); })) return 9;
+    if (!rejects([&] { draw.copy_texture_fetch_range(3U, 0U, 4U); })) return 10;
+    draw.texture_fetch_constants[0].base_physical_address = 0xFFFFF000U;
+    if (!rejects([&] { draw.copy_texture_fetch_range(7U, 4096U, 4U); })) return 11;
+    draw.copy_physical_memory = nullptr;
+    if (!rejects([&] { draw.copy_texture_fetch_range(7U, 0U, 4U); })) return 12;
     std::cout << "Xenos texture fetch descriptor decode PASS\n";
     return 0;
 }
