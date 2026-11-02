@@ -14,6 +14,7 @@
 
 PPC_EXTERN_FUNC(__imp__XamAlloc);
 PPC_EXTERN_FUNC(__imp__XamFree);
+PPC_EXTERN_FUNC(__imp__KeBugCheckEx);
 
 namespace {
 void fail_if(bool condition, const char* message) {
@@ -180,6 +181,20 @@ int main() {
         fail_if(context.r3.u64 != kf_lock ||
                 memory.address(kf_lock)[3] != 0U,
                 "Linked native KfReleaseSpinLock failed guest unlock/IRQL ABI");
+        // The original fatal kernel path must report the bugcheck instead
+        // of returning to recompiled PPC after an invariant failure.
+        context.r3.u64 = 0xF4U; context.r4.u64 = 0x12345678U;
+        context.r5.u64 = 0x9ABCDEF0U; context.r6.u64 = 0x5206U;
+        context.r7.u64 = 0x87654321U;
+        bool bugcheck_reported = false;
+        try { __imp__KeBugCheckEx(context, memory.base()); }
+        catch (const std::runtime_error& error) {
+            const std::string message(error.what());
+            bugcheck_reported = message.find("stop=0x000000F4") != std::string::npos &&
+                message.find("12345678,9ABCDEF0,00005206,87654321") != std::string::npos;
+        }
+        fail_if(!bugcheck_reported,
+                "Linked KeBugCheckEx failed to stop with original PPC parameters");
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
         dotm::bind_xnet_startup(nullptr, nullptr);
         dotm::bind_xam_guest_input(nullptr, nullptr);
