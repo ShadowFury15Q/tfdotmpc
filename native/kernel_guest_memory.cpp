@@ -1,4 +1,5 @@
 #include "kernel_guest_memory.hpp"
+#include "xam_system_version.hpp"
 #include <cstdint>
 #include <array>
 #include <cstdio>
@@ -275,7 +276,7 @@ std::uint32_t ex_get_xconfig_setting_guest(GuestMemory& memory,
         bytes = 4;
     } else if (category == 3) {
         switch (setting) {
-        case 9: value = 1; bytes = 4; break; // English XCONFIG_USER_LANGUAGE.
+        case 9: value = xam_console_language(); bytes = 4; break; // Actual XCONFIG_USER_LANGUAGE.
         case 10: value = 0x00040000U; bytes = 4; break; // HD widescreen video flags.
         case 12: value = 0; bytes = 4; break; // Retail flags.
         case 14: value = 103; bytes = 1; break; // US XCONFIG_USER_COUNTRY.
