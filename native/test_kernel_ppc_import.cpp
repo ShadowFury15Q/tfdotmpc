@@ -4,6 +4,7 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <atomic>
 #include <thread>
 
@@ -21,6 +22,8 @@ PPC_EXTERN_FUNC(__imp__KeAcquireSpinLockAtRaisedIrql);
 PPC_EXTERN_FUNC(__imp__KeReleaseSpinLockFromRaisedIrql);
 PPC_EXTERN_FUNC(__imp__KfAcquireSpinLock);
 PPC_EXTERN_FUNC(__imp__KfReleaseSpinLock);
+PPC_EXTERN_FUNC(__imp__KeBugCheck);
+PPC_EXTERN_FUNC(__imp__KeBugCheckEx);
 
 namespace {
 void check(bool ok, const char* message) {
@@ -46,6 +49,27 @@ int main() {
         memory.commit(ptr, 4096);
         dotm::bind_kernel_guest_memory(&memory, &heap);
         PPCContext ctx{};
+        // The original _xstart graph reaches both fatal Xbox kernel exports.
+        // A bugcheck must not return and must report the original PPC values.
+        ctx.r3.u64 = 0xF4U;
+        bool bugcheck_reported = false;
+        try { __imp__KeBugCheck(ctx, memory.base()); }
+        catch (const std::runtime_error& error) {
+            bugcheck_reported = std::string(error.what()).find("stop=0x000000F4")
+                != std::string::npos;
+        }
+        check(bugcheck_reported, "KeBugCheck must stop with original code");
+        ctx.r3.u64 = 0xF4U; ctx.r4.u64 = 0x12345678U;
+        ctx.r5.u64 = 0x9ABCDEF0U; ctx.r6.u64 = 0x5206U;
+        ctx.r7.u64 = 0x87654321U;
+        bugcheck_reported = false;
+        try { __imp__KeBugCheckEx(ctx, memory.base()); }
+        catch (const std::runtime_error& error) {
+            const std::string message(error.what());
+            bugcheck_reported = message.find("stop=0x000000F4") != std::string::npos &&
+                message.find("12345678,9ABCDEF0,00005206,87654321") != std::string::npos;
+        }
+        check(bugcheck_reported, "KeBugCheckEx preserves all four PPC arguments");
         // Original Xbox spinlock is a big-endian word; void imports preserve r3.
         constexpr std::uint32_t spin = ptr + 0x180U;
         write32(memory, spin, 0);
