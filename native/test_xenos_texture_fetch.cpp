@@ -77,8 +77,35 @@ int main() {
     if (!rejects([&] { draw.copy_texture_fetch_range(3U, 0U, 4U); })) return 10;
     draw.texture_fetch_constants[0].base_physical_address = 0xFFFFF000U;
     if (!rejects([&] { draw.copy_texture_fetch_range(7U, 4096U, 4U); })) return 11;
+    // A Xenos texture's mip chain is a separate physical allocation,
+    // not an offset into the base-level image. Test all DMA endian lanes.
+    draw.texture_fetch_constants[0].base_physical_address = 0x1000U;
+    draw.texture_fetch_constants[0].mip_physical_address = 0x1008U;
+    const std::array<std::array<std::uint8_t, 6>, 4> expected_mips = {{
+        {{9, 10, 11, 12, 13, 14}}, {{8, 11, 10, 13, 12, 15}},
+        {{10, 9, 8, 15, 14, 13}}, {{11, 8, 9, 14, 15, 12}}
+    }};
+    for (std::uint32_t mode = 0; mode < 4U; ++mode) {
+        draw.texture_fetch_constants[0].endian_mode = mode;
+        const auto mip = draw.copy_texture_mip_fetch_range(7U, 1U, 6U);
+        if (mip != std::vector<std::uint8_t>(
+                expected_mips[mode].begin(), expected_mips[mode].end()))
+            return 13;
+    }
+    draw.texture_fetch_constants[0].endian_mode = 0U;
+    if (draw.copy_texture_fetch_range(7U, 1U, 6U) !=
+        std::vector<std::uint8_t>({1, 2, 3, 4, 5, 6})) return 14;
+    draw.texture_fetch_constants[0].mip_physical_address = 0U;
+    if (!rejects([&] { draw.copy_texture_mip_fetch_range(7U, 0U, 4U); }))
+        return 15;
+    draw.texture_fetch_constants[0].mip_physical_address = 0xFFFFF000U;
+    if (!rejects([&] { draw.copy_texture_mip_fetch_range(7U, 4096U, 4U); }))
+        return 16;
     draw.copy_physical_memory = nullptr;
-    if (!rejects([&] { draw.copy_texture_fetch_range(7U, 0U, 4U); })) return 12;
+    if (!rejects([&] { draw.copy_texture_fetch_range(7U, 0U, 4U); }))
+        return 12;
+    if (!rejects([&] { draw.copy_texture_mip_fetch_range(7U, 0U, 4U); }))
+        return 17;
     std::cout << "Xenos texture fetch descriptor decode PASS\n";
     return 0;
 }
