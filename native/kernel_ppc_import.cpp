@@ -7,6 +7,14 @@
 #include <cstdio>
 #include <stdexcept>
 #include <thread>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sched.h>
+#endif
 #include <vector>
 #if defined(_MSC_VER)
 #include <intrin.h>
@@ -26,6 +34,18 @@ struct GuestSpinFrame {
 thread_local std::uint32_t current_guest_irql = 0U;
 thread_local std::vector<GuestSpinFrame> guest_spin_frames;
 }
+// Original DOTM explicitly checks STATUS_NO_YIELD_PERFORMED (0x40000024).
+// Yield to the host scheduler rather than aborting the original PPC call.
+PPC_FUNC(__imp__NtYieldExecution) {
+    (void)base;
+#ifdef _WIN32
+    ctx.r3.u64 = SwitchToThread() ? 0U : 0x40000024U;
+#else
+    // POSIX cannot distinguish a successful yield from no runnable peer.
+    ctx.r3.u64 = sched_yield() == 0 ? 0U : 0x40000024U;
+#endif
+}
+
 PPC_FUNC(__imp__KfAcquireSpinLock) {
     (void)base;
     const auto address = ctx.r3.u32;
