@@ -22,6 +22,7 @@ HELPER = re.compile(r"__?(?:save|rest)(?:gprlr|fpr|vmx)_\d+")
 NATIVE = {"__imp__KeEnterCriticalRegion", "__imp__KeLeaveCriticalRegion", "__imp__KeAcquireSpinLockAtRaisedIrql", "__imp__KeReleaseSpinLockFromRaisedIrql", "__imp__KeSetEvent", "__imp__KeResetEvent", "__imp__KeWaitForSingleObject", "__imp__KeInitializeDpc", "__imp__ExAllocatePool", "__imp__ExAllocatePoolWithTag", "__imp__ExFreePool", "__imp__HalReturnToFirmware", "__imp__ExRegisterTitleTerminateNotification", "__imp__XamLoaderTerminateTitle", "__imp__XGetAVPack", "__imp__XGetLanguage", "__imp__KeGetCurrentProcessType", "__imp__DbgPrint",
           "__imp__RtlFillMemoryUlong",
           "__imp__RtlInitAnsiString", "__imp__RtlInitUnicodeString",
+          "__imp__RtlUnicodeStringToAnsiString", "__imp__RtlFreeAnsiString",
           "__imp__RtlMultiByteToUnicodeN", "__imp__RtlUnicodeToMultiByteN", "__imp__RtlCompareMemoryUlong",
           "__imp__XexCheckExecutablePrivilege",
           "__imp__RtlImageXexHeaderField",
