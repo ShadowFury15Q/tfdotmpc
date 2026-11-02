@@ -17,6 +17,8 @@ on:
       - 'scripts/test_prepare_private_boot.py'
       - 'scripts/verify_iso_parts.py'
       - 'scripts/test_verify_iso_parts.py'
+      - 'scripts/extract_xex_from_iso.py'
+      - 'scripts/test_extract_xex_from_iso.py'
       - '.github/workflows/test_dotm_native_runtime.yml'
   workflow_dispatch:
 
@@ -106,6 +108,12 @@ jobs:
         run: |
           python scripts/test_verify_iso_parts.py
           if ($LASTEXITCODE -ne 0) { throw "Private ISO part integrity tests failed" }
+
+      - name: Test Xbox XDVDFS original XEX extraction (synthetic XISO and XGD2)
+        shell: pwsh
+        run: |
+          python scripts/test_extract_xex_from_iso.py
+          if ($LASTEXITCODE -ne 0) { throw "XDVDFS XEX extraction tests failed" }
 
       # Source-only handoff for an offline PRIVATE build against user-owned PPC.
       # Checkout contains no original game XEX, PE, assets or generated PPC.
