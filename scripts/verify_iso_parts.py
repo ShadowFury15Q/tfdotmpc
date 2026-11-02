@@ -9,7 +9,7 @@ import hashlib
 from pathlib import Path
 import re
 
-PART_RE = re.compile(r"^(?P<base>.+\\.(?:7z|zip|iso))\\.(?P<number>[0-9]{3})$", re.I)
+PART_RE = re.compile(r"^(?P<base>.+\.(?:7z|zip|iso))\.(?P<number>[0-9]{3})$", re.I)
 HASH_RE = re.compile(r"^([0-9a-fA-F]{64})  (.+)$")
 MAX_ASSET_BYTES = 2 * 1024**3
 
@@ -79,7 +79,7 @@ def main() -> None:
     try:
         count, size = verify(args.folder, args.manifest)
     except (OSError, ValueError) as exc:
-        parser.exit(1, f"ISO fragment verification FAILED: {exc}\\n")
+        parser.exit(1, f"ISO fragment verification FAILED: {exc}\n")
     print(f"ISO fragment verification PASS: {count} parts, {size} bytes")
 
 
