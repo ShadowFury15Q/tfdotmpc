@@ -16,6 +16,10 @@ target_link_libraries(dotm_guest_virtual_allocator_test PRIVATE dotm_guest_virtu
 # Restricted Xbox 360 NT virtual memory ABI: PPC r3-r7, big-endian pointers.
 add_library(dotm_kernel_guest_memory STATIC kernel_guest_memory.cpp)
 target_link_libraries(dotm_kernel_guest_memory PUBLIC dotm_guest_virtual_allocator)
+if(WIN32)
+  # NtYieldExecution delegates to the Windows scheduler SwitchToThread.
+  target_link_libraries(dotm_kernel_guest_memory PUBLIC kernel32)
+endif()
 add_executable(dotm_kernel_ppc_import_test
   test_kernel_ppc_import.cpp kernel_ppc_import.cpp)
 target_include_directories(dotm_kernel_ppc_import_test
