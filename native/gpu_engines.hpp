@@ -1,6 +1,7 @@
 #pragma once
 #include "guest_memory.hpp"
 #include "xenos_vertex_fetch.hpp"
+#include "xenos_texture_fetch.hpp"
 #include <cstdint>
 #include <vector>
 
@@ -124,6 +125,9 @@ struct GpuDrawCommand {
     // Original Xenos vertex fetch constants decoded from the 0x4800 register bank.
     // Buffer bytes are only accessible via the draw-scoped physical reader.
     std::vector<XenosVertexFetchConstant> vertex_fetch_constants;
+    // Original six-DWORD texture fetch descriptors; texel DMA and tiling
+    // conversion remain the responsibility of the native graphics backend.
+    std::vector<XenosTextureFetchConstant> texture_fetch_constants;
     std::vector<std::uint32_t> vertex_shader_words;
     std::vector<std::uint32_t> pixel_shader_words;
     // Fetch only the vertex bytes actually referenced by a shader. Xenos

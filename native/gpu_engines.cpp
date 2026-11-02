@@ -956,6 +956,8 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 draw.register_words[0x21FCU] = draw.initiator;
                 draw.vertex_fetch_constants = decode_xenos_vertex_fetch_constants(
                     draw.register_words);
+                draw.texture_fetch_constants = decode_xenos_texture_fetch_constants(
+                    draw.register_words);
                 if (draw.source_select == 0U) {
                     draw.register_words[0x21FAU] = draw.dma_physical_address;
                     draw.register_words[0x21FBU] = dma_size;
