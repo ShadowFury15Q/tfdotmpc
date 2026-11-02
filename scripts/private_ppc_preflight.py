@@ -12,7 +12,7 @@ EXPECTED_XEX_SHA256 = "6fd9ae9fb94ea8e9cc91a6a0cc62b04441411bdafe2479f0d380d4a3a
 EXPECTED_ENTRY = 0x8277F670
 EXPECTED_IMAGE_BASE = 0x82000000
 EXPECTED_UNITS = 697
-REQUIRED = ("ppc_recomp_shared.h", "ppc_context.h", "ppc_func_mapping.cpp")
+REQUIRED = ("ppc_config.h", "ppc_recomp_shared.h", "ppc_context.h", "ppc_func_mapping.cpp")
 UNIT_NAME = re.compile(r"ppc_recomp\.(\d+)\.cpp$")
 SKIP_DIRS = {".git", "node_modules", "native-build", "build", ".venv", "__pycache__"}
 
@@ -82,7 +82,7 @@ def inspect_archive(path: Path):
                        if (match := UNIT_NAME.fullmatch(name.rsplit("/", 1)[-1]))}
             missing = [i for i in range(EXPECTED_UNITS) if i not in indices]
             extra = sorted(i for i in indices if i >= EXPECTED_UNITS)
-            required = (*REQUIRED, "ppc_config.h")
+            required = REQUIRED
             headers = [name for name in required if member(name) not in names]
             noncanonical = sorted(name for name in names
                 if name.startswith(f"{prefix}/" if prefix else "")
