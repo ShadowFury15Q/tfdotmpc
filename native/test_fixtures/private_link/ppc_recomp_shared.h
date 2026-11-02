@@ -16,6 +16,8 @@ PPC_EXTERN_FUNC(__imp__XamLoaderSetLaunchData);
 PPC_EXTERN_FUNC(__imp__XamLoaderGetLaunchDataSize);
 PPC_EXTERN_FUNC(__imp__XamLoaderGetLaunchData);
 PPC_EXTERN_FUNC(__imp__NtAllocateVirtualMemory);
+PPC_EXTERN_FUNC(__imp__KfAcquireSpinLock);
+PPC_EXTERN_FUNC(__imp__KfReleaseSpinLock);
 PPC_EXTERN_FUNC(__imp__NtFreeVirtualMemory);
 PPC_EXTERN_FUNC(__imp__KeInitializeApc);
 PPC_EXTERN_FUNC(__imp__KeTlsAlloc);
