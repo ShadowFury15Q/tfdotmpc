@@ -81,7 +81,7 @@ add_test(NAME xbox360_nt_calendar_time_fields_ppc_abi COMMAND dotm_kernel_time_p
 find_package(Threads REQUIRED)
 # Implement actual Xbox 360 RTL ULONG memory primitives on committed guest pages.
 add_library(dotm_kernel_rtl_memory STATIC kernel_rtl_memory.cpp)
-target_link_libraries(dotm_kernel_rtl_memory PUBLIC dotm_guest_memory)
+target_link_libraries(dotm_kernel_rtl_memory PUBLIC dotm_kernel_guest_memory)
 add_executable(dotm_kernel_rtl_memory_ppc_test
   test_kernel_rtl_memory.cpp kernel_rtl_memory_ppc.cpp)
 target_include_directories(dotm_kernel_rtl_memory_ppc_test PRIVATE
