@@ -2,6 +2,7 @@
 #include "guest_memory.hpp"
 #include "xenos_vertex_fetch.hpp"
 #include "xenos_texture_fetch.hpp"
+#include "xenos_texture_tiling.hpp"
 #include <cstdint>
 #include <vector>
 
@@ -221,6 +222,30 @@ struct GpuDrawCommand {
         std::uint32_t slot, std::uint32_t byte_offset,
         std::uint32_t byte_count) const {
         return copy_texture_fetch_range(slot, byte_offset, byte_count, true);
+    }
+    // Copy real 2D tiled Xbox texture blocks into host-linear order for
+    // graphics upload. Width/height/pitch are expressed in format storage
+    // elements (RGBA8 pixels, BC1/BC3 compressed blocks); format decoding
+    // and GPU shader sampling remain the backend's responsibility.
+    // Deliberately reject stacked, 3D and packed-mip address layouts.
+    std::vector<std::uint8_t> copy_tiled_texture_2d_elements(
+        std::uint32_t slot, const XenosTiled2DLayout& layout) const {
+        for (const auto& binding : texture_fetch_constants) {
+            if (binding.slot != slot) continue;
+            if (!binding.tiled || binding.dimension != 1U ||
+                binding.stacked || binding.packed_mips)
+                throw std::runtime_error(
+                    "Xenos texture requires an unsupported tiling layout");
+            if (layout.width_elements > binding.width ||
+                layout.height_elements > binding.height)
+                throw std::runtime_error(
+                    "Xenos texture blocks exceed bound image dimensions");
+            const auto bytes = xenos_tiled_2d_required_bytes(layout);
+            const auto raw = copy_texture_fetch_range(
+                slot, 0U, static_cast<std::uint32_t>(bytes));
+            return detile_xenos_2d_elements(raw, layout);
+        }
+        throw std::runtime_error("Xenos tiled texture slot is not bound");
     }
     // Full-buffer compatibility for backends that need the entire binding.
     std::vector<std::uint8_t> copy_vertex_fetch_buffer(std::uint32_t slot) const {
