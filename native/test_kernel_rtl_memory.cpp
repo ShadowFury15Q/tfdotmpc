@@ -14,6 +14,8 @@ PPC_EXTERN_FUNC(__imp__RtlCompareMemoryUlong);
 PPC_EXTERN_FUNC(__imp__RtlNtStatusToDosError);
 PPC_EXTERN_FUNC(__imp__RtlMultiByteToUnicodeN);
 PPC_EXTERN_FUNC(__imp__RtlUnicodeToMultiByteN);
+PPC_EXTERN_FUNC(__imp__RtlUnicodeStringToAnsiString);
+PPC_EXTERN_FUNC(__imp__RtlFreeAnsiString);
 
 namespace {
 void check(bool condition, const char* message) {
