@@ -19,6 +19,10 @@ DOTM_TABLES = (
     (425, '__imp__sub_83294628', 0x83294628, 0x823C0730, 56, 0x83294970, 2, 1),
     (426, '__imp__sub_83298400', 0x83298400, 0x823C09D8, 25, 0x832987D8, 2, 1),
     (426, '__imp__sub_83296E98', 0x83296E98, 0x823C0920, 12, 0x83296F70, 1, 4),
+    # ExGetXConfigSetting language dispatch: byte-indexed 105-entry table.
+    # A real _xstart run reached 0x8351C98C within this function; a plain
+    # indirect function-table lookup cannot resolve intra-function targets.
+    (484, '__imp__sub_8351C7F8', 0x8351C7F8, 0x824059A0, 105, 0x8351C86C, 1, 4),
 )
 
 
