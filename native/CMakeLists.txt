@@ -281,6 +281,10 @@ add_test(NAME xbox360_netdll_xnet_startup_original_ppc_abi COMMAND dotm_xnet_sta
 add_library(dotm_xam_input STATIC xam_input.cpp xam_guest_input.cpp xam_system_version.cpp)
 target_include_directories(dotm_xam_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(dotm_xam_input PUBLIC dotm_native_input dotm_guest_memory)
+# XCONFIG_USER_LANGUAGE and XGetLanguage must share the same host locale.
+# Declare this dependency after dotm_xam_input is defined to avoid an
+# unresolved xam_console_language symbol in standalone kernel ABI tests.
+target_link_libraries(dotm_kernel_guest_memory PUBLIC dotm_xam_input)
 add_executable(dotm_xam_system_version_test test_xam_system_version.cpp)
 target_link_libraries(dotm_xam_system_version_test PRIVATE dotm_xam_input)
 add_test(NAME xbox360_xam_system_version_dashboard_profile COMMAND dotm_xam_system_version_test)
