@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic regression tests for PPC update-form repair."""
+"""Synthetic regression tests for PPC update-form and EQV repair."""
 from collections import Counter
 from repair_ppc_update_ops import repair
 
@@ -21,6 +21,7 @@ cases = {
     "lfdu f0,8(r10)": ("ctx.f0.u64 = PPC_LOAD_U64", "ctx.r10.u32 = ppc_update_ea"),
     "stfdu f13,8(r9)": ("PPC_STORE_U64(ppc_update_ea, ctx.f13.u64)", "ctx.r9.u32 = ppc_update_ea"),
     "lfdux f2,r3,r4": ("ctx.f2.u64 = PPC_LOAD_U64", "ctx.r3.u32 = ppc_update_ea"),
+    "eqv r9,r11,r30": ("ctx.r9.u64 = ~(ctx.r11.u64 ^ ctx.r30.u64)", "// next instruction"),
 }
 for instruction, expected in cases.items():
     source = "\t// " + instruction + "\n\t// next instruction\n"
@@ -35,10 +36,11 @@ assert repair(implemented, Counter()) == implemented
 for invalid in ("lhzu r8,2(r8)", "sthu r1,40000(r2)",
                 "lwzux r4,r0,r5", "lhzu r10,abc(r8)",
                 "lfsu r13,4(r8)", "stfsu f32,4(r8)",
-                "lfdu f0,4(r0)", "lhau r8,2(r8)"):
+                "lfdu f0,4(r0)", "lhau r8,2(r8)",
+                "eqv r32,r1,r2", "eqv r1,r2", "eqv r0,r1,r33"):
     try:
         repair("\t// " + invalid + "\n\t// next\n", Counter())
     except ValueError:
         continue
     raise AssertionError(f"Invalid update form accepted: {invalid}")
-print("PPC update-form repair synthetic tests PASS")
+print("PPC update-form and EQV repair synthetic tests PASS")
