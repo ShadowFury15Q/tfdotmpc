@@ -70,6 +70,44 @@ int main() {
         return 8;
     } catch (const std::runtime_error&) {}
 
+    // A shader may read only part of a large bound buffer. Preserve the
+    // original DWORD-wide Xenos lane swap even for unaligned byte ranges.
+    draw.copy_physical_memory = +[](std::uint32_t address, std::uint32_t count) {
+        if (address != 0x1200U || count != 8U)
+            throw std::runtime_error("Unaligned fetch did not expand to complete lanes");
+        return std::vector<std::uint8_t>{0x11, 0x22, 0x33, 0x44,
+                                         0x55, 0x66, 0x77, 0x88};
+    };
+    if (draw.copy_vertex_fetch_range(0U, 3U, 3U) !=
+        std::vector<std::uint8_t>({0x11, 0x88, 0x77}))
+        return 9;
+    draw.copy_physical_memory = +[](std::uint32_t address, std::uint32_t count) {
+        if (address != 0x1204U || count != 4U)
+            throw std::runtime_error("Vertex fetch copied unused physical bytes");
+        return std::vector<std::uint8_t>{0x55, 0x66, 0x77, 0x88};
+    };
+    if (draw.copy_vertex_fetch_range(0U, 4U, 3U) !=
+        std::vector<std::uint8_t>({0x88, 0x77, 0x66}))
+        return 10;
+    try {
+        (void)draw.copy_vertex_fetch_range(0U, 7U, 2U);
+        return 11;
+    } catch (const std::runtime_error&) {}
+    if (!draw.copy_vertex_fetch_range(0U, 8U, 0U).empty()) return 12;
+    draw.copy_physical_memory = nullptr;
+    try {
+        (void)draw.copy_vertex_fetch_range(0U, 0U, 1U);
+        return 13;
+    } catch (const std::runtime_error&) {}
+    draw.copy_physical_memory = +[](std::uint32_t, std::uint32_t count) {
+        return std::vector<std::uint8_t>(count, 0U);
+    };
+    draw.vertex_fetch_constants.push_back({1U, 0xFFFFFFFCU, 2U, 0U});
+    try {
+        (void)draw.copy_vertex_fetch_range(1U, 4U, 1U);
+        return 14;
+    } catch (const std::runtime_error&) {}
+
     std::cout << "Xenos vertex fetch constant and DMA endian decode PASS\n";
     return 0;
 }
