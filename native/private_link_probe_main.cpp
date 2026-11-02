@@ -198,6 +198,24 @@ void execute_guest_entry(dotm::GuestMemory& memory, std::uint32_t entry) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     });
+    // Retail PPC submits PM4 by storing CP_RB_WPTR at MMIO +0x714.
+    // Consume the actual ring concurrently while _xstart executes; otherwise
+    // the PPC title spins waiting for CP_RB_RPTR and its DMA writeback.
+    // This worker does not fabricate frames or suppress unsupported commands.
+    std::jthread gpu_command_worker([](std::stop_token stop) {
+        while (!stop.stop_requested()) {
+            try {
+                (void)dotm::vd_bound_drain_mmio_ring(4096U);
+            } catch (const std::exception& error) {
+                std::fprintf(stderr,
+                    "Original Xenos PM4 processing stopped: %s\\n",
+                    error.what());
+                std::fflush(stderr);
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
 #endif
 
 #ifndef DOTM_SYNTHETIC_PRIVATE_BOOT
