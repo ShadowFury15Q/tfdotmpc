@@ -174,7 +174,7 @@ struct GpuDrawCommand {
     // The physical reader validates the live allocation and draw lifetime.
     std::vector<std::uint8_t> copy_texture_fetch_range(
         std::uint32_t slot, std::uint32_t byte_offset,
-        std::uint32_t byte_count) const {
+        std::uint32_t byte_count, bool mip_chain = false) const {
         for (const auto& binding : texture_fetch_constants) {
             if (binding.slot != slot) continue;
             if (!copy_physical_memory)
@@ -188,8 +188,14 @@ struct GpuDrawCommand {
             const auto aligned_start = byte_offset & ~std::uint32_t(3U);
             const auto aligned_end = (end + 3U) & ~std::uint64_t(3U);
             const auto fetch_bytes = aligned_end - aligned_start;
-            const auto physical = std::uint64_t(binding.base_physical_address) +
-                                  aligned_start;
+            // The Xenos descriptor stores the base image and mip chain
+            // in separate physical allocations. Never fetch a mip from
+            // the base image address or invent an absent mip allocation.
+            const auto base = mip_chain
+                ? binding.mip_physical_address : binding.base_physical_address;
+            if (mip_chain && !base)
+                throw std::runtime_error("Xenos texture has no mip allocation");
+            const auto physical = std::uint64_t(base) + aligned_start;
             if (fetch_bytes > 0xFFFFFFFFULL ||
                 physical + fetch_bytes > 0x100000000ULL)
                 throw std::runtime_error("Xenos texture fetch physical address wraps");
@@ -207,6 +213,14 @@ struct GpuDrawCommand {
                     decoded.begin() + skip + byte_count};
         }
         throw std::runtime_error("Xenos texture fetch slot is not bound");
+    }
+    // Fetch original mip-chain DMA from the descriptor's distinct physical
+    // address, preserving Xenos endian lanes and the draw-scoped reader.
+    // The caller still performs tiling, format decoding and mip selection.
+    std::vector<std::uint8_t> copy_texture_mip_fetch_range(
+        std::uint32_t slot, std::uint32_t byte_offset,
+        std::uint32_t byte_count) const {
+        return copy_texture_fetch_range(slot, byte_offset, byte_count, true);
     }
     // Full-buffer compatibility for backends that need the entire binding.
     std::vector<std::uint8_t> copy_vertex_fetch_buffer(std::uint32_t slot) const {
