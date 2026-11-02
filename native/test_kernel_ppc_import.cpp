@@ -16,6 +16,7 @@ PPC_EXTERN_FUNC(__imp__ExFreePool);
 PPC_EXTERN_FUNC(__imp__NtFreeVirtualMemory);
 PPC_EXTERN_FUNC(__imp__NtQueryVirtualMemory);
 PPC_EXTERN_FUNC(__imp__KeGetCurrentProcessType);
+PPC_EXTERN_FUNC(__imp__KeSetCurrentProcessType);
 PPC_EXTERN_FUNC(__imp__KeQuerySystemTime);
 PPC_EXTERN_FUNC(__imp__DbgPrint);
 PPC_EXTERN_FUNC(__imp__KeAcquireSpinLockAtRaisedIrql);
@@ -242,6 +243,27 @@ int main() {
         ctx.r3.u64 = 0xFFFFFFFFU;
         __imp__KeGetCurrentProcessType(ctx, memory.base());
         check(ctx.r3.u64 == 1U, "Retail user process type ABI");
+        ctx.r3.u64 = 2U;
+        __imp__KeSetCurrentProcessType(ctx, memory.base());
+        check(ctx.r3.u64 == 2U, "KeSetCurrentProcessType preserves void PPC r3");
+        ctx.r3.u64 = 0xFFFFFFFFU;
+        __imp__KeGetCurrentProcessType(ctx, memory.base());
+        check(ctx.r3.u64 == 2U, "KeGetCurrentProcessType observes system context");
+        ctx.r3.u64 = 0U;
+        __imp__KeSetCurrentProcessType(ctx, memory.base());
+        ctx.r3.u64 = 0xFFFFFFFFU;
+        __imp__KeGetCurrentProcessType(ctx, memory.base());
+        check(ctx.r3.u64 == 0U, "KeGetCurrentProcessType observes idle context");
+        ctx.r3.u64 = 3U;
+        bool invalid_process_type = false;
+        try { __imp__KeSetCurrentProcessType(ctx, memory.base()); }
+        catch (const std::invalid_argument&) { invalid_process_type = true; }
+        check(invalid_process_type, "Invalid process type rejected without mutation");
+        ctx.r3.u64 = 0xFFFFFFFFU;
+        __imp__KeGetCurrentProcessType(ctx, memory.base());
+        check(ctx.r3.u64 == 0U, "Invalid process type does not corrupt guest context");
+        ctx.r3.u64 = 1U;
+        __imp__KeSetCurrentProcessType(ctx, memory.base());
         // The original PPC CRT reads a 64-bit Xbox UTC timestamp from r3.
         const auto timestamp = ptr + 0x80U;
         dotm::ke_query_system_time_guest(memory, timestamp,
