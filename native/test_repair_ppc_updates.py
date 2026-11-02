@@ -31,6 +31,32 @@ for instruction, expected in cases.items():
     assert all(fragment in fixed for fragment in expected), instruction
     assert repair(fixed, Counter()) == fixed, instruction
     assert "// next instruction" in fixed, instruction
+local_branch = (
+    "PPC_FUNC_IMPL(__imp__sub_82500000) {\n"
+    "  // bdzf 4*cr6+eq,0x82500020\n"
+    "  // next instruction\n"
+    "loc_82500020:\n"
+    "  return;\n"
+    "}\n"
+)
+counts = Counter()
+fixed = repair(local_branch, counts)
+assert counts["bdzf"] == 1
+assert "ctx.ctr.u64 -= 1U;" in fixed
+assert "if (ctx.ctr.u64 == 0U && !ctx.cr6.eq) { goto loc_82500020; }" in fixed
+assert repair(fixed, Counter()) == fixed
+tail_branch = (
+    "PPC_FUNC_IMPL(__imp__sub_82500000) {\n"
+    "  // bdzf 4*cr6+eq,0x82500030\n"
+    "  // next instruction\n"
+    "}\n"
+    "PPC_FUNC_IMPL(__imp__sub_82500030) { return; }\n"
+)
+counts = Counter()
+fixed = repair(tail_branch, counts)
+assert counts["bdzf"] == 1
+assert "if (ctx.ctr.u64 == 0U && !ctx.cr6.eq) { sub_82500030(ctx, base); return; }" in fixed
+assert repair(fixed, Counter()) == fixed
 implemented = "\t// lwzu r9,4(r10)\n\tea = 4 + ctx.r10.u32;\n"
 assert repair(implemented, Counter()) == implemented
 for invalid in ("lhzu r8,2(r8)", "sthu r1,40000(r2)",
@@ -43,4 +69,12 @@ for invalid in ("lhzu r8,2(r8)", "sthu r1,40000(r2)",
     except ValueError:
         continue
     raise AssertionError(f"Invalid update form accepted: {invalid}")
-print("PPC update-form and EQV repair synthetic tests PASS")
+
+for invalid_branch in ("4*cr6+lt,0x82500020", "4*cr6+eq,not_an_address"):
+    try:
+        repair("PPC_FUNC_IMPL(test) {\n  // bdzf " + invalid_branch +
+               "\n  // next\n}\n", Counter())
+    except ValueError:
+        continue
+    raise AssertionError(f"Invalid PPC bdzf accepted: {invalid_branch}")
+print("PPC update-form, EQV and bdzf repair synthetic tests PASS")
