@@ -236,10 +236,44 @@ struct GpuDrawCommand {
                 binding.stacked || binding.packed_mips)
                 throw std::runtime_error(
                     "Xenos texture requires an unsupported tiling layout");
-            if (layout.width_elements > binding.width ||
-                layout.height_elements > binding.height)
+            // The fetch descriptor is measured in pixels, but BC layouts
+            // are measured in 4x4 blocks. Validate both the storage format
+            // and the exact base-level footprint before touching guest RAM.
+            std::uint32_t block_side = 1U;
+            std::uint32_t expected_bytes_per_element = 0U;
+            switch (binding.format) {
+            case 6U:   // Xenos 8_8_8_8
+            case 50U:  // 8_8_8_8_AS_16_16_16_16
+            case 62U:  // 8_8_8_8_GAMMA_EDRAM
+                expected_bytes_per_element = 4U;
+                break;
+            case 18U:  // DXT1 / BC1
+            case 51U:  // DXT1_AS_16_16_16_16
+                block_side = 4U;
+                expected_bytes_per_element = 8U;
+                break;
+            case 19U:  // DXT2_3 / BC2
+            case 20U:  // DXT4_5 / BC3
+            case 49U:  // DXN / BC5
+            case 52U:  // DXT2_3_AS_16_16_16_16
+            case 53U:  // DXT4_5_AS_16_16_16_16
+                block_side = 4U;
+                expected_bytes_per_element = 16U;
+                break;
+            default:
                 throw std::runtime_error(
-                    "Xenos texture blocks exceed bound image dimensions");
+                    "Unsupported Xenos tiled texture storage format");
+            }
+            const auto elements_for_pixels = [block_side](std::uint32_t pixels) {
+                return (pixels + block_side - 1U) / block_side;
+            };
+            if (layout.bytes_per_element != expected_bytes_per_element ||
+                layout.width_elements != elements_for_pixels(binding.width) ||
+                layout.height_elements != elements_for_pixels(binding.height) ||
+                (binding.pitch_pixels &&
+                 layout.pitch_elements != elements_for_pixels(binding.pitch_pixels)))
+                throw std::runtime_error(
+                    "Xenos tiled texture layout disagrees with fetch descriptor");
             const auto bytes = xenos_tiled_2d_required_bytes(layout);
             const auto raw = copy_texture_fetch_range(
                 slot, 0U, static_cast<std::uint32_t>(bytes));
