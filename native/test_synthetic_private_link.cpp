@@ -15,6 +15,8 @@
 PPC_EXTERN_FUNC(__imp__XamAlloc);
 PPC_EXTERN_FUNC(__imp__XamFree);
 PPC_EXTERN_FUNC(__imp__KeBugCheckEx);
+PPC_EXTERN_FUNC(__imp__KeGetCurrentProcessType);
+PPC_EXTERN_FUNC(__imp__KeSetCurrentProcessType);
 
 namespace {
 void fail_if(bool condition, const char* message) {
@@ -195,6 +197,22 @@ int main() {
         }
         fail_if(!bugcheck_reported,
                 "Linked KeBugCheckEx failed to stop with original PPC parameters");
+        // Real native process-context imports must link, not the private
+        // fail-fast generator, and preserve the Xbox PPC void ABI.
+        context.r3.u64 = 2U;
+        __imp__KeSetCurrentProcessType(context, memory.base());
+        fail_if(context.r3.u64 != 2U,
+                "Linked KeSetCurrentProcessType clobbered PPC r3");
+        context.r3.u64 = 0xFFFFFFFFU;
+        __imp__KeGetCurrentProcessType(context, memory.base());
+        fail_if(context.r3.u64 != 2U,
+                "Linked KeGetCurrentProcessType ignored system context");
+        context.r3.u64 = 1U;
+        __imp__KeSetCurrentProcessType(context, memory.base());
+        context.r3.u64 = 0xFFFFFFFFU;
+        __imp__KeGetCurrentProcessType(context, memory.base());
+        fail_if(context.r3.u64 != 1U,
+                "Linked KeGetCurrentProcessType did not restore title context");
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
         dotm::bind_xnet_startup(nullptr, nullptr);
         dotm::bind_xam_guest_input(nullptr, nullptr);
