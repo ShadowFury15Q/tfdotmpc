@@ -1336,6 +1336,17 @@ int main() {
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 262U,
               "PFD indirect-buffer opcode executes physical command list");
         dotm::mm_bound_free_physical_memory(1U, ib);
+        // CP_RB_WPTR is written directly by the original PPC at 0x7FC80714.
+        put(262, 0x80000000U); // PM4 type-2 no-op, real ring dword.
+        auto* wptr_mmio = memory.address(0x7FC80714U);
+        wptr_mmio[0] = 0U; wptr_mmio[1] = 0U;
+        wptr_mmio[2] = 1U; wptr_mmio[3] = 7U; // 263 dwords, big-endian.
+        check(dotm::vd_bound_drain_mmio_ring() == 1 &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 263U &&
+              memory.address(writeback)[2] == 1U &&
+              memory.address(writeback)[3] == 7U &&
+              dotm::vd_bound_drain_mmio_ring() == 0,
+              "Original PPC MMIO CP_RB_WPTR drives native ring and writeback");
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
         expect_throw([&] { dotm::vd_bound_initialize_ring_buffer(0x100, 9); },
