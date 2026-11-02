@@ -23,6 +23,9 @@ DOTM_TABLES = (
     # A real _xstart run reached 0x8351C98C within this function; a plain
     # indirect function-table lookup cannot resolve intra-function targets.
     (484, '__imp__sub_8351C7F8', 0x8351C7F8, 0x824059A0, 105, 0x8351C86C, 1, 4),
+    # Original language-to-resource dispatch uses 36 absolute PPC addresses
+    # stored in the expanded PE .text section, not offset-relative bytes.
+    (291, '__imp__sub_82F43A30', 0x82F43A30, 0x82F43A64, 36, 0, 4, 1),
 )
 
 
@@ -43,13 +46,31 @@ def read_pe_guest(pe: bytes, address: int, size: int) -> bytes:
     if image_base != 0x82000000 or address < image_base:
         raise ValueError('Unexpected PPC image base or guest address')
     rva = address - image_base
+    sections = []
+    shifted_raw_sections = False
+    truncated_reloc = False
     for index in range(count):
         row = table + index * 40
+        name = pe[row:row + 8].split(b'\0', 1)[0]
         virtual = int.from_bytes(pe[row + 12:row + 16], 'little')
         raw_size = int.from_bytes(pe[row + 16:row + 20], 'little')
         offset = int.from_bytes(pe[row + 20:row + 24], 'little')
+        if name == b'.reloc':
+            truncated_reloc = bool(raw_size and
+                                   (offset > len(pe) or raw_size > len(pe) - offset))
+            continue
+        if raw_size and offset != virtual:
+            shifted_raw_sections = True
+        sections.append((virtual, raw_size, offset))
+    # The private XenonRecomp PE is a fixed-base expanded image. Its .text
+    # section raw file offset is stale: the loader uses RVA-indexed bytes.
+    # Match GuestMemory::load_pe rather than reading unrelated instructions.
+    size_of_image = int.from_bytes(pe[peoff + 24 + 56:peoff + 24 + 60], 'little')
+    expanded_image = (len(pe) == 0x01B10000 and truncated_reloc and
+                      shifted_raw_sections and size_of_image >= 0x01B10000)
+    for virtual, raw_size, offset in sections:
         if virtual <= rva and size <= raw_size and rva - virtual <= raw_size - size:
-            start = offset + rva - virtual
+            start = (virtual if expanded_image else offset) + rva - virtual
             if start + size > len(pe):
                 raise ValueError('Truncated PPC jump-table data')
             return pe[start:start + size]
@@ -57,8 +78,10 @@ def read_pe_guest(pe: bytes, address: int, size: int) -> bytes:
 
 
 def decode_table_targets(raw: bytes, base: int, width: int, scale: int) -> set[int]:
-    if width not in (1, 2) or scale not in (1, 4) or len(raw) % width:
+    if width not in (1, 2, 4) or scale not in (1, 4) or len(raw) % width:
         raise ValueError('Invalid PPC jump-table entry format')
+    if width == 4 and (base != 0 or scale != 1):
+        raise ValueError('Absolute PPC jump table requires base=0 and scale=1')
     return {base + int.from_bytes(raw[i:i + width], 'big') * scale
             for i in range(0, len(raw), width)}
 
