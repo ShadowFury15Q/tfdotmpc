@@ -12,6 +12,9 @@
 #include <stdexcept>
 #include <string>
 
+PPC_EXTERN_FUNC(__imp__XamAlloc);
+PPC_EXTERN_FUNC(__imp__XamFree);
+
 namespace {
 void fail_if(bool condition, const char* message) {
     if (condition) throw std::runtime_error(message);
@@ -122,6 +125,23 @@ int main() {
                 p[i] = static_cast<std::uint8_t>(value >> (24 - 8 * i));
         };
         dotm::bind_kernel_guest_memory(&memory, &heap);
+        // Link the real XAM guest heap imports alongside original-style PPC.
+        context.r3.u64 = 0U; context.r4.u64 = 96U;
+        context.r5.u64 = nt_args + 0x20U;
+        __imp__XamAlloc(context, memory.base());
+        fail_if(context.r3.u32 != 0U,
+                "Linked native XamAlloc failed to allocate guest memory");
+        const auto xam_allocated =
+            (std::uint32_t(memory.address(nt_args + 0x20U)[0]) << 24) |
+            (std::uint32_t(memory.address(nt_args + 0x20U)[1]) << 16) |
+            (std::uint32_t(memory.address(nt_args + 0x20U)[2]) << 8) |
+            std::uint32_t(memory.address(nt_args + 0x20U)[3]);
+        fail_if(!memory.committed_range(xam_allocated, 96U),
+                "Linked XamAlloc returned an uncommitted guest pointer");
+        context.r3.u64 = xam_allocated;
+        __imp__XamFree(context, memory.base());
+        fail_if(memory.committed_range(xam_allocated, 1U),
+                "Linked XamFree did not revoke the guest allocation");
         put_be(nt_args, 0);
         put_be(nt_args + 4, 4096);
         context.r3.u64 = nt_args;
