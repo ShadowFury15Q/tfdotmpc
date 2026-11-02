@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repair omitted PPC update-form and EQV operations in private XenonRecomp C++.
+"""Repair omitted PPC update-form, EQV and conditional CTR branches in private XenonRecomp C++.
 
 Patched copies remain in the private build directory; game code is never
 modified in-place or copied to the public repository.
@@ -37,6 +37,14 @@ EQV_MISSING = re.compile(
     r"(?m)^(?P<indent>[ \t]*)// eqv (?P<args>[^\r\n]+)\r?\n(?=[ \t]*(?:// |loc_|\}))"
 )
 EQV_ARGS = re.compile(r"r(\d+),r(\d+),r(\d+)")
+# bdzf is CTR-- followed by a branch if CTR == 0 and the CR bit is false.
+# The supplied title uses CR6.EQ for switch dispatch, with both local labels
+# and tail branches to another generated function entrypoint.
+BDZF_MISSING = re.compile(
+    r"(?m)^(?P<indent>[ \t]*)// bdzf (?P<args>[^\r\n]+)\r?\n(?=[ \t]*(?:// |loc_|\}))"
+)
+BDZF_ARGS = re.compile(r"4\*cr6\+eq,0x([0-9a-fA-F]{8})")
+
 
 
 def repair(text: str, counts: Counter) -> str:
@@ -129,7 +137,35 @@ def repair(text: str, counts: Counter) -> str:
         )
 
     fixed = EQV_MISSING.sub(replace_eqv, fixed)
-    if MISSING.search(fixed) or EQV_MISSING.search(fixed):
+
+    def replace_bdzf(match: re.Match) -> str:
+        parsed = BDZF_ARGS.fullmatch(match["args"])
+        if parsed is None:
+            raise ValueError(f"Unsupported PPC bdzf condition or target: {match['args']}")
+        target = int(parsed.group(1), 16)
+        function_start = text.rfind("PPC_FUNC_IMPL(", 0, match.start())
+        if function_start < 0:
+            raise ValueError("PPC bdzf occurs outside a generated function")
+        function_end = text.find("PPC_FUNC_IMPL(", match.end())
+        if function_end < 0:
+            function_end = len(text)
+        label = f"loc_{target:08X}"
+        if f"{label}:" in text[function_start:function_end]:
+            branch = f"goto {label};"
+        else:
+            # A branch to a different generated function is a tail branch:
+            # never fall through to the next instruction after the call.
+            branch = f"sub_{target:08X}(ctx, base); return;"
+        indent = match["indent"]
+        counts["bdzf"] += 1
+        return (
+            f"{indent}// bdzf {match['args']}\n"
+            f"{indent}ctx.ctr.u64 -= 1U;\n"
+            f"{indent}if (ctx.ctr.u64 == 0U && !ctx.cr6.eq) {{ {branch} }}\n"
+        )
+
+    fixed = BDZF_MISSING.sub(replace_bdzf, fixed)
+    if MISSING.search(fixed) or EQV_MISSING.search(fixed) or BDZF_MISSING.search(fixed):
         raise ValueError("PPC update-form instruction remains untranslated")
     return fixed
 
