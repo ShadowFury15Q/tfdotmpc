@@ -1,6 +1,7 @@
 #include "ppc_recomp_shared.h"
 #include "guest_memory.hpp"
 #include "kernel_rtl_memory.hpp"
+#include "kernel_guest_memory.hpp"
 #include <cstdint>
 #include <iostream>
 #include <utility>
@@ -25,6 +26,8 @@ int main() {
         dotm::GuestMemory memory;
         constexpr std::uint32_t address = 0x40000000U;
         memory.commit(address, 4096);
+        dotm::GuestVirtualAllocator allocator(memory, 0x40010000U, 0x40040000U);
+        dotm::bind_kernel_guest_memory(&memory, &allocator);
         dotm::bind_kernel_rtl_memory(&memory);
         PPCContext ctx{};
         ctx.r3.u64 = address;
@@ -135,11 +138,50 @@ int main() {
         check(memory.address(wide)[1] == 2 && memory.address(wide)[3] == 4 &&
               memory.address(wide)[7] == 0xE0,
               "RtlInitUnicodeString UTF-16BE descriptor");
+        // Actual DOTM PPC 0x8351E524 passes AllocateDestination=1,
+        // then calls RtlFreeAnsiString at 0x8351E550.
+        ctx.r3.u64 = ansi; ctx.r4.u64 = wide; ctx.r5.u64 = 1U;
+        __imp__RtlUnicodeStringToAnsiString(ctx, memory.base());
+        const auto* allocated_descriptor = memory.address(ansi);
+        const auto allocated_buffer =
+            (std::uint32_t(allocated_descriptor[4]) << 24) |
+            (std::uint32_t(allocated_descriptor[5]) << 16) |
+            (std::uint32_t(allocated_descriptor[6]) << 8) |
+             std::uint32_t(allocated_descriptor[7]);
+        check(ctx.r3.u32 == 0U && allocated_buffer >= 0x40010000U &&
+              allocated_descriptor[1] == 1U && allocated_descriptor[3] == 2U &&
+              memory.address(allocated_buffer)[0] == 'Z' &&
+              memory.address(allocated_buffer)[1] == 0U,
+              "Original Unicode-to-ANSI PPC allocates and terminates guest pool string");
+        ctx.r3.u64 = ansi;
+        __imp__RtlFreeAnsiString(ctx, memory.base());
+        check(ctx.r3.u32 == ansi && memory.address(ansi)[0] == 0U &&
+              memory.address(ansi)[3] == 0U && memory.address(ansi)[7] == 0U &&
+              !memory.committed_range(allocated_buffer, 1U),
+              "RtlFreeAnsiString releases the exact guest allocation and clears descriptor");
+        // Nonallocating conversion must not overwrite the caller's buffer.
+        memory.address(ansi)[3] = 1U;
+        memory.address(ansi)[4] = std::uint8_t(ansi_text >> 24);
+        memory.address(ansi)[5] = std::uint8_t(ansi_text >> 16);
+        memory.address(ansi)[6] = std::uint8_t(ansi_text >> 8);
+        memory.address(ansi)[7] = std::uint8_t(ansi_text);
+        ctx.r3.u64 = ansi; ctx.r4.u64 = wide; ctx.r5.u64 = 0U;
+        __imp__RtlUnicodeStringToAnsiString(ctx, memory.base());
+        check(ctx.r3.u32 == 0x80000005U && memory.address(ansi)[1] == 0U &&
+              memory.address(ansi_text)[0] == 0U,
+              "Too-small caller ANSI buffer reports overflow and stays terminated");
+        memory.address(wide)[1] = 3U; // Odd UTF-16 byte count is invalid.
+        ctx.r3.u64 = ansi; ctx.r4.u64 = wide; ctx.r5.u64 = 1U;
+        __imp__RtlUnicodeStringToAnsiString(ctx, memory.base());
+        check(ctx.r3.u32 == 0xC000000DU,
+              "Malformed original UTF-16BE descriptor rejected before pool allocation");
+        memory.address(wide)[1] = 2U;
         rejected = false;
         try { dotm::rtl_bound_init_ansi_string(ansi, 0x50000000U); }
         catch (const std::runtime_error&) { rejected = true; }
         check(rejected, "RtlInitAnsiString rejects uncommitted source");
         dotm::bind_kernel_rtl_memory(nullptr);
+        dotm::bind_kernel_guest_memory(nullptr, nullptr);
         rejected = false;
         try { dotm::rtl_bound_fill_memory_ulong(address, 4, 1); }
         catch (const std::runtime_error&) { rejected = true; }
