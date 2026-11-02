@@ -145,6 +145,21 @@ int main() {
         fail_if(context.r3.u64 != dotm::kNtSuccess ||
                 memory.committed_range(nt_base, 1),
                 "Linked native NT free import failed to revoke pages");
+        // The real PPC Kf imports must resolve in the full multi-object
+        // synthetic link and manipulate the bound big-endian guest spinlock.
+        constexpr std::uint32_t kf_lock = nt_args + 0x100U;
+        put_be(kf_lock, 0U);
+        context.r3.u64 = kf_lock;
+        __imp__KfAcquireSpinLock(context, memory.base());
+        fail_if(context.r3.u64 != 0U ||
+                memory.address(kf_lock)[3] != 1U,
+                "Linked native KfAcquireSpinLock failed guest lock/IRQL ABI");
+        context.r3.u64 = kf_lock;
+        context.r4.u64 = 0U;
+        __imp__KfReleaseSpinLock(context, memory.base());
+        fail_if(context.r3.u64 != kf_lock ||
+                memory.address(kf_lock)[3] != 0U,
+                "Linked native KfReleaseSpinLock failed guest unlock/IRQL ABI");
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
         dotm::bind_xnet_startup(nullptr, nullptr);
         dotm::bind_xam_guest_input(nullptr, nullptr);
