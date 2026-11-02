@@ -1,5 +1,6 @@
 #include "kernel_rtl_memory.hpp"
 #include "guest_memory.hpp"
+#include "kernel_guest_memory.hpp"
 #include <cstdint>
 #include <algorithm>
 #include <vector>
@@ -225,3 +226,79 @@ std::uint32_t rtl_bound_unicode_to_multi_byte(std::uint32_t output,
     return converted * 2 == input_size ? kTextSuccess : kTextOverflow;
 }
 }
+
+namespace dotm {
+// Xbox 360 RTL_STRING is {USHORT Length, USHORT MaximumLength, PCHAR Buffer},
+// all big-endian. Convert the original guest UTF-16BE, never host pointers.
+std::uint32_t rtl_bound_unicode_string_to_ansi_string(
+    std::uint32_t destination, std::uint32_t source, bool allocate_destination) {
+    if (!bound_memory) return kTextNotSupported;
+    auto& memory = *bound_memory;
+    if ((destination & 3U) || (source & 3U) ||
+        !valid_text_guest(memory, destination, 8U, true) ||
+        !valid_text_guest(memory, source, 8U, false))
+        return kTextInvalidParameter;
+    const auto* src = memory.address(source);
+    const auto source_length = (std::uint32_t(src[0]) << 8) | src[1];
+    const auto source_maximum = (std::uint32_t(src[2]) << 8) | src[3];
+    const auto source_buffer = (std::uint32_t(src[4]) << 24) |
+        (std::uint32_t(src[5]) << 16) | (std::uint32_t(src[6]) << 8) | src[7];
+    if ((source_length & 1U) || source_length > source_maximum ||
+        !valid_text_guest(memory, source_buffer, source_length, false))
+        return kTextInvalidParameter;
+    const auto characters = source_length / 2U;
+    // Snapshot before writing: guest source/destination may overlap.
+    std::vector<std::uint8_t> converted;
+    converted.reserve(characters);
+    for (std::uint32_t i = 0; i < characters; ++i) {
+        const auto* p = memory.address(source_buffer + 2U * i);
+        const auto code = std::uint16_t((std::uint16_t(p[0]) << 8) | p[1]);
+        converted.push_back(encode_cp1252(code));
+    }
+    auto* dst = memory.address(destination);
+    const auto previous_maximum = (std::uint32_t(dst[2]) << 8) | dst[3];
+    const auto previous_buffer = (std::uint32_t(dst[4]) << 24) |
+        (std::uint32_t(dst[5]) << 16) | (std::uint32_t(dst[6]) << 8) | dst[7];
+    std::uint32_t buffer = previous_buffer;
+    std::uint32_t capacity = previous_maximum;
+    if (allocate_destination) {
+        capacity = characters + 1U;
+        if (capacity > 0xFFFFU) return kTextInvalidParameter;
+        buffer = ex_bound_allocate_pool(0U, capacity, 0U);
+        if (!buffer) return kNtNoMemory;
+        if (!valid_text_guest(memory, buffer, capacity, true)) {
+            ex_bound_free_pool(buffer);
+            return kTextInvalidParameter;
+        }
+    } else if (!valid_text_guest(memory, buffer, capacity, true)) {
+        return kTextInvalidParameter;
+    }
+    const auto count = std::min<std::uint32_t>(
+        characters, capacity ? capacity - 1U : 0U);
+    if (count)
+        std::copy_n(converted.data(), count, memory.address(buffer));
+    if (capacity) memory.address(buffer)[count] = 0;
+    dst[0] = std::uint8_t(count >> 8);
+    dst[1] = std::uint8_t(count);
+    if (allocate_destination) {
+        dst[2] = std::uint8_t(capacity >> 8);
+        dst[3] = std::uint8_t(capacity);
+        dst[4] = std::uint8_t(buffer >> 24);
+        dst[5] = std::uint8_t(buffer >> 16);
+        dst[6] = std::uint8_t(buffer >> 8);
+        dst[7] = std::uint8_t(buffer);
+    }
+    return count == characters ? kTextSuccess : kTextOverflow;
+}
+
+void rtl_bound_free_ansi_string(std::uint32_t descriptor) {
+    if (!bound_memory || (descriptor & 3U) ||
+        !valid_text_guest(*bound_memory, descriptor, 8U, true))
+        throw std::runtime_error("RtlFreeAnsiString: invalid guest descriptor");
+    auto* dst = bound_memory->address(descriptor);
+    const auto buffer = (std::uint32_t(dst[4]) << 24) |
+        (std::uint32_t(dst[5]) << 16) | (std::uint32_t(dst[6]) << 8) | dst[7];
+    if (buffer) ex_bound_free_pool(buffer);
+    std::fill_n(dst, 8U, std::uint8_t{0});
+}
+} // namespace dotm
