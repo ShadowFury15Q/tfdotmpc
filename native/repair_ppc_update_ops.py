@@ -143,14 +143,14 @@ def repair(text: str, counts: Counter) -> str:
         if parsed is None:
             raise ValueError(f"Unsupported PPC bdzf condition or target: {match['args']}")
         target = int(parsed.group(1), 16)
-        function_start = text.rfind("PPC_FUNC_IMPL(", 0, match.start())
+        function_start = fixed.rfind("PPC_FUNC_IMPL(", 0, match.start())
         if function_start < 0:
             raise ValueError("PPC bdzf occurs outside a generated function")
-        function_end = text.find("PPC_FUNC_IMPL(", match.end())
+        function_end = fixed.find("PPC_FUNC_IMPL(", match.end())
         if function_end < 0:
-            function_end = len(text)
+            function_end = len(fixed)
         label = f"loc_{target:08X}"
-        if f"{label}:" in text[function_start:function_end]:
+        if f"{label}:" in fixed[function_start:function_end]:
             branch = f"goto {label};"
         else:
             # A branch to a different generated function is a tail branch:
