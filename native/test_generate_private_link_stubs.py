@@ -77,17 +77,17 @@ class PrivateLinkStubsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "ppc_recomp_shared.h").write_text(
-                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\\n"
-                "PPC_EXTERN_FUNC(__imp__KeBugCheck);\\n"
-                "PPC_EXTERN_FUNC(__imp__KeBugCheckEx);\\n"
-                "PPC_EXTERN_FUNC(__imp__XamAlloc);\\n"
-                "PPC_EXTERN_FUNC(__imp__XamFree);\\n"
-                "PPC_EXTERN_FUNC(__imp__KeInitializeApc);\\n",
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\n"
+                "PPC_EXTERN_FUNC(__imp__KeBugCheck);\n"
+                "PPC_EXTERN_FUNC(__imp__KeBugCheckEx);\n"
+                "PPC_EXTERN_FUNC(__imp__XamAlloc);\n"
+                "PPC_EXTERN_FUNC(__imp__XamFree);\n"
+                "PPC_EXTERN_FUNC(__imp__KeInitializeApc);\n",
                 encoding="utf-8")
             (root / "ppc_func_mapping.cpp").write_text(
-                "{0x8277F670, _xstart},\\n", encoding="utf-8")
+                "{0x8277F670, _xstart},\n", encoding="utf-8")
             (root / "ppc_recomp.0.cpp").write_text(
-                "PPC_FUNC_IMPL(_xstart) {}\\n", encoding="utf-8")
+                "PPC_FUNC_IMPL(_xstart) {}\n", encoding="utf-8")
             source, units, unresolved = generate(root, 1)
             self.assertEqual((units, unresolved), (1, 1))
             self.assertIn("PPC_FUNC(__imp__KeInitializeApc)", source)
