@@ -759,7 +759,7 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
         // A malformed count at or above capacity can never become complete:
         // without this check every future GPU kick silently stalls forever.
         // Reject it without consuming the header or touching RPTR writeback.
-        if (payload >= capacity)
+        if (payload >= capacity && (!indirect || payload > capacity))
             throw std::runtime_error("Xenos PM4 packet exceeds ring capacity");
         // A CPU producer may publish its write pointer before the final
         // payload dword arrives. Preserve the header, read pointer and
