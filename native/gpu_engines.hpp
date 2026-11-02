@@ -47,6 +47,9 @@ struct GpuEngineSnapshot {
     std::uint32_t display_mode_height = 0;
     std::uint64_t display_mode_changes = 0;
     std::uint64_t register_writes = 0;
+    // Original PM4_INVALIDATE_STATE mask, pending native GPU cache handling.
+    std::uint64_t state_invalidations = 0;
+    std::uint32_t last_state_invalidation_mask = 0;
     // Original Xenos sequencer microcode, captured from PM4 uploads.
     // Capturing is not executing or rendering a shader.
     std::uint64_t shader_uploads = 0;
