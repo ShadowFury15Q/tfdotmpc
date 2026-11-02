@@ -161,6 +161,9 @@ void vd_bound_enable_ring_buffer_read_pointer_writeback(
 // Unsupported GPU commands fail closed rather than pretending to render.
 std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                                     std::uint32_t max_packets = 4096);
+// Poll the original PPC-written CP_RB_WPTR MMIO register (byte offset 0x714)
+// and process the real ring. Returns zero before ring initialization.
+std::uint32_t vd_bound_drain_mmio_ring(std::uint32_t max_packets = 4096);
 // Copy currently bound original Xenos microcode (0=vertex, 1=pixel)
 // for a future native shader translator. Does not render it.
 std::vector<std::uint32_t> vd_bound_copy_shader_microcode(std::uint32_t stage);
