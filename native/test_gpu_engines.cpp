@@ -1441,6 +1441,7 @@ int main() {
         }, "Dword-swapped DMA rejects a missing trailing index lane");
         // DMA-indexed draws resolve and copy real guest physical index bytes.
         const auto dma_address = ib_physical + 0x100U;
+        static dotm::GpuPhysicalMemoryReader retained_draw_reader = nullptr;
         put_ib(64U, 0x11223344U);
         put(280, 0xC0023600U);
         put(281, (2U << 16U) | 4U);
@@ -1448,12 +1449,24 @@ int main() {
         put(283, (2U << 30U) | 2U);
         dotm::vd_bound_set_draw_submitter(
             +[](const dotm::GpuDrawCommand& draw, void* context) -> bool {
+                retained_draw_reader = draw.copy_physical_memory;
+                bool rejects_invalid = false;
+                try {
+                    (void)draw.copy_physical_memory(0xFFFFFFFCU, 8U);
+                } catch (const std::runtime_error&) {
+                    rejects_invalid = true;
+                }
+                const auto copied = draw.copy_physical_memory(
+                    draw.dma_physical_address, 4U);
                 const bool valid = draw.source_select == 0U &&
                     draw.index_count == 2U && draw.index_size_bytes == 2U &&
                     draw.dma_swap_mode == 2U &&
                     draw.dma_index_bytes.size() == 4U &&
                     draw.dma_index_bytes[0] == 0x11U &&
                     draw.dma_index_bytes[3] == 0x44U &&
+                    copied == std::vector<std::uint8_t>(
+                        {0x11U, 0x22U, 0x33U, 0x44U}) &&
+                    rejects_invalid &&
                     draw.decoded_indices ==
                         std::vector<std::uint32_t>({0x3344U, 0x1122U}) &&
                     draw.register_words[0x21FAU] == draw.dma_physical_address;
@@ -1463,7 +1476,9 @@ int main() {
         check(dotm::vd_bound_execute_ring(284U) == 1U && draw_checked &&
               dotm::vd_bound_gpu_snapshot().draws_submitted == 2U &&
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 284U,
-              "DMA draw supplies real physical index bytes and Xenos endian mode");
+              "DMA draw exposes real allocated GPU bytes to native renderer");
+        expect_throw([&] { (void)retained_draw_reader(dma_address, 4U); },
+                     "Renderer physical DMA reader expires after draw callback");
         dotm::vd_bound_set_draw_submitter(nullptr, nullptr);
         put(284, 0xC0003600U);
         put(285, (3U << 16U) | (3U << 6U) | 4U);
