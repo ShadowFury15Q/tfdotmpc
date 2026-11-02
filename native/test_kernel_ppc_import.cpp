@@ -19,6 +19,8 @@ PPC_EXTERN_FUNC(__imp__KeQuerySystemTime);
 PPC_EXTERN_FUNC(__imp__DbgPrint);
 PPC_EXTERN_FUNC(__imp__KeAcquireSpinLockAtRaisedIrql);
 PPC_EXTERN_FUNC(__imp__KeReleaseSpinLockFromRaisedIrql);
+PPC_EXTERN_FUNC(__imp__KfAcquireSpinLock);
+PPC_EXTERN_FUNC(__imp__KfReleaseSpinLock);
 
 namespace {
 void check(bool ok, const char* message) {
@@ -65,6 +67,52 @@ int main() {
         } catch (const std::runtime_error&) { bad_spin = true; }
         check(bad_spin && read32(memory, spin) == 0U,
               "Misaligned spinlock cannot mutate guest memory");
+        // Original PPC directly imports KfAcquireSpinLock/KfReleaseSpinLock
+        // (reachable from _xstart at depth 8). Verify old IRQL in r3,
+        // DISPATCH_LEVEL nesting, ownership, and big-endian guest lock state.
+        constexpr std::uint32_t second_spin = spin + 4U;
+        write32(memory, spin, 0U);
+        write32(memory, second_spin, 0U);
+        ctx.r3.u64 = spin;
+        __imp__KfAcquireSpinLock(ctx, memory.base());
+        check(ctx.r3.u64 == 0U && read32(memory, spin) == 1U,
+              "KfAcquireSpinLock returns PASSIVE_LEVEL and locks guest word");
+        ctx.r3.u64 = second_spin;
+        __imp__KfAcquireSpinLock(ctx, memory.base());
+        check(ctx.r3.u64 == 2U && read32(memory, second_spin) == 1U,
+              "Nested KfAcquireSpinLock returns DISPATCH_LEVEL");
+        bool rejected_kf = false;
+        try {
+            ctx.r3.u64 = spin; ctx.r4.u64 = 0U;
+            __imp__KfReleaseSpinLock(ctx, memory.base());
+        } catch (const std::runtime_error&) { rejected_kf = true; }
+        check(rejected_kf && read32(memory, spin) == 1U &&
+              read32(memory, second_spin) == 1U,
+              "Out-of-order Kf release must preserve both locks");
+        rejected_kf = false;
+        try {
+            ctx.r3.u64 = second_spin; ctx.r4.u64 = 0U;
+            __imp__KfReleaseSpinLock(ctx, memory.base());
+        } catch (const std::runtime_error&) { rejected_kf = true; }
+        check(rejected_kf && read32(memory, second_spin) == 1U,
+              "Kf release with wrong previous IRQL must fail closed");
+        ctx.r3.u64 = second_spin; ctx.r4.u64 = 2U;
+        __imp__KfReleaseSpinLock(ctx, memory.base());
+        check(ctx.r3.u64 == second_spin && read32(memory, second_spin) == 0U,
+              "Nested Kf release restores DISPATCH_LEVEL and preserves r3");
+        ctx.r3.u64 = spin; ctx.r4.u64 = 0U;
+        __imp__KfReleaseSpinLock(ctx, memory.base());
+        check(ctx.r3.u64 == spin && read32(memory, spin) == 0U,
+              "Final Kf release restores PASSIVE_LEVEL and preserves r3");
+        rejected_kf = false;
+        try { __imp__KfReleaseSpinLock(ctx, memory.base()); }
+        catch (const std::runtime_error&) { rejected_kf = true; }
+        check(rejected_kf, "Kf double release must fail closed");
+        ctx.r3.u64 = spin;
+        __imp__KfAcquireSpinLock(ctx, memory.base());
+        check(ctx.r3.u64 == 0U, "Kf lock IRQL must reset after release");
+        ctx.r3.u64 = spin; ctx.r4.u64 = 0U;
+        __imp__KfReleaseSpinLock(ctx, memory.base());
         // Two host workers contend for one guest KSPIN_LOCK, with no host
         // mutex around the protected counter: the guest lock must serialize.
         std::atomic<int> in_critical{0};
