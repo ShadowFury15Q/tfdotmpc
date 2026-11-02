@@ -126,6 +126,20 @@ struct GpuDrawCommand {
     std::vector<XenosVertexFetchConstant> vertex_fetch_constants;
     std::vector<std::uint32_t> vertex_shader_words;
     std::vector<std::uint32_t> pixel_shader_words;
+    // Copy only the binding requested by a real shader. Unused fetch
+    // constants can reference unallocated memory and must not be read eagerly.
+    // The physical reader enforces allocation bounds and callback lifetime.
+    std::vector<std::uint8_t> copy_vertex_fetch_buffer(std::uint32_t slot) const {
+        for (const auto& binding : vertex_fetch_constants) {
+            if (binding.slot != slot) continue;
+            if (!copy_physical_memory)
+                throw std::runtime_error("No active Xenos draw physical reader");
+            const auto raw = copy_physical_memory(
+                binding.physical_address, binding.size_dwords * 4U);
+            return decode_xenos_vertex_fetch_bytes(binding, raw);
+        }
+        throw std::runtime_error("Xenos vertex fetch slot is not bound");
+    }
 };
 using GpuDrawSubmitter = bool (*)(const GpuDrawCommand&, void*);
 void vd_bound_set_draw_submitter(GpuDrawSubmitter submitter, void* context);

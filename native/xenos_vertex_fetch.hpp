@@ -33,4 +33,21 @@ inline std::vector<XenosVertexFetchConstant> decode_xenos_vertex_fetch_constants
     // allocation through the draw-scoped reader before using any buffer.
     return bindings;
 }
+
+// Normalize real vertex DMA byte lanes within each physical 32-bit word.
+// Vertex element formats and shader semantics are decoded separately.
+inline std::vector<std::uint8_t> decode_xenos_vertex_fetch_bytes(
+    const XenosVertexFetchConstant& binding,
+    const std::vector<std::uint8_t>& raw_bytes) {
+    if (binding.endian_mode > 3U)
+        throw std::runtime_error("Invalid Xenos vertex fetch endian mode");
+    if (raw_bytes.size() != std::uint64_t(binding.size_dwords) * 4U)
+        throw std::runtime_error("Incomplete Xenos vertex fetch allocation");
+    constexpr std::size_t kLaneXor[4] = {0U, 1U, 3U, 2U};
+    const auto lane_xor = kLaneXor[binding.endian_mode];
+    std::vector<std::uint8_t> decoded(raw_bytes.size());
+    for (std::size_t i = 0; i < raw_bytes.size(); ++i)
+        decoded[i] = raw_bytes[i ^ lane_xor];
+    return decoded;
+}
 } // namespace dotm

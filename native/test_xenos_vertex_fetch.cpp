@@ -1,4 +1,5 @@
 #include "xenos_vertex_fetch.hpp"
+#include "gpu_engines.hpp"
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -28,6 +29,47 @@ int main() {
         rejected = true;
     }
     if (!rejected) return 2;
-    std::cout << "Xenos vertex fetch constant decode PASS\n";
+    const std::vector<std::uint8_t> raw = {0x11, 0x22, 0x33, 0x44,
+                                           0x55, 0x66, 0x77, 0x88};
+    const std::vector<std::vector<std::uint8_t>> expected = {
+        raw,
+        {0x22, 0x11, 0x44, 0x33, 0x66, 0x55, 0x88, 0x77},
+        {0x44, 0x33, 0x22, 0x11, 0x88, 0x77, 0x66, 0x55},
+        {0x33, 0x44, 0x11, 0x22, 0x77, 0x88, 0x55, 0x66},
+    };
+    for (std::uint32_t mode = 0; mode < 4; ++mode) {
+        dotm::XenosVertexFetchConstant binding{0U, 0x1200U, 2U, mode};
+        if (dotm::decode_xenos_vertex_fetch_bytes(binding, raw) != expected[mode])
+            return 3;
+    }
+    try {
+        (void)dotm::decode_xenos_vertex_fetch_bytes({0, 0x1200, 2, 4}, raw);
+        return 4;
+    } catch (const std::runtime_error&) {}
+    try {
+        (void)dotm::decode_xenos_vertex_fetch_bytes({0, 0x1200, 3, 2}, raw);
+        return 5;
+    } catch (const std::runtime_error&) {}
+
+    dotm::GpuDrawCommand draw{};
+    draw.copy_physical_memory = +[](std::uint32_t address, std::uint32_t count) {
+        if (address != 0x1200U || count != 8U)
+            throw std::runtime_error("Incorrect original vertex fetch range");
+        return std::vector<std::uint8_t>{0x11, 0x22, 0x33, 0x44,
+                                         0x55, 0x66, 0x77, 0x88};
+    };
+    draw.vertex_fetch_constants.push_back({0U, 0x1200U, 2U, 2U});
+    if (draw.copy_vertex_fetch_buffer(0U) != expected[2]) return 6;
+    try {
+        (void)draw.copy_vertex_fetch_buffer(1U);
+        return 7;
+    } catch (const std::runtime_error&) {}
+    draw.copy_physical_memory = nullptr;
+    try {
+        (void)draw.copy_vertex_fetch_buffer(0U);
+        return 8;
+    } catch (const std::runtime_error&) {}
+
+    std::cout << "Xenos vertex fetch constant and DMA endian decode PASS\n";
     return 0;
 }
