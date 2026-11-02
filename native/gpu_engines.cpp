@@ -16,7 +16,7 @@ namespace {
 std::mutex gpu_mutex;
 GuestMemory* guest_memory = nullptr;
 GpuEngineSnapshot engine;
-std::array<std::uint32_t, 0x5000> gpu_registers{};
+std::array<std::uint32_t, 0x5003> gpu_registers{};
 constexpr std::uint32_t kEdramBytes = 10U * 1024U * 1024U;
 constexpr std::size_t kSystemCommandBufferBytes = 0x94U;
 std::array<std::uint8_t, kSystemCommandBufferBytes> system_command_buffer{};
@@ -208,7 +208,7 @@ void vd_bound_map_gpu_mmio() {
 }
 std::uint32_t vd_bound_read_gpu_mmio_register(std::uint32_t index) {
     std::lock_guard lock(gpu_mutex);
-    if (index >= 0x5000U ||
+    if (index >= gpu_registers.size() ||
         !readable(kXenosMmioBase + index * 4U, 4U))
         throw std::runtime_error("Invalid Xbox GPU MMIO register read");
     return read_be32(kXenosMmioBase + index * 4U);
@@ -751,10 +751,10 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
         const auto header = at(start);
         const auto type = header >> 30;
         const auto count = ((header >> 16) & 0x3FFFU) + 1;
-        // A zero dword is a valid type-0 packet writing register zero.
-        // Only type-2 packets have no payload; treating header zero as
-        // padding silently desynchronizes the command processor.
-        const auto payload = type == 2 ? 0U : type == 1 ? 2U : count;
+        // Retail Xenos treats an all-zero PM4 dword as one-word padding.
+        // It is not a type-0 register-zero write with a payload; otherwise
+        // zero-padded indirect lists lose alignment and read payload as headers.
+        const auto payload = header == 0U || type == 2 ? 0U : type == 1 ? 2U : count;
         // A PM4 packet cannot occupy more than the entire physical ring.
         // A malformed count at or above capacity can never become complete:
         // without this check every future GPU kick silently stalls forever.
@@ -766,14 +766,25 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
         // writeback until a later kick supplies the entire packet. This is
         // normal producer/consumer flow, not a malformed GPU command.
         if (payload >= available) {
-            // Indirect lists are immutable submissions with a fixed length,
-            // unlike the ring where the CPU may still be publishing words.
-            if (indirect)
+            if (!indirect) return completed;
+            auto& frame = indirect_frames.back();
+            const auto needed = std::uint64_t(start) + payload + 1U;
+            const auto bytes = std::size_t(needed) * 4U;
+            // The retail title's 74-dword IB ends with a type-0 packet
+            // needing one final dword. Finish that packet only if its
+            // extra word belongs to the SAME allocated physical range.
+            // Larger overruns remain errors; no unrelated memory is read.
+            if (needed != std::uint64_t(frame.word_count) + 1U ||
+                mm_bound_resolve_physical_range(frame.physical_address, bytes) !=
+                    std::optional<std::uint32_t>(frame.guest_address) ||
+                !readable(frame.guest_address, bytes))
                 throw std::runtime_error("Truncated Xenos indirect PM4 packet");
-            return completed;
+            frame.word_count = static_cast<std::uint32_t>(needed);
         }
-        const auto first = (start + 1) % capacity;
-        if (type == 0) {
+        const auto first = indirect ? start + 1U : (start + 1U) % ring_capacity;
+        if (header == 0U) {
+            // One-word Xenos padding NOP; never touch register zero.
+        } else if (type == 0) {
             const auto base = header & 0x7FFFU;
             const bool repeat = (header & 0x8000U) != 0;
             if (base >= gpu_registers.size() ||
@@ -840,6 +851,16 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                     throw std::runtime_error("Xenos indirect buffer requires allocated physical memory");
                 indirect_frames.push_back({physical, *guest, words, 0U});
                 continue;
+            } else if (opcode == 0x3BU) {
+                // PM4_INVALIDATE_STATE: synchronize shared physical memory
+                // and retain the actual state-pointer invalidation mask.
+                // A future renderer must apply this mask to its GPU caches.
+                if (payload != 1U)
+                    throw std::runtime_error("Invalid Xenos PM4 INVALIDATE_STATE payload size");
+                const auto mask = at(first);
+                std::atomic_thread_fence(std::memory_order_seq_cst);
+                engine.last_state_invalidation_mask = mask;
+                ++engine.state_invalidations;
             } else if (opcode == 0x10U) {
                 // PM4_NOP has payload but does not change GPU state.
             } else if (opcode == 0x46U) {
@@ -1184,7 +1205,7 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                     write_gpu_register(index + i, values[i]);
                 engine.register_writes += word_count;
             } else {
-                throw std::runtime_error("Unsupported Xenos PM4 type-3 operation");
+                throw std::runtime_error("Unsupported Xenos PM4 type-3 opcode " + std::to_string(opcode));
             }
         }
         if (indirect) {
