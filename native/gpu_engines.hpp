@@ -1,5 +1,6 @@
 #pragma once
 #include "guest_memory.hpp"
+#include "xenos_vertex_fetch.hpp"
 #include <cstdint>
 #include <vector>
 
@@ -120,6 +121,9 @@ struct GpuDrawCommand {
     GpuPhysicalMemoryReader copy_physical_memory = nullptr;
     // CPU MMIO writes are included, not only the PM4 register shadow.
     std::vector<std::uint32_t> register_words;
+    // Original Xenos vertex fetch constants decoded from the 0x4800 register bank.
+    // Buffer bytes are only accessible via the draw-scoped physical reader.
+    std::vector<XenosVertexFetchConstant> vertex_fetch_constants;
     std::vector<std::uint32_t> vertex_shader_words;
     std::vector<std::uint32_t> pixel_shader_words;
 };

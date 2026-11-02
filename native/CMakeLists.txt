@@ -56,6 +56,9 @@ target_include_directories(dotm_gpu_engines_ppc_test PRIVATE
 target_link_libraries(dotm_gpu_engines_ppc_test PRIVATE dotm_gpu_engines)
 add_test(NAME xbox360_video_engine_microcode_ring_ppc_abi
   COMMAND dotm_gpu_engines_ppc_test)
+add_executable(dotm_xenos_vertex_fetch_test test_xenos_vertex_fetch.cpp)
+add_test(NAME xbox360_original_vertex_fetch_constants
+  COMMAND dotm_xenos_vertex_fetch_test)
 add_executable(dotm_kernel_performance_ppc_test
   test_kernel_performance.cpp kernel_ppc_import.cpp)
 target_include_directories(dotm_kernel_performance_ppc_test PRIVATE
