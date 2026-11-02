@@ -90,6 +90,12 @@ struct GpuEngineSnapshot {
 // No draw is acknowledged without a backend that actually accepts the work.
 // The callback runs synchronously under the GPU state lock; it must not call
 // vd_bound_* functions or retain references to the command.
+// Read-only, bounded copy of a real Xbox physical allocation. Only valid
+// synchronously inside GpuDrawSubmitter; never retain or call from workers.
+// This lets a native renderer fetch vertex/texture bytes without exposing
+// guest virtual pointers or assuming an unallocated GPU address exists.
+using GpuPhysicalMemoryReader = std::vector<std::uint8_t> (*)(
+    std::uint32_t physical_address, std::uint32_t byte_count);
 struct GpuDrawCommand {
     std::uint32_t initiator = 0;
     // PM4_DRAW_INDX carries the original visibility-query condition before
@@ -109,6 +115,9 @@ struct GpuDrawCommand {
     // Host-native indices after the real Xenos DMA byte-lane permutation.
     // Auto-index draws use source_select=2 and do not supply this vector.
     std::vector<std::uint32_t> decoded_indices;
+    // Copy source buffers referenced by the original Xenos fetch registers.
+    // Valid only while this draw's submitter callback is running.
+    GpuPhysicalMemoryReader copy_physical_memory = nullptr;
     // CPU MMIO writes are included, not only the PM4 register shadow.
     std::vector<std::uint32_t> register_words;
     std::vector<std::uint32_t> vertex_shader_words;
