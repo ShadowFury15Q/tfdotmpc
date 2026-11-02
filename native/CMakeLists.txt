@@ -350,8 +350,9 @@ if(DOTM_PRIVATE_PPC_DIR)
     endif()
     list(APPEND DOTM_PRIVATE_PPC_UNITS "${unit_path}")
   endforeach()
-  # XenonRecomp omitted 496 update-form PPC operations in the supplied
-  # original title. Repair PRIVATE build copies, never the user's sources.
+  # XenonRecomp silently omitted original PPC update-form memory operations,
+  # EQV bitwise instructions and CTR/CR6 conditional switch branches.
+  # Repair PRIVATE build copies, never the user's original sources.
   set(DOTM_PRIVATE_ORIGINAL_DIR "${DOTM_PRIVATE_PPC_DIR}")
   set(DOTM_PRIVATE_PPC_DIR "${CMAKE_CURRENT_BINARY_DIR}/private_ppc_patched")
   execute_process(
