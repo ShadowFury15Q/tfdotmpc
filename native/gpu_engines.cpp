@@ -872,9 +872,12 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 const auto initiator_offset = has_query ? 1U : 0U;
                 if (payload <= initiator_offset)
                     throw std::runtime_error("Truncated Xenos DRAW_INDX initiator");
-                if (has_query && at(first) != 0U)
-                    throw std::runtime_error("Conditional Xenos draw requires visibility-query results");
                 GpuDrawCommand draw;
+                // Forward the unmodified query token to the native backend.
+                // Do not reject a valid conditional draw or guess its result:
+                // the backend must evaluate the actual visibility query.
+                draw.has_visibility_query_token = has_query;
+                if (has_query) draw.visibility_query_token = at(first);
                 draw.initiator = at(first + initiator_offset);
                 draw.primitive_type = draw.initiator & 0x3FU;
                 draw.source_select = (draw.initiator >> 6U) & 3U;

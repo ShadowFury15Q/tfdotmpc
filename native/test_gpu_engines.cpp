@@ -1408,6 +1408,7 @@ int main() {
                 const bool valid = draw.initiator == ((3U << 16U) | (2U << 6U) | 4U) &&
                     draw.primitive_type == 4U && draw.source_select == 2U &&
                     draw.index_count == 3U && draw.dma_index_bytes.empty() &&
+                    !draw.has_visibility_query_token && draw.visibility_query_token == 0U &&
                     draw.register_words.size() == 0x5003U &&
                     draw.register_words[0x21FCU] == draw.initiator &&
                     !draw.vertex_shader_words.empty();
@@ -1450,6 +1451,41 @@ int main() {
         check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 284U &&
               dotm::vd_bound_gpu_snapshot().draws_submitted == 2U,
               "Invalid draw preserves completed GPU submissions");
+        // DRAW_INDX (0x22) has a visibility-query condition before the
+        // draw initiator. Preserve that original token for the renderer;
+        // the command processor cannot invent an occlusion-query result.
+        put(284, 0xC0012200U);
+        put(285, 0xA5000001U);
+        put(286, (3U << 16U) | (2U << 6U) | 4U);
+        bool query_checked = false;
+        dotm::vd_bound_set_draw_submitter(
+            +[](const dotm::GpuDrawCommand& draw, void* context) -> bool {
+                const bool valid = draw.has_visibility_query_token &&
+                    draw.visibility_query_token == 0xA5000001U &&
+                    draw.source_select == 2U && draw.index_count == 3U;
+                *static_cast<bool*>(context) = valid;
+                return false; // Native query evaluation not completed.
+            }, &query_checked);
+        expect_throw([&] { (void)dotm::vd_bound_execute_ring(287U); },
+                     "Conditional draw rejected until backend evaluates query");
+        check(query_checked &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 284U &&
+              dotm::vd_bound_gpu_snapshot().draws_submitted == 2U,
+              "Rejected visibility query preserves GPU ring and draw count");
+        query_checked = false;
+        dotm::vd_bound_set_draw_submitter(
+            +[](const dotm::GpuDrawCommand& draw, void* context) -> bool {
+                const bool valid = draw.has_visibility_query_token &&
+                    draw.visibility_query_token == 0xA5000001U &&
+                    draw.source_select == 2U && draw.index_count == 3U;
+                *static_cast<bool*>(context) = valid;
+                return valid; // Test-only backend accepts evaluated query.
+            }, &query_checked);
+        check(dotm::vd_bound_execute_ring(287U) == 1U && query_checked &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 287U &&
+              dotm::vd_bound_gpu_snapshot().draws_submitted == 3U,
+              "Conditional draw forwards real query token to native backend");
+        dotm::vd_bound_set_draw_submitter(nullptr, nullptr);
         dotm::mm_bound_free_physical_memory(1U, ib);
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");

@@ -92,6 +92,11 @@ struct GpuEngineSnapshot {
 // vd_bound_* functions or retain references to the command.
 struct GpuDrawCommand {
     std::uint32_t initiator = 0;
+    // PM4_DRAW_INDX carries the original visibility-query condition before
+    // VGT_DRAW_INITIATOR. A native backend must evaluate nonzero tokens
+    // against its real occlusion-query results, never assume visibility.
+    bool has_visibility_query_token = false;
+    std::uint32_t visibility_query_token = 0;
     std::uint32_t primitive_type = 0;
     std::uint32_t source_select = 0;
     std::uint32_t major_mode = 0;
