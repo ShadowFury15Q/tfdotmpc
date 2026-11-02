@@ -8,6 +8,7 @@
 #include <cstring>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 #include <atomic>
 #include <thread>
@@ -45,6 +46,7 @@ struct PoolAllocation {
     std::uint32_t tag;
 };
 std::unordered_map<std::uint32_t, PoolAllocation> pool_allocations;
+std::unordered_set<std::uint32_t> xam_allocations;
 
 // Physical allocations are keyed by the 512 MiB physical offset. The three
 // Xbox physical views use different page granularities but share this budget.
@@ -549,6 +551,7 @@ void bind_kernel_guest_memory(GuestMemory* memory,
         physical_blocks.clear();
     }
     pool_allocations.clear();
+    xam_allocations.clear();
     bound_memory = memory && allocator ? memory : nullptr;
     bound_allocator = memory && allocator ? allocator : nullptr;
 }
@@ -756,6 +759,44 @@ void ke_bound_initialize_dpc(std::uint32_t dpc, std::uint32_t routine,
     data[1] = 1U;    // MediumImportance
     write_be32(*bound_memory, dpc + 0x0CU, routine);
     write_be32(*bound_memory, dpc + 0x10U, context);
+}
+
+std::uint32_t xam_bound_allocate(std::uint32_t flags, std::uint32_t bytes,
+                                 std::uint32_t output_pointer) {
+    std::lock_guard lock(binding_mutex);
+    // The original game's callers pass zero flags, a byte count in r4,
+    // and an address of a big-endian 32-bit guest pointer in r5.
+    if (!bound_memory || !bound_allocator || flags != 0U || !bytes ||
+        (output_pointer & 3U) || !writable_word(*bound_memory, output_pointer))
+        return kXamAllocInvalidArgument;
+    try {
+        const auto address = bound_allocator->allocate(bytes);
+        if (!address) {
+            write_be32(*bound_memory, output_pointer, 0U);
+            return kXamAllocOutOfMemory;
+        }
+        try {
+            if (!xam_allocations.insert(*address).second)
+                throw std::runtime_error("Duplicate XAM guest allocation");
+        } catch (...) {
+            bound_allocator->release(*address);
+            throw;
+        }
+        write_be32(*bound_memory, output_pointer, *address);
+        return kNtSuccess;
+    } catch (const std::bad_alloc&) {
+        write_be32(*bound_memory, output_pointer, 0U);
+        return kXamAllocOutOfMemory;
+    }
+}
+void xam_bound_free(std::uint32_t guest_pointer) {
+    if (!guest_pointer) return;
+    std::lock_guard lock(binding_mutex);
+    if (!bound_allocator || xam_allocations.find(guest_pointer) == xam_allocations.end())
+        throw std::runtime_error("XamFree: invalid or already freed guest allocation");
+    if (!bound_allocator->release(guest_pointer))
+        throw std::runtime_error("XamFree: guest allocator release failed");
+    xam_allocations.erase(guest_pointer);
 }
 
 std::uint32_t ex_bound_allocate_pool(std::uint32_t pool_type,
