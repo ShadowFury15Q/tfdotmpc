@@ -9,6 +9,15 @@ PPC_FUNC(__imp__RtlInitAnsiString) {
 PPC_FUNC(__imp__RtlInitUnicodeString) {
     dotm::rtl_bound_init_unicode_string(ctx.r3.u32, ctx.r4.u32);
 }
+// PPC r3=ANSI_STRING*, r4=UNICODE_STRING*, r5=AllocateDestination.
+PPC_FUNC(__imp__RtlUnicodeStringToAnsiString) {
+    ctx.r3.u64 = dotm::rtl_bound_unicode_string_to_ansi_string(
+        ctx.r3.u32, ctx.r4.u32, ctx.r5.u32 != 0U);
+}
+// RtlFreeAnsiString returns void; preserve the original PPC r3.
+PPC_FUNC(__imp__RtlFreeAnsiString) {
+    dotm::rtl_bound_free_ansi_string(ctx.r3.u32);
+}
 PPC_FUNC(__imp__RtlFillMemoryUlong) {
     dotm::rtl_bound_fill_memory_ulong(ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
 }
