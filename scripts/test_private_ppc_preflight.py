@@ -34,6 +34,35 @@ class PrivatePreflightTests(unittest.TestCase):
             (path / "ppc_recomp.400.cpp").touch()
             self.assertEqual(inspect_units(path), (EXPECTED_UNITS, [], [], []))
 
+    def test_numbered_unit_aliases_do_not_pass_private_preflight(self):
+        # A leading-zero alias can hide an extra translation unit behind a
+        # set of 697 unique numeric indices. Never silently accept it.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("ppc_recomp_shared.h", "ppc_context.h",
+                         "ppc_func_mapping.cpp", "ppc_config.h"):
+                (root / name).touch()
+            for index in range(EXPECTED_UNITS):
+                (root / f"ppc_recomp.{index}.cpp").touch()
+            (root / "ppc_recomp.00.cpp").touch()
+            count, missing, extra, headers = inspect_units(root)
+            self.assertEqual(count, EXPECTED_UNITS)
+            self.assertFalse(missing or extra)
+            self.assertIn("Noncanonical PPC unit name: ppc_recomp.00.cpp", headers)
+            with zipfile.ZipFile(root / "ppc.zip", "w") as archive:
+                for name in ("ppc_config.h", "ppc_context.h"):
+                    archive.writestr("ppc/" + name, "")
+                archive.writestr("ppc/ppc_recomp_shared.h", "PPC_EXTERN_FUNC(_xstart);")
+                archive.writestr("ppc/ppc_func_mapping.cpp",
+                                 "PPCFuncMapping m[] = {{ 0x8277F670, _xstart }};")
+                for index in range(EXPECTED_UNITS):
+                    archive.writestr(f"ppc/ppc_recomp.{index}.cpp", "")
+                archive.writestr("ppc/ppc_recomp.00.cpp", "")
+            count, missing, extra, headers = inspect_archive(root / "ppc.zip")
+            self.assertEqual(count, EXPECTED_UNITS)
+            self.assertFalse(missing or extra)
+            self.assertIn("Noncanonical PPC unit name: ppc/ppc_recomp.00.cpp", headers)
+
     def test_pe_machine_base_and_entry(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "game.pe"

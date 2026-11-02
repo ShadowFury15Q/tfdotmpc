@@ -40,13 +40,18 @@ def inspect_units(directory: Path):
         names = {p.name for p in directory.iterdir() if p.is_file()}
     except OSError:
         return None
-    indices = {int(match.group(1)) for name in names
-               if (match := UNIT_NAME.fullmatch(name))}
+    numbered = [(name, int(match.group(1))) for name in names
+                if (match := UNIT_NAME.fullmatch(name))]
+    indices = {index for _, index in numbered}
     if not indices and not any(name in names for name in REQUIRED):
         return None
     missing = [i for i in range(EXPECTED_UNITS) if i not in indices]
     extra = sorted(i for i in indices if i >= EXPECTED_UNITS)
     headers = [name for name in REQUIRED if name not in names]
+    noncanonical = sorted(name for name, index in numbered
+                          if name != f"ppc_recomp.{index}.cpp")
+    if noncanonical:
+        headers.append("Noncanonical PPC unit name: " + noncanonical[0])
     return len(indices), missing, extra, headers
 
 
@@ -79,6 +84,12 @@ def inspect_archive(path: Path):
             extra = sorted(i for i in indices if i >= EXPECTED_UNITS)
             required = (*REQUIRED, "ppc_config.h")
             headers = [name for name in required if member(name) not in names]
+            noncanonical = sorted(name for name in names
+                if name.startswith(f"{prefix}/" if prefix else "")
+                if (match := UNIT_NAME.fullmatch(name.rsplit("/", 1)[-1]))
+                if name != member(f"ppc_recomp.{int(match.group(1))}.cpp"))
+            if noncanonical:
+                headers.append("Noncanonical PPC unit name: " + noncanonical[0])
             mapping_name = member("ppc_func_mapping.cpp")
             header_name = member("ppc_recomp_shared.h")
             if mapping_name in names:
