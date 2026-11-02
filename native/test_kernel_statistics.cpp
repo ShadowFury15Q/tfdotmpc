@@ -1,5 +1,6 @@
 #include "ppc_recomp_shared.h"
 #include "kernel_guest_memory.hpp"
+#include <cstdlib>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -81,6 +82,17 @@ int main() {
         check(ctx.r3.u32 == 0 && memory.address(output + 0x100)[0] == 103 &&
               memory.address(output + 0x110)[1] == 1,
               "XCONFIG user country byte");
+#ifdef _WIN32
+        check(_putenv_s("DOTM_XBOX_LANGUAGE", "ru_RU") == 0,
+              "Set explicit Xbox console language");
+#else
+        check(setenv("DOTM_XBOX_LANGUAGE", "ru_RU", 1) == 0,
+              "Set explicit Xbox console language");
+#endif
+        ctx.r3.u64 = 3; ctx.r4.u64 = 9; ctx.r6.u64 = 4;
+        __imp__ExGetXConfigSetting(ctx, memory.base());
+        check(ctx.r3.u32 == 0 && get32(memory, output + 0x100) == 12U,
+              "XCONFIG language matches real XAM Russian console profile");
         ctx.r3.u64 = 3; ctx.r4.u64 = 9; ctx.r6.u64 = 2;
         __imp__ExGetXConfigSetting(ctx, memory.base());
         check(ctx.r3.u32 == 0xC0000023U && memory.address(output + 0x110)[1] == 4,
