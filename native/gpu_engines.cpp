@@ -46,6 +46,29 @@ bool readable(std::uint32_t address, std::size_t size) {
            std::uint64_t(address) + size <= GuestMemory::kAddressSpaceSize &&
            guest_memory->committed_range(address, size);
 }
+// GPU draw callbacks run under gpu_mutex. A backend may copy original
+// vertex/texture bytes during submission, but must not retain a guest pointer
+// or read freed/reused physical allocations after the callback returns.
+thread_local bool draw_read_window_open = false;
+struct ScopedDrawReadWindow {
+    const bool previous = draw_read_window_open;
+    ScopedDrawReadWindow() { draw_read_window_open = true; }
+    ~ScopedDrawReadWindow() { draw_read_window_open = previous; }
+};
+std::vector<std::uint8_t> copy_draw_physical_bytes(
+    std::uint32_t physical_address, std::uint32_t byte_count) {
+    constexpr std::uint32_t kMaxCopyBytes = 64U * 1024U * 1024U;
+    if (!draw_read_window_open)
+        throw std::runtime_error("Xenos physical fetch outside active draw submission");
+    if (byte_count > kMaxCopyBytes)
+        throw std::runtime_error("Xenos physical fetch exceeds bounded copy size");
+    if (!byte_count) return {};
+    const auto guest = mm_bound_resolve_physical_range(physical_address, byte_count);
+    if (!guest || !readable(*guest, byte_count))
+        throw std::runtime_error("Xenos physical fetch requires allocated committed memory");
+    const auto* data = guest_memory->address(*guest);
+    return {data, data + byte_count};
+}
 // Microcode is read from the original PE's guest pages, not a hardcoded
 // synthetic command stream. Fingerprints allow later GPU backend validation.
 std::uint64_t microcode_fingerprint(std::uint32_t address) {
@@ -937,6 +960,10 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 }
                 draw.vertex_shader_words = active_shader_microcode[0];
                 draw.pixel_shader_words = active_shader_microcode[1];
+                draw.copy_physical_memory = &copy_draw_physical_bytes;
+                // The scope closes on both success and exception. The GPU
+                // packet remains pending if the backend cannot fetch data.
+                ScopedDrawReadWindow read_window;
                 if (!draw_submitter(draw, draw_submitter_context))
                     throw std::runtime_error("Native graphics backend rejected Xenos draw");
                 // Only a successful real backend submission can advance
