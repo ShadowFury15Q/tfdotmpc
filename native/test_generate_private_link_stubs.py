@@ -71,6 +71,30 @@ class PrivateLinkStubsTests(unittest.TestCase):
             self.assertNotIn("PPC_FUNC(__imp__VdSetDisplayMode)", source)
             self.assertNotIn("PPC_FUNC(__imp__VdGetCurrentDisplayInformation)", source)
 
+    def test_real_kernel_and_xam_imports_do_not_generate_duplicate_definitions(self):
+        # These four imports are implemented in kernel_ppc_import.cpp and
+        # xam_ppc_import.cpp. The original private link must not define them twice.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ppc_recomp_shared.h").write_text(
+                "PPC_EXTERN_FUNC(__imp__XamInputGetState);\\n"
+                "PPC_EXTERN_FUNC(__imp__KeBugCheck);\\n"
+                "PPC_EXTERN_FUNC(__imp__KeBugCheckEx);\\n"
+                "PPC_EXTERN_FUNC(__imp__XamAlloc);\\n"
+                "PPC_EXTERN_FUNC(__imp__XamFree);\\n"
+                "PPC_EXTERN_FUNC(__imp__KeInitializeApc);\\n",
+                encoding="utf-8")
+            (root / "ppc_func_mapping.cpp").write_text(
+                "{0x8277F670, _xstart},\\n", encoding="utf-8")
+            (root / "ppc_recomp.0.cpp").write_text(
+                "PPC_FUNC_IMPL(_xstart) {}\\n", encoding="utf-8")
+            source, units, unresolved = generate(root, 1)
+            self.assertEqual((units, unresolved), (1, 1))
+            self.assertIn("PPC_FUNC(__imp__KeInitializeApc)", source)
+            for name in ("__imp__KeBugCheck", "__imp__KeBugCheckEx",
+                         "__imp__XamAlloc", "__imp__XamFree"):
+                self.assertNotIn(f"PPC_FUNC({name})", source)
+
     def test_xenonrecomp_alias_backed_game_functions_are_not_stubs(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
