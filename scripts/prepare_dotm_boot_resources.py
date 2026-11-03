@@ -14,7 +14,8 @@ import tempfile
 import zipfile
 
 
-def prepare(archive_path: Path, headers_path: Path, output: Path) -> tuple[int, int]:
+def prepare(archive_path: Path, headers_path: Path, output: Path,
+            expected_toc_sha256: str = "f55f581ed407f4be8210a88b130ce3431baccc36a893a4a31a41c752d304e8dd") -> tuple[int, int]:
     manifest = json.loads(headers_path.read_text(encoding="utf-8"))
     records = manifest["files"]
     expected = {}
@@ -30,7 +31,7 @@ def prepare(archive_path: Path, headers_path: Path, output: Path) -> tuple[int, 
             raise ValueError("Invalid original resource size or digest")
         expected[name.casefold()] = record
     toc = expected.get("transgame/xbox360toc.txt")
-    if not toc or toc["sha256"] != "f55f581ed407f4be8210a88b130ce3431baccc36a893a4a31a41c752d304e8dd":
+    if not toc or toc["sha256"] != expected_toc_sha256:
         raise ValueError("Expected verified original Xbox360TOC.txt is missing")
     if output.exists() or output.is_symlink():
         raise FileExistsError("Refusing to replace existing game root: " + str(output))
