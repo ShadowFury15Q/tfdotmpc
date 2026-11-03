@@ -1400,6 +1400,21 @@ std::vector<std::uint32_t> vd_bound_copy_shader_microcode(std::uint32_t stage) {
         throw std::runtime_error("Invalid Xenos shader stage");
     return active_shader_microcode[stage];
 }
+std::vector<std::uint8_t> vd_bound_copy_shader_microcode_be(std::uint32_t stage) {
+    std::lock_guard lock(gpu_mutex);
+    if (stage > 1U)
+        throw std::runtime_error("Invalid Xenos shader stage");
+    const auto& words = active_shader_microcode[stage];
+    std::vector<std::uint8_t> bytes;
+    bytes.reserve(words.size() * 4U);
+    for (const auto word : words) {
+        bytes.push_back(static_cast<std::uint8_t>(word >> 24U));
+        bytes.push_back(static_cast<std::uint8_t>(word >> 16U));
+        bytes.push_back(static_cast<std::uint8_t>(word >> 8U));
+        bytes.push_back(static_cast<std::uint8_t>(word));
+    }
+    return bytes;
+}
 std::uint32_t vd_bound_read_gpu_register(std::uint32_t index) {
     std::lock_guard lock(gpu_mutex);
     if (index >= gpu_registers.size())
