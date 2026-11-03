@@ -108,6 +108,15 @@ int main() {
         return 14;
     } catch (const std::runtime_error&) {}
 
+    // A truncated guest DMA read must fail before shader vertex decoding.
+    draw.copy_physical_memory = +[](std::uint32_t, std::uint32_t) {
+        return std::vector<std::uint8_t>{0x11U, 0x22U};
+    };
+    try {
+        (void)draw.copy_vertex_fetch_range(0U, 0U, 4U);
+        return 15;
+    } catch (const std::runtime_error&) {}
+
     std::cout << "Xenos vertex fetch constant and DMA endian decode PASS\n";
     return 0;
 }
