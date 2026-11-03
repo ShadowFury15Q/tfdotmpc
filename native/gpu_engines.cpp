@@ -151,10 +151,14 @@ void reset_gpu_registers() {
         std::memset(guest_memory->address(kXenosMmioBase), 0, kXenosMmioBytes);
 }
 std::uint32_t read_gpu_register(std::uint32_t index) {
+    if (index >= gpu_registers.size())
+        throw std::runtime_error("Xenos GPU register read out of range");
     const auto address = kXenosMmioBase + index * 4U;
     return readable(address, 4U) ? read_be32(address) : gpu_registers[index];
 }
 void write_gpu_register(std::uint32_t index, std::uint32_t value) {
+    if (index >= gpu_registers.size())
+        throw std::runtime_error("Xenos GPU register write out of range");
     // Xenos scratch registers are a hardware CPU/GPU synchronization path.
     // An enabled SCRATCH_UMSK bit causes a write of SCRATCH_REGn to the
     // physical dword at SCRATCH_ADDR + 4*n. Validate the destination before
