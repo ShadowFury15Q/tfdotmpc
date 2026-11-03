@@ -54,6 +54,10 @@ add_test(NAME xbox360_title_termination_notification_ppc_abi
   COMMAND dotm_kernel_title_termination_ppc_test)
 add_library(dotm_gpu_engines STATIC gpu_engines.cpp)
 target_link_libraries(dotm_gpu_engines PUBLIC dotm_kernel_guest_memory)
+add_executable(dotm_original_draw_capture_test test_original_xenos_draw_capture.cpp)
+add_test(NAME xenos_private_original_draw_capture_preserves_shader_bytes
+  COMMAND dotm_original_draw_capture_test)
+
 add_executable(dotm_gpu_engines_ppc_test test_gpu_engines.cpp gpu_engines_ppc.cpp)
 target_include_directories(dotm_gpu_engines_ppc_test PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/test_fixtures)
