@@ -17,7 +17,6 @@ public:
 
     bool submit(const GpuDrawCommand& draw) {
         if (captured_) return false;
-        captured_ = true;
         std::filesystem::create_directories(destination_);
         const auto snapshot = destination_ / "first-original-draw";
         if (!std::filesystem::create_directory(snapshot))
@@ -86,6 +85,7 @@ public:
             meta << "\n  ]\n}\n";
             meta.close();
             if (!meta) throw std::runtime_error("Cannot finalize private Xenos draw manifest");
+            captured_ = true;
         } catch (...) {
             std::error_code ignored;
             std::filesystem::remove_all(snapshot, ignored);
