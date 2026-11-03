@@ -162,6 +162,8 @@ struct GpuDrawCommand {
                 slot, static_cast<std::uint32_t>(physical),
                 static_cast<std::uint32_t>(fetch_bytes / 4U),
                 binding.endian_mode};
+            if (raw.size() != fetch_bytes)
+                throw std::runtime_error("Incomplete Xenos vertex DMA read");
             const auto decoded = decode_xenos_vertex_fetch_bytes(segment, raw);
             const auto skip = byte_offset - aligned_start;
             return {decoded.begin() + skip,
