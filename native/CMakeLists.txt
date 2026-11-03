@@ -69,6 +69,9 @@ add_test(NAME xbox360_original_texture_fetch_constants
 add_executable(dotm_xenos_texture_tiling_test test_xenos_texture_tiling.cpp)
 add_test(NAME xbox360_original_texture_2d_tiled_block_mapping
   COMMAND dotm_xenos_texture_tiling_test)
+add_executable(dotm_xenos_rectangle_list_test test_xenos_rectangle_list.cpp)
+add_test(NAME xbox360_original_post_vertex_rectangle_strip
+  COMMAND dotm_xenos_rectangle_list_test)
 add_executable(dotm_kernel_performance_ppc_test
   test_kernel_performance.cpp kernel_ppc_import.cpp)
 target_include_directories(dotm_kernel_performance_ppc_test PRIVATE
