@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 
 PPC_EXTERN_FUNC(__imp__VdInitializeEngines);
 PPC_EXTERN_FUNC(__imp__VdCallGraphicsNotificationRoutines);
@@ -1397,8 +1398,20 @@ int main() {
         // a native backend it must keep the packet and RPTR pending.
         put(278, 0xC0003600U);
         put(279, (3U << 16U) | (2U << 6U) | 4U);
-        expect_throw([&] { (void)dotm::vd_bound_execute_ring(280U); },
-                     "Original auto-index draw requires native renderer");
+        std::string missing_backend_diagnostic;
+        try {
+            (void)dotm::vd_bound_execute_ring(280U);
+        } catch (const std::runtime_error& error) {
+            missing_backend_diagnostic = error.what();
+        }
+        check(missing_backend_diagnostic.find("opcode=0x36") != std::string::npos &&
+              missing_backend_diagnostic.find("initiator=0x00030084") != std::string::npos &&
+              missing_backend_diagnostic.find("primitive=4") != std::string::npos &&
+              missing_backend_diagnostic.find("source=2") != std::string::npos &&
+              missing_backend_diagnostic.find("indices=3") != std::string::npos &&
+              missing_backend_diagnostic.find("VS_dwords=") != std::string::npos &&
+              missing_backend_diagnostic.find("PS_dwords=") != std::string::npos,
+              "Missing native renderer reports actual original draw and shader metadata");
         check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 278U &&
               dotm::vd_bound_gpu_snapshot().draws_submitted == 0U &&
               memory.address(writeback)[3] == 22U,
