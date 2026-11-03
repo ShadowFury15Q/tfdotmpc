@@ -1,0 +1,63 @@
+name: Build XenosRecomp tools for original Xenos shader translation
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build_xenosrecomp_tools.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build_xenosrecomp:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    steps:
+      - name: Checkout upstream XenosRecomp with shader translator dependencies
+        uses: actions/checkout@v4
+        with:
+          repository: hedge-dev/XenosRecomp
+          submodules: recursive
+          persist-credentials: false
+      - name: Enable Windows Clang compiler
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+      - name: Configure original Xenos shader translator
+        shell: pwsh
+        run: |
+          if ($env:RUNNER_OS -eq 'Windows') {
+            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang-cl
+          } else {
+            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++
+          }
+          if ($LASTEXITCODE -ne 0) { throw "XenosRecomp configure failed" }
+      - name: Build actual shader translator executable
+        shell: pwsh
+        run: |
+          cmake --build build --target XenosRecomp --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "XenosRecomp build failed" }
+      - name: Stage binaries and shader-common header (no game assets)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path staged | Out-Null
+          $binary = Get-ChildItem build -Recurse -File |
+            Where-Object { $_.Name -eq 'XenosRecomp' -or $_.Name -eq 'XenosRecomp.exe' } |
+            Select-Object -First 1
+          if ($null -eq $binary) { throw "XenosRecomp binary not produced" }
+          Copy-Item $binary.FullName staged/
+          Copy-Item XenosRecomp/shader_common.h staged/
+          Get-ChildItem thirdparty/dxc-bin -Recurse -File |
+            Where-Object { $_.Name -in @('dxcompiler.dll', 'dxil.dll', 'libdxcompiler.so', 'libdxil.so') } |
+            ForEach-Object { Copy-Item $_.FullName staged/ -Force }
+          Get-ChildItem staged | Select-Object Name,Length
+      - name: Retain original Xenos shader translator privately for local workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: XenosRecomp-${{ matrix.os }}
+          path: staged/**
+          if-no-files-found: error
+          retention-days: 14
