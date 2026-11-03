@@ -28,6 +28,7 @@
 #include <chrono>
 #include <stdexcept>
 #include <filesystem>
+#include <fstream>
 #ifdef DOTM_SYNTHETIC_PRIVATE_BOOT
 #include <chrono>
 #include <filesystem>
@@ -160,6 +161,42 @@ void load_synthetic_boot_pe(dotm::GuestMemory& memory) {
 }
 #endif
 
+// Export original guest shader microcode only to an explicitly requested
+// private location after a failed real Xenos draw; never fake GPU completion.
+void capture_original_xenos_shaders() {
+    const char* requested = std::getenv("DOTM_PRIVATE_SHADER_CAPTURE_DIR");
+    if (!requested || !*requested) return;
+    const std::filesystem::path root(requested);
+    std::filesystem::create_directories(root);
+    const auto gpu = dotm::vd_bound_gpu_snapshot();
+    for (std::uint32_t stage = 0; stage < 2; ++stage) {
+        const auto bytes = dotm::vd_bound_copy_shader_microcode_be(stage);
+        if (bytes.empty()) continue;
+        const auto output = root /
+            (stage == 0 ? "original_vertex_shader.xenos.bin" :
+                          "original_pixel_shader.xenos.bin");
+        if (std::filesystem::exists(output))
+            throw std::runtime_error("Refusing to overwrite original shader capture: " +
+                                     output.string());
+        std::ofstream stream(output, std::ios::binary);
+        if (!stream || !stream.write(
+                reinterpret_cast<const char*>(bytes.data()),
+                static_cast<std::streamsize>(bytes.size())))
+            throw std::runtime_error("Cannot write original Xenos shader capture: " +
+                                     output.string());
+        stream.close();
+        if (!stream)
+            throw std::runtime_error("Cannot finalize original Xenos shader capture: " +
+                                     output.string());
+        const auto fingerprint = stage == 0
+            ? gpu.vertex_shader_fingerprint : gpu.pixel_shader_fingerprint;
+        std::fprintf(stderr,
+            "Private original Xenos %s shader: %zu bytes, fingerprint 0x%016llX, file %s\n",
+            stage == 0 ? "vertex" : "pixel", bytes.size(),
+            static_cast<unsigned long long>(fingerprint), output.string().c_str());
+    }
+}
+
 void execute_guest_entry(dotm::GuestMemory& memory, std::uint32_t entry) {
     // Reserve a dedicated 1 MiB guest stack outside the NT heap range.
     // Xbox startup/TLS, graphics and audio imports are not yet implemented.
@@ -210,6 +247,13 @@ void execute_guest_entry(dotm::GuestMemory& memory, std::uint32_t entry) {
                 std::fprintf(stderr,
                     "Original Xenos PM4 processing stopped: %s\n",
                     error.what());
+                try {
+                    capture_original_xenos_shaders();
+                } catch (const std::exception& capture_error) {
+                    std::fprintf(stderr,
+                        "Private shader capture failed: %s\n",
+                        capture_error.what());
+                }
                 std::fflush(stderr);
                 break;
             }
