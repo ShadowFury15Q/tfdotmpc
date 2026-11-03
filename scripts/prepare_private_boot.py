@@ -159,11 +159,27 @@ def staged_boot_resources(root, output):
     archive = next((p for p in (
         root / "DOTM_BOOT_RESOURCES.zip",
         root / "private" / "DOTM_BOOT_RESOURCES.zip",
+        root.parent / "DOTM_BOOT_RESOURCES.zip",
         output.parent / "DOTM_BOOT_RESOURCES.zip",
     ) if p.is_file()), None)
     if archive is None:
         return None
     target = output / "game"
+    independent_headers = next((p for p in (
+        root / "DOTM_BOOT_HEADERS.json",
+        root / "private" / "DOTM_BOOT_HEADERS.json",
+        root.parent / "DOTM_BOOT_HEADERS.json",
+        archive.with_name("DOTM_BOOT_HEADERS.json"),
+    ) if p.is_file()), None)
+    if independent_headers is not None and not target.exists():
+        from prepare_dotm_boot_resources import prepare
+        count, total_bytes = prepare(archive, independent_headers, target)
+        present, total, missing = inspect_boot_resource_coverage(target)
+        print("Independently verified original boot resources:", count,
+              "files,", total_bytes, "bytes,", target)
+        print("Original TOC resource coverage:", present, "/", total,
+              "unique paths;", len(missing), "not present in private boot pack")
+        return target
     with zipfile.ZipFile(archive) as z:
         manifest = json.loads(z.read("DOTM_BOOT_RESOURCES_HASHES.json"))
         entries = manifest.get("files", [])
