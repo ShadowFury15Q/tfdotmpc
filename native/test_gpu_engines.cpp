@@ -1303,10 +1303,20 @@ int main() {
               dotm::vd_bound_read_gpu_register(0x204U) == 0x13579BDFU &&
               memory.address(writeback)[3] == 250U,
               "Indirect PM4 prefix executes without acknowledging pending WAIT");
-        poll[2] = 0x12U; poll[3] = 0x34U;
-        check(dotm::vd_bound_execute_ring(253, 1U) == 1 &&
+        // The producer can temporarily publish a WPTR equal to the held
+        // parent RPTR while an indirect frame remains active. The MMIO drain
+        // must still retry the pending nested WAIT rather than assume idle.
+        auto* pending_wptr = memory.address(0x7FC80714U);
+        pending_wptr[0] = 0U; pending_wptr[1] = 0U;
+        pending_wptr[2] = 0U; pending_wptr[3] = 250U;
+        check(dotm::vd_bound_drain_mmio_ring(1U) == 0U &&
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 250U,
-              "Nested WAIT_REG_MEM resumes from its saved offset");
+              "MMIO drain preserves unsatisfied indirect WAIT at equal pointers");
+        poll[2] = 0x12U; poll[3] = 0x34U;
+        check(dotm::vd_bound_drain_mmio_ring(1U) == 1U &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 250U,
+              "MMIO drain resumes indirect WAIT even at equal ring pointers");
+        pending_wptr[2] = 0U; pending_wptr[3] = 253U;
         check(dotm::vd_bound_execute_ring(253) == 3 &&
               dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 253U &&
               dotm::vd_bound_read_gpu_mmio_register(0x01C4U) == 253U &&
