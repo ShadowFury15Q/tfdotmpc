@@ -1175,6 +1175,20 @@ int main() {
               dotm::vd_bound_gpu_snapshot().shader_uploads == 2U &&
               dotm::vd_bound_gpu_snapshot().pixel_shader_dwords == 3U,
               "IM_LOAD_IMMEDIATE captures original pixel shader words");
+        check(dotm::vd_bound_copy_shader_microcode_be(1U) ==
+                  std::vector<std::uint8_t>({
+                      0xAAU, 0xBBU, 0xCCU, 0xDDU,
+                      0x12U, 0x34U, 0x56U, 0x78U,
+                      0x11U, 0x22U, 0x33U, 0x44U
+                  }),
+              "Original pixel shader exports exact big-endian instruction bytes");
+        const auto vertex_dump = dotm::vd_bound_copy_shader_microcode_be(0U);
+        check(vertex_dump.size() == 12U &&
+              vertex_dump[0] == shader_bytes[0] &&
+              vertex_dump[11] == shader_bytes[11],
+              "Physical IM_LOAD vertex shader exports unchanged original bytes");
+        expect_throw([&] { (void)dotm::vd_bound_copy_shader_microcode_be(2U); },
+                     "Shader byte export rejects invalid stage");
         const auto previous_shader = dotm::vd_bound_copy_shader_microcode(0U);
         put(228, 0xC0012700U);
         put(229, 0x3FFFF000U); // Outside the 512 MiB physical aperture.
