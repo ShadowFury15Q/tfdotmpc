@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
@@ -948,8 +949,22 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                     // be silently interpreted as a successful draw.
                     throw std::runtime_error("Unsupported Xenos draw index source");
                 }
-                if (!draw_submitter)
-                    throw std::runtime_error("Xenos draw requires a native graphics backend");
+                if (!draw_submitter) {
+                    // Report the original PM4 draw and active shader state.
+                    // Never acknowledge it or pretend that a frame rendered.
+                    // This makes the first unsupported retail draw actionable
+                    // without copying proprietary shader code into the log.
+                    char diagnostic[320]{};
+                    std::snprintf(diagnostic, sizeof(diagnostic),
+                        "Xenos draw requires a native graphics backend "
+                        "(opcode=0x%02X, initiator=0x%08X, primitive=%u, "
+                        "source=%u, indices=%u, VS_dwords=%zu, PS_dwords=%zu)",
+                        opcode, draw.initiator, draw.primitive_type,
+                        draw.source_select, draw.index_count,
+                        active_shader_microcode[0].size(),
+                        active_shader_microcode[1].size());
+                    throw std::runtime_error(diagnostic);
+                }
                 draw.register_words.reserve(gpu_registers.size());
                 for (std::uint32_t i = 0; i < gpu_registers.size(); ++i)
                     draw.register_words.push_back(read_gpu_register(i));
