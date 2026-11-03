@@ -1006,6 +1006,15 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 std::atomic_thread_fence(std::memory_order_seq_cst);
                 engine.last_state_invalidation_mask = mask;
                 ++engine.state_invalidations;
+            } else if (opcode == 0x5EU) {
+                // Xenos PM4_CONTEXT_UPDATE. Retail hardware accepts the
+                // one-DWORD context update command with value zero. This
+                // updates the command processor context without a draw or
+                // fake presentation. Reject unverified nonzero modes.
+                if (payload != 1U)
+                    throw std::runtime_error("Invalid Xenos CONTEXT_UPDATE packet size");
+                if (at(first) != 0U)
+                    throw std::runtime_error("Unsupported Xenos CONTEXT_UPDATE mode");
             } else if (opcode == 0x10U) {
                 // PM4_NOP has payload but does not change GPU state.
             } else if (opcode == 0x46U) {
