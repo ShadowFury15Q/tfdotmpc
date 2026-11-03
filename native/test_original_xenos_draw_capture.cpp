@@ -16,6 +16,10 @@ int main() {
         fs::path path;
         ~Cleanup() { std::error_code e; fs::remove_all(path, e); }
     } cleanup{temp};
+    // An existing capture directory must not permanently consume a capture.
+    const auto retry_root = temp / "retry";
+    fs::create_directories(retry_root / "first-original-draw");
+    dotm::OriginalXenosDrawCapture retry_capture(retry_root);
     dotm::OriginalXenosDrawCapture capture(temp);
     dotm::GpuDrawCommand draw;
     draw.initiator = 0x00030088U;
@@ -26,6 +30,16 @@ int main() {
     draw.pixel_shader_words = {0x01020304U};
     draw.register_words = {0x89ABCDEFU};
     draw.vertex_fetch_constants.push_back({1U, 0x200000U, 4U, 2U});
+    bool first_attempt_failed = false;
+    try { retry_capture.submit(draw); }
+    catch (const std::runtime_error&) { first_attempt_failed = true; }
+    if (!first_attempt_failed)
+        throw std::runtime_error("Existing snapshot must be refused");
+    fs::remove(retry_root / "first-original-draw");
+    if (retry_capture.submit(draw))
+        throw std::runtime_error("Capture retry must not acknowledge rendering");
+    if (!fs::exists(retry_root / "first-original-draw" / "draw.json"))
+        throw std::runtime_error("Failed capture incorrectly consumed retry");
     if (dotm::OriginalXenosDrawCapture::callback(draw, &capture))
         throw std::runtime_error("Capture must never acknowledge a draw");
     const auto source = temp / "first-original-draw";
