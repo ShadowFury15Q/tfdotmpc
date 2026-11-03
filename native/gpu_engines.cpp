@@ -1389,7 +1389,9 @@ std::uint32_t vd_bound_drain_mmio_ring(std::uint32_t max_packets) {
     const auto state = vd_bound_gpu_snapshot();
     if (!state.ring_initialized || !max_packets) return 0U;
     const auto write_pointer = vd_bound_read_gpu_mmio_register(0x01C5U);
-    if (write_pointer == state.ring_read_pointer_dwords) return 0U;
+    // A parent PM4_INDIRECT_BUFFER holds the ring read pointer until its
+    // nested commands finish. WPTR == RPTR does not imply an empty command
+    // processor while that indirect frame is still pending.
     return vd_bound_execute_ring(write_pointer, max_packets);
 }
 std::vector<std::uint32_t> vd_bound_copy_shader_microcode(std::uint32_t stage) {
