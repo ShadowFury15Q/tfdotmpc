@@ -3,6 +3,7 @@
 #include "guest_virtual_allocator.hpp"
 #include "kernel_guest_memory.hpp"
 #include "gpu_engines.hpp"
+#include "original_xenos_draw_capture.hpp"
 #include "kernel_title_termination.hpp"
 #include "kernel_critical_sections.hpp"
 #include "kernel_mutant.hpp"
@@ -29,6 +30,7 @@
 #include <stdexcept>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #ifdef DOTM_SYNTHETIC_PRIVATE_BOOT
 #include <chrono>
 #include <filesystem>
@@ -69,6 +71,14 @@ struct ScopedHostBindings {
         // Original PPC directly writes Xenos registers at 0x7FC8xxxx.
         // Back the real guest MMIO aperture before executing _xstart.
         dotm::vd_bound_map_gpu_mmio();
+        const char* draw_capture = std::getenv("DOTM_PRIVATE_DRAW_CAPTURE_DIR");
+        if (draw_capture && *draw_capture) {
+            private_draw_capture_ = std::make_unique<dotm::OriginalXenosDrawCapture>(
+                std::filesystem::path(draw_capture));
+            dotm::vd_bound_set_draw_submitter(
+                &dotm::OriginalXenosDrawCapture::callback,
+                private_draw_capture_.get());
+        }
 #endif
         dotm::bind_title_termination(&memory);
         dotm::bind_kernel_critical_sections(&memory);
@@ -104,6 +114,7 @@ struct ScopedHostBindings {
         dotm::bind_kernel_critical_sections(nullptr);
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
     }
+    std::unique_ptr<dotm::OriginalXenosDrawCapture> private_draw_capture_;
     dotm::KernelFileCache file_cache_;
     dotm::XNetStartupHost xnet_;
     ScopedHostBindings(const ScopedHostBindings&) = delete;
