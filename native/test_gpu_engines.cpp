@@ -1535,6 +1535,38 @@ int main() {
               dotm::vd_bound_gpu_snapshot().draws_submitted == 3U,
               "Conditional draw forwards real query token to native backend");
         dotm::vd_bound_set_draw_submitter(nullptr, nullptr);
+        // The original one-DWORD CONTEXT_UPDATE (0x5E) is legal with a
+        // zero payload. Invalid sizes and unknown modes stay unconsumed:
+        // neither the GPU read pointer nor physical writeback may advance.
+        put(287, 0xC0005E00U);
+        put(288, 0U);
+        check(dotm::vd_bound_execute_ring(289U) == 1U &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 289U &&
+              memory.address(writeback)[3] == 33U,
+              "Original PM4_CONTEXT_UPDATE zero mode advances GPU ring");
+        put(289, 0xC0005E00U);
+        put(290, 1U);
+        expect_throw([&] { (void)dotm::vd_bound_execute_ring(291U); },
+                     "Unknown Xenos CONTEXT_UPDATE mode is rejected");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 289U &&
+              memory.address(writeback)[3] == 33U,
+              "Unknown Xenos context update preserves ring and writeback");
+        put(290, 0U);
+        check(dotm::vd_bound_execute_ring(291U) == 1U &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 291U,
+              "Valid context update resumes after correcting mode");
+        put(291, 0xC0015E00U);
+        put(292, 0U);
+        put(293, 0U);
+        expect_throw([&] { (void)dotm::vd_bound_execute_ring(294U); },
+                     "Malformed Xenos CONTEXT_UPDATE payload count is rejected");
+        check(dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 291U &&
+              memory.address(writeback)[3] == 35U,
+              "Malformed context update does not partially acknowledge packet");
+        put(291, 0xC0005E00U);
+        check(dotm::vd_bound_execute_ring(293U) == 1U &&
+              dotm::vd_bound_gpu_snapshot().ring_read_pointer_dwords == 293U,
+              "Corrected context-update size resumes original GPU ring");
         dotm::mm_bound_free_physical_memory(1U, ib);
         expect_throw([&] { dotm::vd_bound_execute_ring(1024); },
                      "Out-of-range GPU write pointer rejected");
