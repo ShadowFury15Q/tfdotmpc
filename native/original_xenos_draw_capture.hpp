@@ -28,6 +28,22 @@ public:
             write_words(snapshot / "registers.be", draw.register_words);
             write_bytes(snapshot / "indices.raw", draw.dma_index_bytes);
             write_words(snapshot / "indices.decoded.be", draw.decoded_indices);
+            // Preserve original live vertex DMA (bounded, read-only). Never
+            // manufacture geometry if a physical allocation is unavailable.
+            for (const auto& fetch : draw.vertex_fetch_constants) {
+                const auto count = std::uint64_t(fetch.size_dwords) * 4U;
+                if (!count || count > 4U * 1024U * 1024U) continue;
+                try {
+                    const auto bytes = draw.copy_vertex_fetch_range(
+                        fetch.slot, 0, static_cast<std::uint32_t>(count));
+                    write_bytes(snapshot / ("vertex_fetch_slot_" +
+                        std::to_string(fetch.slot) + ".decoded.bin"), bytes);
+                } catch (const std::exception& error) {
+                    std::ofstream warning(snapshot / ("vertex_fetch_slot_" +
+                        std::to_string(fetch.slot) + ".unavailable.txt"));
+                    warning << error.what() << '\n';
+                }
+            }
             std::ofstream meta(snapshot / "draw.json", std::ios::binary);
             if (!meta) throw std::runtime_error("Cannot create private Xenos draw manifest");
             meta << "{\n  \"initiator\": " << draw.initiator
