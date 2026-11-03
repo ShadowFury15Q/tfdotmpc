@@ -32,16 +32,23 @@ public:
             for (const auto& fetch : draw.vertex_fetch_constants) {
                 const auto count = std::uint64_t(fetch.size_dwords) * 4U;
                 if (!count || count > 4U * 1024U * 1024U) continue;
+                std::vector<std::uint8_t> bytes;
                 try {
-                    const auto bytes = draw.copy_vertex_fetch_range(
+                    bytes = draw.copy_vertex_fetch_range(
                         fetch.slot, 0, static_cast<std::uint32_t>(count));
-                    write_bytes(snapshot / ("vertex_fetch_slot_" +
-                        std::to_string(fetch.slot) + ".decoded.bin"), bytes);
                 } catch (const std::exception& error) {
                     std::ofstream warning(snapshot / ("vertex_fetch_slot_" +
                         std::to_string(fetch.slot) + ".unavailable.txt"));
+                    if (!warning) throw std::runtime_error("Cannot create Xenos DMA warning");
                     warning << error.what() << '\n';
+                    warning.close();
+                    if (!warning) throw std::runtime_error("Cannot finalize Xenos DMA warning");
+                    continue;
                 }
+                // Disk errors must abort the capture, not masquerade as missing
+                // guest memory; the snapshot can then be retried safely.
+                write_bytes(snapshot / ("vertex_fetch_slot_" +
+                    std::to_string(fetch.slot) + ".decoded.bin"), bytes);
             }
             std::ofstream meta(snapshot / "draw.json", std::ios::binary);
             if (!meta) throw std::runtime_error("Cannot create private Xenos draw manifest");
