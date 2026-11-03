@@ -381,6 +381,11 @@ std::uint32_t vd_bound_drain_mmio_ring(std::uint32_t max_packets = 4096);
 // Copy currently bound original Xenos microcode (0=vertex, 1=pixel)
 // for a future native shader translator. Does not render it.
 std::vector<std::uint32_t> vd_bound_copy_shader_microcode(std::uint32_t stage);
+// Export the exact uploaded sequencer DWORDs in Xbox big-endian byte order.
+// This is a raw instruction dump, not a complete Xenos shader container;
+// container reflection/metadata must be recovered before XenosRecomp can
+// translate it. No synthetic shader instructions are generated.
+std::vector<std::uint8_t> vd_bound_copy_shader_microcode_be(std::uint32_t stage);
 std::uint32_t vd_bound_read_gpu_register(std::uint32_t index);
 GpuEngineSnapshot vd_bound_gpu_snapshot();
 }
