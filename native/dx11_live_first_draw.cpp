@@ -320,6 +320,9 @@ struct Dx11LiveFirstDraw::Impl {
     ComPtr<IDXGISwapChain> swap;
     ComPtr<ID3D11Texture2D> surface;
     ComPtr<ID3D11RenderTargetView> target;
+    // Persistent EDRAM color is independent of the discardable DXGI scanout.
+    ComPtr<ID3D11Texture2D> edram_color;
+    ComPtr<ID3D11RenderTargetView> edram_target;
     ComPtr<ID3D11GeometryShader> rectangle_gs;
     ComPtr<ID3D11RasterizerState> raster;
     std::map<XenosShaderPair, CachedPipeline> pipelines;
@@ -372,6 +375,7 @@ struct Dx11LiveFirstDraw::Impl {
         check(swap->GetBuffer(0, IID_PPV_ARGS(&surface)), "Get original render surface");
         check(device->CreateRenderTargetView(surface.Get(), nullptr, &target),
               "Create original Xenos RTV");
+        create_edram_color();
         D3D11_RASTERIZER_DESC rs{};
         rs.FillMode = D3D11_FILL_SOLID;
         rs.CullMode = D3D11_CULL_NONE;
@@ -379,6 +383,21 @@ struct Dx11LiveFirstDraw::Impl {
         check(device->CreateRasterizerState(&rs, &raster),
               "Create original Xenos rasterizer");
         ShowWindow(window, SW_SHOW);
+    }
+    void create_edram_color() {
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width = width;
+        desc.Height = height;
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        check(device->CreateTexture2D(&desc, nullptr, &edram_color),
+              "Create persistent original EDRAM color attachment");
+        check(device->CreateRenderTargetView(edram_color.Get(), nullptr, &edram_target),
+              "Create persistent original EDRAM RTV");
     }
     ID3D11DepthStencilView* bind_original_depth_state(
             const GpuDrawCommand& draw) {
@@ -523,7 +542,7 @@ struct Dx11LiveFirstDraw::Impl {
         // Use real previously submitted shader output as the EDRAM color
         // source. Never generate a fullscreen test texture or stand-in VS.
         D3D11_TEXTURE2D_DESC desc{};
-        surface->GetDesc(&desc);
+        edram_color->GetDesc(&desc);
         if (desc.Width != width || desc.Height != height ||
             desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM ||
             desc.SampleDesc.Count != 1U)
@@ -537,7 +556,7 @@ struct Dx11LiveFirstDraw::Impl {
         check(device->CreateTexture2D(&cpu_desc, nullptr, &staging),
               "Allocate native original EDRAM color resolve readback");
         context->OMSetRenderTargets(0, nullptr, nullptr);
-        context->CopyResource(staging.Get(), surface.Get());
+        context->CopyResource(staging.Get(), edram_color.Get());
         // Preserve padding and the other tiles in the already allocated
         // guest destination; copying only the genuine resolved color texels.
         auto physical = draw.copy_physical_memory(
@@ -592,7 +611,7 @@ struct Dx11LiveFirstDraw::Impl {
         }
         if (pending_draw_count == 0) {
             const float black[] = {0, 0, 0, 1};
-            context->ClearRenderTargetView(target.Get(), black);
+            context->ClearRenderTargetView(edram_target.Get(), black);
         }
         D3D11_VIEWPORT vp{};
         vp.Width = static_cast<float>(width);
@@ -602,7 +621,7 @@ struct Dx11LiveFirstDraw::Impl {
         context->RSSetViewports(1, &vp);
         context->RSSetState(raster.Get());
         auto* depth_view = bind_original_depth_state(draw);
-        context->OMSetRenderTargets(1, target.GetAddressOf(), depth_view);
+        context->OMSetRenderTargets(1, edram_target.GetAddressOf(), depth_view);
         context->IASetInputLayout(pipeline.input.Get());
         context->IASetPrimitiveTopology(map_topology(native.topology));
         context->VSSetShader(pipeline.vs.Get(), nullptr, 0);
@@ -815,6 +834,8 @@ struct Dx11LiveFirstDraw::Impl {
             context->ClearState();
             target.Reset();
             surface.Reset();
+            edram_target.Reset();
+            edram_color.Reset();
             depth_attachments.clear();
             check(swap->ResizeBuffers(1, scanout.width, scanout.height,
                     DXGI_FORMAT_R8G8B8A8_UNORM, 0),
@@ -825,6 +846,8 @@ struct Dx11LiveFirstDraw::Impl {
                   "Get original Xbox scanout DXGI surface");
             check(device->CreateRenderTargetView(surface.Get(), nullptr, &target),
                   "Create original scanout RTV");
+            create_edram_color();
+            pending_draw_count = 0;
         }
         // No fake clear, debug geometry or host preview framebuffer:
         // upload the independently validated guest scanout bytes verbatim.
