@@ -6,6 +6,7 @@
 #include "dx11_live_first_draw.hpp"
 #include "live_xenos_first_draw.hpp"
 #include "xenos_draw_pipeline.hpp"
+#include "xenos_shader_constants.hpp"
 #include "xenos_texture_upload.hpp"
 #include <windows.h>
 #include <d3d11.h>
@@ -219,8 +220,11 @@ DXGI_FORMAT map_format(XenosInputFormat fmt) {
 struct XenosShaderResources {
     std::vector<UINT> textures;
     std::vector<UINT> samplers;
+    struct FloatBuffer { UINT slot, bytes; };
+    std::vector<FloatBuffer> float_buffers;
 };
-XenosShaderResources reflect_shader_resources(ID3DBlob* blob) {
+XenosShaderResources reflect_shader_resources(ID3DBlob* blob,
+                                              XenosShaderStage stage) {
     ComPtr<ID3D11ShaderReflection> reflection;
     check(D3DReflect(blob->GetBufferPointer(), blob->GetBufferSize(),
                      IID_ID3D11ShaderReflection,
@@ -235,7 +239,27 @@ XenosShaderResources reflect_shader_resources(ID3DBlob* blob) {
               "Reflect original Xenos shader binding");
         if (binding.BindCount != 1)
             throw std::runtime_error("Unbounded Xenos descriptor array requires DX12 backend");
-        if (binding.Type == D3D_SIT_TEXTURE && binding.Dimension == D3D_SRV_DIMENSION_TEXTURE2D)
+        if (binding.Type == D3D_SIT_CBUFFER) {
+            // The original shader's float4 constants live in the PM4
+            // register shadow, with a programmable per-stage SQ base.
+            const std::string name = binding.Name ? binding.Name : "";
+            if ((stage == XenosShaderStage::vertex &&
+                 name != "VertexShaderConstants") ||
+                (stage == XenosShaderStage::pixel &&
+                 name != "PixelShaderConstants"))
+                throw std::runtime_error(
+                    "Original shared/unknown Xenos constant buffer is not yet mapped");
+            auto* cb = reflection->GetConstantBufferByName(binding.Name);
+            D3D11_SHADER_BUFFER_DESC buffer{};
+            check(cb->GetDesc(&buffer),
+                  "Reflect actual Xenos float4 shader constant buffer");
+            if (!buffer.Size || buffer.Size % 16U ||
+                buffer.Size > 256U * 16U ||
+                binding.BindPoint >= D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT)
+                throw std::runtime_error(
+                    "Invalid original Xenos stage constant buffer range");
+            resources.float_buffers.push_back({binding.BindPoint, buffer.Size});
+        } else if (binding.Type == D3D_SIT_TEXTURE && binding.Dimension == D3D_SRV_DIMENSION_TEXTURE2D)
             resources.textures.push_back(binding.BindPoint);
         else if (binding.Type == D3D_SIT_SAMPLER)
             resources.samplers.push_back(binding.BindPoint);
@@ -374,8 +398,10 @@ struct Dx11LiveFirstDraw::Impl {
                                             "original-xenos-vertex");
         const auto ps_blob = compile_source(private_hlsl(ps_path), "ps_5_0",
                                             "original-xenos-pixel");
-        p.vs_resources = reflect_shader_resources(vs_blob.Get());
-        p.ps_resources = reflect_shader_resources(ps_blob.Get());
+        p.vs_resources = reflect_shader_resources(
+            vs_blob.Get(), XenosShaderStage::vertex);
+        p.ps_resources = reflect_shader_resources(
+            ps_blob.Get(), XenosShaderStage::pixel);
         check(device->CreateVertexShader(vs_blob->GetBufferPointer(),
             vs_blob->GetBufferSize(), nullptr, &p.vs), "Create original Xenos VS");
         check(device->CreatePixelShader(ps_blob->GetBufferPointer(),
@@ -434,6 +460,38 @@ struct Dx11LiveFirstDraw::Impl {
             native.topology == XenosHostTopology::rectangle_list ?
                 rectangle_gs.Get() : nullptr, nullptr, 0);
         context->PSSetShader(pipeline.ps.Get(), nullptr, 0);
+        // PM4 can modify VS and PS constant windows between DRAWs using the
+        // SAME shader pair. Re-upload the original float bits each time.
+        std::vector<ComPtr<ID3D11Buffer>> draw_constant_buffers;
+        const auto upload_float_buffers = [&](const XenosShaderResources& resources,
+                                             XenosShaderStage stage) {
+            for (const auto& resource : resources.float_buffers) {
+                const auto original = xenos_draw_float_constants(
+                    draw, stage, resource.bytes);
+                D3D11_BUFFER_DESC desc{};
+                desc.ByteWidth = resource.bytes;
+                desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+                desc.Usage = D3D11_USAGE_IMMUTABLE;
+                D3D11_SUBRESOURCE_DATA initial{};
+                initial.pSysMem = original.data();
+                ComPtr<ID3D11Buffer> buffer;
+                check(device->CreateBuffer(&desc, &initial, &buffer),
+                      "Create original per-draw Xenos shader constants");
+                if (stage == XenosShaderStage::vertex)
+                    context->VSSetConstantBuffers(resource.slot, 1,
+                                                  buffer.GetAddressOf());
+                else
+                    context->PSSetConstantBuffers(resource.slot, 1,
+                                                  buffer.GetAddressOf());
+                draw_constant_buffers.emplace_back(std::move(buffer));
+            }
+        };
+        // Do not inherit stale shader registers from a previous pipeline.
+        ID3D11Buffer* null_constant_buffers[3] = {};
+        context->VSSetConstantBuffers(0, 3, null_constant_buffers);
+        context->PSSetConstantBuffers(0, 3, null_constant_buffers);
+        upload_float_buffers(pipeline.vs_resources, XenosShaderStage::vertex);
+        upload_float_buffers(pipeline.ps_resources, XenosShaderStage::pixel);
         // Bind original live texture DMA, never placeholder resources. A shader
         // requiring an unsupported descriptor layout fails before Draw().
         std::map<UINT, ComPtr<ID3D11ShaderResourceView>> views;
