@@ -301,7 +301,20 @@ void vd_bound_set_draw_submitter(GpuDrawSubmitter submitter, void* context);
 struct GpuSwapRequest {
     std::uint32_t physical_address = 0;
     std::uint32_t width = 0, height = 0, texture_format = 0;
+    // The six original VdSwap fetch DWORDs after conversion of the guest
+    // virtual base to its actual GPU physical address. Never infer layout
+    // or pitch from the host display window.
+    std::array<std::uint32_t, 6> fetch_words{};
 };
+struct GpuScanoutImage {
+    std::uint32_t width = 0, height = 0, row_pitch = 0;
+    std::vector<std::uint8_t> pixels;
+};
+// Snapshot only the original guest scanout allocation under the GPU lock.
+// Returned bytes own their storage and remain valid after VdSwap/PPC resumes.
+// This is not an EDRAM resolve: no frame is invented if the game hasn't
+// resolved the render target into the guest frontbuffer allocation.
+GpuScanoutImage vd_bound_copy_frontbuffer_scanout(const GpuSwapRequest& request);
 using GpuSwapObserver = void (*)(const GpuSwapRequest&, void*);
 void vd_bound_set_swap_observer(GpuSwapObserver observer, void* context);
 
