@@ -13,6 +13,7 @@
 #include "xenos_edram_color_lifetime.hpp"
 #include "xenos_texture_upload.hpp"
 #include "xenos_gpu_texture_cache.hpp"
+#include "xenos_gpu_buffer_cache.hpp"
 #include <windows.h>
 #include <d3d11.h>
 #include <d3dcompiler.h>
@@ -331,6 +332,7 @@ struct Dx11LiveFirstDraw::Impl {
     ComPtr<ID3D11RasterizerState> raster;
     std::map<XenosShaderPair, CachedPipeline> pipelines;
     XenosGpuTextureCache<ComPtr<ID3D11ShaderResourceView>> texture_cache;
+    XenosGpuBufferCache<ComPtr<ID3D11Buffer>> buffer_cache;
     using ConstantKey = std::tuple<XenosShaderStage, UINT, UINT>;
     std::map<ConstantKey, ComPtr<ID3D11Buffer>> reusable_constant_buffers;
     struct DepthAttachment {
@@ -775,15 +777,22 @@ struct Dx11LiveFirstDraw::Impl {
         host_vbs.reserve(native.streams.size());
         for (std::size_t i = 0; i < native.streams.size(); ++i) {
             const auto& stream = native.streams[i];
-            D3D11_BUFFER_DESC desc{};
-            desc.ByteWidth = static_cast<UINT>(stream.bytes.size());
-            desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-            desc.Usage = D3D11_USAGE_IMMUTABLE;
-            D3D11_SUBRESOURCE_DATA bytes{};
-            bytes.pSysMem = stream.bytes.data();
-            ComPtr<ID3D11Buffer> gpu_buffer;
-            check(device->CreateBuffer(&desc, &bytes, &gpu_buffer),
-                  "Upload original live Xenos vertex allocation");
+            // Original PM4 vertex DMA is re-read on every draw. Reuse only
+            // byte-identical immutable GPU allocations, never guest addresses.
+            auto gpu_buffer = buffer_cache.get_or_upload(
+                XenosGpuBufferRole::vertex, stream.bytes,
+                [&](const std::vector<std::uint8_t>& original) {
+                    D3D11_BUFFER_DESC desc{};
+                    desc.ByteWidth = static_cast<UINT>(original.size());
+                    desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+                    desc.Usage = D3D11_USAGE_IMMUTABLE;
+                    D3D11_SUBRESOURCE_DATA bytes{};
+                    bytes.pSysMem = original.data();
+                    ComPtr<ID3D11Buffer> created;
+                    check(device->CreateBuffer(&desc, &bytes, &created),
+                          "Upload original live Xenos vertex allocation");
+                    return created;
+                });
             const UINT stride = stream.stride, offset = 0;
             context->IASetVertexBuffers(static_cast<UINT>(i), 1,
                 gpu_buffer.GetAddressOf(), &stride, &offset);
@@ -793,15 +802,26 @@ struct Dx11LiveFirstDraw::Impl {
             context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0);
             context->Draw(native.count, 0);
         } else {
-            D3D11_BUFFER_DESC desc{};
-            desc.ByteWidth = static_cast<UINT>(native.indices.size() * sizeof(std::uint32_t));
-            desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
-            desc.Usage = D3D11_USAGE_IMMUTABLE;
-            D3D11_SUBRESOURCE_DATA data{};
-            data.pSysMem = native.indices.data();
-            ComPtr<ID3D11Buffer> ib;
-            check(device->CreateBuffer(&desc, &data, &ib),
-                  "Upload original indexed PM4 draw");
+            // The decoded original index order is cached independently of
+            // vertex buffers. A changed index sequence forces a new upload.
+            const auto* index_bytes = reinterpret_cast<const std::uint8_t*>(
+                native.indices.data());
+            std::vector<std::uint8_t> original_indices(
+                index_bytes, index_bytes + native.indices.size() * sizeof(std::uint32_t));
+            auto ib = buffer_cache.get_or_upload(
+                XenosGpuBufferRole::index, original_indices,
+                [&](const std::vector<std::uint8_t>& original) {
+                    D3D11_BUFFER_DESC desc{};
+                    desc.ByteWidth = static_cast<UINT>(original.size());
+                    desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+                    desc.Usage = D3D11_USAGE_IMMUTABLE;
+                    D3D11_SUBRESOURCE_DATA data{};
+                    data.pSysMem = original.data();
+                    ComPtr<ID3D11Buffer> created;
+                    check(device->CreateBuffer(&desc, &data, &created),
+                          "Upload original indexed PM4 draw");
+                    return created;
+                });
             context->IASetIndexBuffer(ib.Get(), DXGI_FORMAT_R32_UINT, 0);
             context->DrawIndexed(native.count, 0, 0);
         }
