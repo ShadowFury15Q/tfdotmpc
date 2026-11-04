@@ -1,6 +1,7 @@
 #include "ppc_recomp_shared.h"
 #include "gpu_engines.hpp"
 #include "xenos_index_decode.hpp"
+#include "xenos_texture_tiling.hpp"
 #include "kernel_guest_memory.hpp"
 #include <cstdint>
 #include <iostream>
@@ -225,6 +226,56 @@ int main() {
               swap_load(swap_command + 28U) == 0x80000000U &&
               swap_load(swap_command + 252U) == 0x80000000U,
               "VdSwap publishes real physical PM4 fetch without fake GPU present");
+        // Second original VdSwap uses 32x32 Xenos TILED RGBA8 data,
+        // covering the actual 4096-byte physical allocation and macro-tile
+        // swizzle. This tests the entire PPC ABI -> PM4 metadata -> guest DMA
+        // -> host scanout path, not just a helper detile function.
+        const dotm::XenosTiled2DLayout tiled_layout{32U, 32U, 32U, 4U};
+        check(dotm::xenos_tiled_2d_required_bytes(tiled_layout) == 4096U,
+              "Original scanout tile occupies allocated physical page");
+        for (std::uint32_t y = 0; y < 32U; ++y) {
+            for (std::uint32_t x = 0; x < 32U; ++x) {
+                const auto tiled_offset =
+                    dotm::xenos_tiled_2d_offset(x, y, 32U, 4U);
+                for (std::uint32_t channel = 0; channel < 4U; ++channel)
+                    memory.address(swap_virtual)[tiled_offset + channel] =
+                        static_cast<std::uint8_t>(
+                            (x * 7U + y * 11U + channel * 23U) & 255U);
+            }
+        }
+        swap_store(swap_fetch, 2U | 0x80000000U);
+        swap_store(swap_fetch + 8U, 31U | (31U << 13U));
+        swap_store(swap_args + 12U, 32U);
+        swap_store(swap_args + 16U, 32U);
+        ctx.r1.u64 = swap_stack;
+        ctx.r3.u64 = swap_command;
+        ctx.r4.u64 = swap_fetch;
+        ctx.r5.u64 = swap_args + 32U;
+        ctx.r6.u64 = swap_system;
+        ctx.r7.u64 = 1U;
+        ctx.r8.u64 = swap_args;
+        ctx.r9.u64 = swap_args + 4U;
+        ctx.r10.u64 = swap_args + 8U;
+        __imp__VdSwap(ctx, memory.base());
+        check(received_original_swap &&
+              observed_original_swap.width == 32U &&
+              observed_original_swap.height == 32U &&
+              (observed_original_swap.fetch_words[0] & 0x80000000U),
+              "Guest tiled frontbuffer VdSwap descriptor retained");
+        const auto tiled_scanout =
+            dotm::vd_bound_copy_frontbuffer_scanout(observed_original_swap);
+        check(tiled_scanout.row_pitch == 128U &&
+              tiled_scanout.pixels.size() == 4096U,
+              "Actual original tiled frontbuffer has host linear pitch");
+        for (std::uint32_t y = 0; y < 32U; ++y)
+            for (std::uint32_t x = 0; x < 32U; ++x)
+                for (std::uint32_t channel = 0; channel < 4U; ++channel)
+                    check(tiled_scanout.pixels[
+                              (y * 32U + x) * 4U + channel] ==
+                              static_cast<std::uint8_t>(
+                                  (x * 7U + y * 11U + channel * 23U) & 255U),
+                          "Original tiled scanout detiles every guest RGBA texel");
+
         // Actual retail DOTM calls VdSetDisplayMode(0x40000000) and
         // reads X_DISPLAY_INFO fields at offsets 0x48, 0x4A, 0x56.
         ctx.r3.u64 = 0x40000000U;
