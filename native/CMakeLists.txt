@@ -267,6 +267,10 @@ target_link_libraries(dotm_static_obj_export PRIVATE dotm_ue3_package)
 if(WIN32)
   add_executable(dotm_dx11_mesh_viewer WIN32 dx11_mesh_viewer.cpp)
   target_link_libraries(dotm_dx11_mesh_viewer PRIVATE dotm_ue3_package d3d11 d3dcompiler dxgi user32 shell32)
+  # Replays only the verified ORIGINAL first DOTM Xenos PM4 rectangle,
+  # using its captured DMA and privately translated VS/PS HLSL.
+  add_executable(dotm_dx11_original_draw_replay WIN32 dx11_original_draw_replay.cpp)
+  target_link_libraries(dotm_dx11_original_draw_replay PRIVATE d3d11 d3dcompiler dxgi user32 shell32)
 endif()
 
 # Platform-independent native Windows keyboard/mouse action-state engine.
