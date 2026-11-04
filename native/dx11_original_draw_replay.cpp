@@ -162,6 +162,60 @@ ComPtr<ID3DBlob> compile_rectangle_geometry() {
           "Compiling original Xenos rectangle-list geometry expansion");
     return compiled;
 }
+// Read back actual GPU output for a reproducible first-original-draw image.
+// This screenshot is NOT a full game frame. No CPU-side substitute is drawn.
+void save_gpu_draw_bmp(ID3D11Device* device, ID3D11DeviceContext* context,
+                       ID3D11Texture2D* surface, const std::filesystem::path& output) {
+    D3D11_TEXTURE2D_DESC desc{};
+    surface->GetDesc(&desc);
+    if (desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM || !desc.Width || !desc.Height ||
+        desc.Width > 8192 || desc.Height > 8192)
+        throw std::runtime_error("Unsupported original draw screenshot format/size");
+    D3D11_TEXTURE2D_DESC staging_desc = desc;
+    staging_desc.Usage = D3D11_USAGE_STAGING;
+    staging_desc.BindFlags = 0;
+    staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    staging_desc.MiscFlags = 0;
+    ComPtr<ID3D11Texture2D> staging;
+    check(device->CreateTexture2D(&staging_desc, nullptr, &staging),
+          "Create original draw GPU readback");
+    context->CopyResource(staging.Get(), surface);
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    check(context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped),
+          "Map actual original draw GPU readback");
+    struct Unmap { ID3D11DeviceContext* c; ID3D11Texture2D* t;
+        ~Unmap() { c->Unmap(t, 0); } } unmap{context, staging.Get()};
+    if (std::filesystem::exists(output))
+        throw std::runtime_error("Refusing to overwrite existing original draw screenshot");
+    std::ofstream out(output, std::ios::binary);
+    if (!out) throw std::runtime_error("Cannot create original GPU screenshot");
+    const auto put16 = [&](std::uint16_t v) {
+        const char b[]{char(v), char(v >> 8)};
+        out.write(b, 2);
+    };
+    const auto put32 = [&](std::uint32_t v) {
+        const char b[]{char(v), char(v >> 8), char(v >> 16), char(v >> 24)};
+        out.write(b, 4);
+    };
+    const auto payload = std::uint64_t(desc.Width) * desc.Height * 4;
+    if (payload > 0xFFFFFFFFU - 54U)
+        throw std::runtime_error("First original draw screenshot exceeds BMP bounds");
+    out.put('B'); out.put('M'); put32(static_cast<std::uint32_t>(payload + 54));
+    put32(0); put32(54); put32(40); put32(desc.Width); put32(desc.Height);
+    put16(1); put16(32); put32(0); put32(static_cast<std::uint32_t>(payload));
+    put32(0); put32(0); put32(0); put32(0);
+    for (std::uint32_t y = desc.Height; y > 0; --y) {
+        const auto* row = static_cast<const std::uint8_t*>(mapped.pData) +
+                          std::size_t(y - 1) * mapped.RowPitch;
+        for (std::uint32_t x = 0; x < desc.Width; ++x) {
+            const char bgra[]{char(row[x * 4 + 2]), char(row[x * 4 + 1]),
+                              char(row[x * 4]), char(row[x * 4 + 3])};
+            out.write(bgra, 4);
+        }
+    }
+    out.close();
+    if (!out) throw std::runtime_error("Cannot finish original GPU screenshot");
+}
 LRESULT CALLBACK wndproc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_CLOSE) { DestroyWindow(wnd); return 0; }
     if (msg == WM_DESTROY) { PostQuitMessage(0); return 0; }
@@ -169,7 +223,8 @@ LRESULT CALLBACK wndproc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(wnd, msg, wp, lp);
 }
 void replay(const std::filesystem::path& capture,
-            const std::filesystem::path& translated) {
+            const std::filesystem::path& translated,
+            const std::filesystem::path& screenshot) {
     verify_original_draw(capture);
     const auto vertices = read_binary(capture / "vertex_fetch_slot_0.decoded.bin");
     const auto vs_blob = compile_source(read_text(translated / "vertex.hlsl"), "vs_5_0", "original_vertex");
@@ -267,6 +322,8 @@ void replay(const std::filesystem::path& capture,
         check(swapchain->Present(1, 0), "Present first original Xenos draw");
     };
     draw_original();
+    if (!screenshot.empty())
+        save_gpu_draw_bmp(device.Get(), context.Get(), surface.Get(), screenshot);
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
         TranslateMessage(&msg);
@@ -280,11 +337,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (!argv) return 1;
     try {
-        if (argc != 3) throw std::runtime_error(
-            "Usage: dotm_dx11_original_draw_replay.exe <private-capture/first-original-draw> <private-translated-output>\n"
-            "No data is generated: the ORIGINAL first Xenos draw and XenosRecomp HLSL are required.");
+        if (argc != 3 && argc != 4) throw std::runtime_error(
+            "Usage: dotm_dx11_original_draw_replay.exe <private-capture/first-original-draw> <private-translated-output> [original-first-draw.bmp]\n"
+            "The ORIGINAL first Xenos draw and XenosRecomp HLSL are required.");
         const std::filesystem::path capture(argv[1]), translated(argv[2]);
-        replay(capture, translated);
+        const std::filesystem::path screenshot = argc == 4 ?
+            std::filesystem::path(argv[3]) : std::filesystem::path();
+        replay(capture, translated, screenshot);
         LocalFree(argv);
         return 0;
     } catch (const std::exception& e) {
