@@ -9,6 +9,7 @@
 #include "xenos_shader_constants.hpp"
 #include "xenos_sampler_state.hpp"
 #include "xenos_depth_state.hpp"
+#include "xenos_edram_resolve.hpp"
 #include "xenos_texture_upload.hpp"
 #include <windows.h>
 #include <d3d11.h>
@@ -510,12 +511,72 @@ struct Dx11LiveFirstDraw::Impl {
         auto [inserted, ok] = pipelines.emplace(key, std::move(p));
         return inserted->second;
     }
+    bool resolve_original_edram_copy(const GpuDrawCommand& draw) {
+        const auto operation = prepare_xenos_full_surface_resolve(
+            draw, width, height);
+        if (!operation)
+            throw std::runtime_error("Native EDRAM resolve called without RB copy mode");
+        if (!pending_draw_count || !draw.copy_physical_memory ||
+            !draw.write_physical_memory)
+            throw std::runtime_error(
+                "Original EDRAM resolve requires live GPU color and physical allocation");
+        // Use real previously submitted shader output as the EDRAM color
+        // source. Never generate a fullscreen test texture or stand-in VS.
+        D3D11_TEXTURE2D_DESC desc{};
+        surface->GetDesc(&desc);
+        if (desc.Width != width || desc.Height != height ||
+            desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM ||
+            desc.SampleDesc.Count != 1U)
+            throw std::runtime_error("Unsupported actual EDRAM color attachment format");
+        D3D11_TEXTURE2D_DESC cpu_desc = desc;
+        cpu_desc.BindFlags = 0U;
+        cpu_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        cpu_desc.Usage = D3D11_USAGE_STAGING;
+        cpu_desc.MiscFlags = 0U;
+        ComPtr<ID3D11Texture2D> staging;
+        check(device->CreateTexture2D(&cpu_desc, nullptr, &staging),
+              "Allocate native original EDRAM color resolve readback");
+        context->OMSetRenderTargets(0, nullptr, nullptr);
+        context->CopyResource(staging.Get(), surface.Get());
+        // Preserve padding and the other tiles in the already allocated
+        // guest destination; copying only the genuine resolved color texels.
+        auto physical = draw.copy_physical_memory(
+            operation->physical_address,
+            static_cast<std::uint32_t>(operation->required_physical_bytes));
+        D3D11_MAPPED_SUBRESOURCE source{};
+        check(context->Map(staging.Get(), 0U, D3D11_MAP_READ, 0U, &source),
+              "Read actual Xenos shader output for native EDRAM resolve");
+        try {
+            for (std::uint32_t y = 0U; y < height; ++y) {
+                for (std::uint32_t x = 0U; x < width; ++x) {
+                    const auto destination = xenos_tiled_2d_offset(
+                        x, y, operation->tiled_layout.pitch_elements, 4U);
+                    const auto* rgba =
+                        static_cast<const std::uint8_t*>(source.pData) +
+                        std::size_t(y) * source.RowPitch + std::size_t(x) * 4U;
+                    std::memcpy(physical.data() + destination, rgba, 4U);
+                }
+            }
+        } catch (...) {
+            context->Unmap(staging.Get(), 0U);
+            throw;
+        }
+        context->Unmap(staging.Get(), 0U);
+        // The guest's original physically allocated tiled texture becomes
+        // the authoritative frontbuffer later read by VdSwap scanout.
+        // The writer rejects expired/unallocated memory before any mutation.
+        draw.write_physical_memory(operation->physical_address, physical);
+        return true;
+    }
     bool submit(const GpuDrawCommand& draw) {
         std::lock_guard lock(dx11_context_mutex);
         if (stopped.load(std::memory_order_acquire)) return false;
         // Never acknowledge unknown original conditions or geometry. Resource
         // captures happen in the *live* GPU callback under its read window.
         initialize();
+        if (draw.register_words.size() > 0x2208U &&
+            (draw.register_words[0x2208U] & 7U) == 6U)
+            return resolve_original_edram_copy(draw);
         auto& pipeline = pipeline_for(draw);
         const auto native = prepare_original_xenos_draw(draw, pipeline.layout);
         if (native.topology == XenosHostTopology::rectangle_list &&
