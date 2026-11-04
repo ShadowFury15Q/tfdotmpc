@@ -79,6 +79,16 @@ void replace_all(std::string& text, const std::string& before,
 ComPtr<ID3DBlob> compile_source(std::string src, const char* target,
                                const char* label) {
     replace_all(src, ", space4", "");
+    // XenosRecomp emits Vulkan location decorations for the same semantic
+    // inputs that the native D3D11 input layout binds by HLSL semantic.
+    // Remove metadata only: the original translated math remains untouched.
+    std::size_t decoration = 0;
+    while ((decoration = src.find("[[vk::", decoration)) != std::string::npos) {
+        const auto end = src.find("]]", decoration);
+        if (end == std::string::npos)
+            throw std::runtime_error("Malformed XenosRecomp Vulkan semantic decoration");
+        src.erase(decoration, end + 2 - decoration);
+    }
     replace_all(src, "[shader(\"pixel\")]", "");
     replace_all(src, "[shader(\"vertex\")]", "");
     ComPtr<ID3DBlob> compiled, diagnostics;
