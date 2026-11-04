@@ -63,6 +63,9 @@ add_test(NAME xenos_live_original_draw_validation
 add_executable(dotm_xenos_draw_pipeline_test test_xenos_draw_pipeline.cpp)
 add_test(NAME xenos_native_multi_shader_multidraw_pipeline
   COMMAND dotm_xenos_draw_pipeline_test)
+add_executable(dotm_xenos_host_texture_test test_xenos_host_texture.cpp)
+add_test(NAME xenos_original_rgba_bc_host_texture_dma
+  COMMAND dotm_xenos_host_texture_test)
 
 add_executable(dotm_gpu_engines_ppc_test test_gpu_engines.cpp gpu_engines_ppc.cpp)
 target_include_directories(dotm_gpu_engines_ppc_test PRIVATE
