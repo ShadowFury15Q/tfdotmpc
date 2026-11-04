@@ -1,4 +1,5 @@
 #include "gpu_engines.hpp"
+#include "xenos_texture_upload.hpp"
 #include "xenos_index_decode.hpp"
 #include "kernel_guest_memory.hpp"
 #include <algorithm>
@@ -255,6 +256,51 @@ void vd_bound_set_swap_observer(GpuSwapObserver observer, void* context) {
     std::lock_guard lock(gpu_mutex);
     swap_observer = observer;
     swap_observer_context = observer ? context : nullptr;
+}
+GpuScanoutImage vd_bound_copy_frontbuffer_scanout(
+    const GpuSwapRequest& request) {
+    std::lock_guard lock(gpu_mutex);
+    if (!engine.initialized || !guest_memory || !engine.swap_requests ||
+        request.physical_address != engine.last_swap_physical_address ||
+        request.width != engine.last_swap_width ||
+        request.height != engine.last_swap_height ||
+        request.texture_format != engine.last_swap_texture_format)
+        throw std::runtime_error(
+            "Original Xenos scanout request does not match live VdSwap state");
+    const auto& words = request.fetch_words;
+    if ((words[0] & 3U) != 2U ||
+        (words[1] & 0xFFFFF000U) != request.physical_address ||
+        (words[1] & 0x3FU) != request.texture_format ||
+        (words[2] & 0x1FFFU) + 1U != request.width ||
+        ((words[2] >> 13U) & 0x1FFFU) + 1U != request.height ||
+        request.width > 8192U || request.height > 8192U ||
+        !request.width || !request.height)
+        throw std::runtime_error("Original VdSwap fetch metadata was modified");
+    // Only plain RGBA8 has a proven byte-for-byte DX11 scanout mapping.
+    // Xenos format 54 and other packed/floating formats need explicit
+    // conversion, not a guessed reinterpret cast to host pixels.
+    if (request.texture_format != 6U)
+        throw std::runtime_error(
+            "Original frontbuffer format needs a validated scanout conversion");
+    // Build a fetch descriptor from the EXACT VdSwap register packet.
+    // The ordinary original texture DMA path performs the endian
+    // transformation, tiled address computation and guest pitch unpacking.
+    std::vector<std::uint32_t> registers(0x4800U + 32U * 6U);
+    for (std::size_t i = 0; i < words.size(); ++i)
+        registers[0x4800U + i] = words[i];
+    GpuDrawCommand scanout;
+    scanout.texture_fetch_constants =
+        decode_xenos_texture_fetch_constants(registers);
+    scanout.copy_physical_memory = &copy_draw_physical_bytes;
+    ScopedDrawReadWindow access;
+    const auto image = prepare_xenos_texture_2d(scanout, 0U);
+    if (image.format != 6U || image.width != request.width ||
+        image.height != request.height ||
+        image.row_pitch != image.width * 4U ||
+        image.bytes.size() != std::size_t(image.row_pitch) * image.height)
+        throw std::runtime_error(
+            "Original Xenos frontbuffer scanout allocation is incomplete");
+    return {image.width, image.height, image.row_pitch, image.bytes};
 }
 void bind_gpu_engines(GuestMemory* memory) noexcept {
     std::lock_guard lock(gpu_mutex);
@@ -563,7 +609,7 @@ void vd_bound_swap(std::uint32_t command_buffer, std::uint32_t texture_fetch,
     if (swap_observer) {
         // Invoke under the GPU state lock. The observer must only queue a
         // host-side request; it must not invoke D3D11 from the PPC thread.
-        swap_observer({physical, width, height, texture_format},
+        swap_observer({physical, width, height, texture_format, fetch},
                       swap_observer_context);
     }
     (void)gpu_identifier;
