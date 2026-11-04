@@ -10,6 +10,7 @@
 #include "xenos_sampler_state.hpp"
 #include "xenos_depth_state.hpp"
 #include "xenos_edram_resolve.hpp"
+#include "xenos_edram_color_lifetime.hpp"
 #include "xenos_texture_upload.hpp"
 #include "xenos_gpu_texture_cache.hpp"
 #include <windows.h>
@@ -324,6 +325,8 @@ struct Dx11LiveFirstDraw::Impl {
     // Persistent EDRAM color is independent of the discardable DXGI scanout.
     ComPtr<ID3D11Texture2D> edram_color;
     ComPtr<ID3D11RenderTargetView> edram_target;
+    ComPtr<ID3D11Texture2D> edram_readback;
+    XenosEdramColorLifetime edram_lifetime;
     ComPtr<ID3D11GeometryShader> rectangle_gs;
     ComPtr<ID3D11RasterizerState> raster;
     std::map<XenosShaderPair, CachedPipeline> pipelines;
@@ -402,6 +405,14 @@ struct Dx11LiveFirstDraw::Impl {
               "Create persistent original EDRAM color attachment");
         check(device->CreateRenderTargetView(edram_color.Get(), nullptr, &edram_target),
               "Create persistent original EDRAM RTV");
+        // The host readback survives multiple guest RB_COPY commands.
+        D3D11_TEXTURE2D_DESC readback_desc = desc;
+        readback_desc.BindFlags = 0U;
+        readback_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        readback_desc.Usage = D3D11_USAGE_STAGING;
+        check(device->CreateTexture2D(&readback_desc, nullptr, &edram_readback),
+              "Create reusable original EDRAM resolve readback");
+        edram_lifetime.on_render_target_created();
         // Deterministic initial host storage; later clears must be driven by
         // guest RB commands, never by the host's Present/frame counter.
         const float initial_color[] = {0.f, 0.f, 0.f, 1.f};
@@ -543,7 +554,7 @@ struct Dx11LiveFirstDraw::Impl {
             draw, width, height);
         if (!operation)
             throw std::runtime_error("Native EDRAM resolve called without RB copy mode");
-        if (!pending_draw_count || !draw.copy_physical_memory ||
+        if (!edram_lifetime.can_resolve() || !draw.copy_physical_memory ||
             !draw.write_physical_memory)
             throw std::runtime_error(
                 "Original EDRAM resolve requires live GPU color and physical allocation");
@@ -555,23 +566,15 @@ struct Dx11LiveFirstDraw::Impl {
             desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM ||
             desc.SampleDesc.Count != 1U)
             throw std::runtime_error("Unsupported actual EDRAM color attachment format");
-        D3D11_TEXTURE2D_DESC cpu_desc = desc;
-        cpu_desc.BindFlags = 0U;
-        cpu_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-        cpu_desc.Usage = D3D11_USAGE_STAGING;
-        cpu_desc.MiscFlags = 0U;
-        ComPtr<ID3D11Texture2D> staging;
-        check(device->CreateTexture2D(&cpu_desc, nullptr, &staging),
-              "Allocate native original EDRAM color resolve readback");
         context->OMSetRenderTargets(0, nullptr, nullptr);
-        context->CopyResource(staging.Get(), edram_color.Get());
+        context->CopyResource(edram_readback.Get(), edram_color.Get());
         // Preserve padding and the other tiles in the already allocated
         // guest destination; copying only the genuine resolved color texels.
         auto physical = draw.copy_physical_memory(
             operation->physical_address,
             static_cast<std::uint32_t>(operation->required_physical_bytes));
         D3D11_MAPPED_SUBRESOURCE source{};
-        check(context->Map(staging.Get(), 0U, D3D11_MAP_READ, 0U, &source),
+        check(context->Map(edram_readback.Get(), 0U, D3D11_MAP_READ, 0U, &source),
               "Read actual Xenos shader output for native EDRAM resolve");
         try {
             for (std::uint32_t y = 0U; y < height; ++y) {
@@ -585,10 +588,10 @@ struct Dx11LiveFirstDraw::Impl {
                 }
             }
         } catch (...) {
-            context->Unmap(staging.Get(), 0U);
+            context->Unmap(edram_readback.Get(), 0U);
             throw;
         }
-        context->Unmap(staging.Get(), 0U);
+        context->Unmap(edram_readback.Get(), 0U);
         // The guest's original physically allocated tiled texture becomes
         // the authoritative frontbuffer later read by VdSwap scanout.
         // The writer rejects expired/unallocated memory before any mutation.
@@ -806,6 +809,7 @@ struct Dx11LiveFirstDraw::Impl {
         // ordering and Present flushes accumulated work at the frame boundary.
         // A validated original guest VdSwap request triggers host composition.
         ++pending_draw_count;
+        edram_lifetime.on_original_draw_submitted();
         return true;
     }
     void notify_swap(const GpuSwapRequest& request) {
@@ -858,6 +862,7 @@ struct Dx11LiveFirstDraw::Impl {
             surface.Reset();
             edram_target.Reset();
             edram_color.Reset();
+            edram_readback.Reset();
             depth_attachments.clear();
             check(swap->ResizeBuffers(1, scanout.width, scanout.height,
                     DXGI_FORMAT_R8G8B8A8_UNORM, 0),
@@ -883,6 +888,7 @@ struct Dx11LiveFirstDraw::Impl {
         check(swap->Present(1U, 0U),
               "Present original Xbox VdSwap physical frontbuffer");
         pending_draw_count = 0;
+        edram_lifetime.on_vd_swap();
         last_presented_request = target_swap;
     }
 };

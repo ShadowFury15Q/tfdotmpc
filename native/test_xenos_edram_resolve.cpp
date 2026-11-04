@@ -1,4 +1,5 @@
 #include "xenos_edram_resolve.hpp"
+#include "xenos_edram_color_lifetime.hpp"
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -78,6 +79,19 @@ int main() {
         draw.register_words[0x2318U] = 0U;
         draw.vertex_fetch_constants.clear();
         rejects([&] { (void)dotm::prepare_xenos_full_surface_resolve(draw,32,32); });
+        dotm::XenosEdramColorLifetime lifetime;
+        check(!lifetime.can_resolve(), "Uninitialized host EDRAM must not resolve");
+        lifetime.on_original_draw_submitted();
+        lifetime.on_vd_swap();
+        lifetime.on_vd_swap();
+        check(lifetime.can_resolve(),
+              "Guest EDRAM must survive VdSwap even with zero new draws");
+        lifetime.on_render_target_created();
+        check(!lifetime.can_resolve(),
+              "Resized/recreated host EDRAM must not expose stale color");
+        lifetime.on_original_draw_submitted();
+        check(lifetime.can_resolve(),
+              "New guest draw enables full-surface EDRAM resolve again");
         std::cout << "Original PM4 EDRAM full color resolve plan and tiled data PASS\n";
         return 0;
     } catch (const std::exception& e) {
