@@ -1578,6 +1578,7 @@ int main() {
         // DMA-indexed draws resolve and copy real guest physical index bytes.
         const auto dma_address = ib_physical + 0x100U;
         static dotm::GpuPhysicalMemoryReader retained_draw_reader = nullptr;
+        static dotm::GpuPhysicalMemoryWriter retained_draw_writer = nullptr;
         put_ib(64U, 0x11223344U);
         put(280, 0xC0023600U);
         put(281, (2U << 16U) | 4U);
@@ -1586,6 +1587,7 @@ int main() {
         dotm::vd_bound_set_draw_submitter(
             +[](const dotm::GpuDrawCommand& draw, void* context) -> bool {
                 retained_draw_reader = draw.copy_physical_memory;
+                retained_draw_writer = draw.write_physical_memory;
                 bool rejects_invalid = false;
                 try {
                     (void)draw.copy_physical_memory(0xFFFFFFFCU, 8U);
@@ -1594,7 +1596,24 @@ int main() {
                 }
                 const auto copied = draw.copy_physical_memory(
                     draw.dma_physical_address, 4U);
-                const bool valid = draw.source_select == 0U &&
+                bool invalid_write_rejected = false;
+                try {
+                    draw.write_physical_memory(
+                        0xFFFFFFFCU, std::vector<std::uint8_t>(8U, 0x55U));
+                } catch (const std::runtime_error&) {
+                    invalid_write_rejected = true;
+                }
+                draw.write_physical_memory(
+                    draw.dma_physical_address, {0xABU, 0xCDU, 0xEFU, 0x09U});
+                const auto modified = draw.copy_physical_memory(
+                    draw.dma_physical_address, 4U);
+                draw.write_physical_memory(draw.dma_physical_address, copied);
+                const bool restored =
+                    draw.copy_physical_memory(draw.dma_physical_address, 4U) == copied;
+                const bool valid = invalid_write_rejected && restored &&
+                    modified == std::vector<std::uint8_t>(
+                        {0xABU, 0xCDU, 0xEFU, 0x09U}) &&
+                    draw.source_select == 0U &&
                     draw.index_count == 2U && draw.index_size_bytes == 2U &&
                     draw.dma_swap_mode == 2U &&
                     draw.dma_index_bytes.size() == 4U &&
@@ -1615,6 +1634,9 @@ int main() {
               "DMA draw exposes real allocated GPU bytes to native renderer");
         expect_throw([&] { (void)retained_draw_reader(dma_address, 4U); },
                      "Renderer physical DMA reader expires after draw callback");
+        expect_throw([&] {
+            retained_draw_writer(dma_address, {0xDEU, 0xADU, 0xBEU, 0xEFU});
+        }, "Native EDRAM physical writer expires after original draw callback");
         dotm::vd_bound_set_draw_submitter(nullptr, nullptr);
         put(284, 0xC0003600U);
         put(285, (3U << 16U) | (3U << 6U) | 4U);
