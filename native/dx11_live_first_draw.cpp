@@ -398,6 +398,10 @@ struct Dx11LiveFirstDraw::Impl {
               "Create persistent original EDRAM color attachment");
         check(device->CreateRenderTargetView(edram_color.Get(), nullptr, &edram_target),
               "Create persistent original EDRAM RTV");
+        // Deterministic initial host storage; later clears must be driven by
+        // guest RB commands, never by the host's Present/frame counter.
+        const float initial_color[] = {0.f, 0.f, 0.f, 1.f};
+        context->ClearRenderTargetView(edram_target.Get(), initial_color);
     }
     ID3D11DepthStencilView* bind_original_depth_state(
             const GpuDrawCommand& draw) {
@@ -609,10 +613,8 @@ struct Dx11LiveFirstDraw::Impl {
                 shader->GetBufferSize(), nullptr, &rectangle_gs),
                 "Create native Xenos rectangle geometry shader");
         }
-        if (pending_draw_count == 0) {
-            const float black[] = {0, 0, 0, 1};
-            context->ClearRenderTargetView(edram_target.Get(), black);
-        }
+        // VdSwap is not a guest EDRAM clear. Keep previous render-target
+        // contents available for later PM4 passes and subsequent frames.
         D3D11_VIEWPORT vp{};
         vp.Width = static_cast<float>(width);
         vp.Height = static_cast<float>(height);
