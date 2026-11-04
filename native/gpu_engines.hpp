@@ -99,6 +99,10 @@ struct GpuEngineSnapshot {
 // guest virtual pointers or assuming an unallocated GPU address exists.
 using GpuPhysicalMemoryReader = std::vector<std::uint8_t> (*)(
     std::uint32_t physical_address, std::uint32_t byte_count);
+// A real Xenos EDRAM resolve must write the original GPU physical destination.
+// Valid only during the synchronous PM4 submit callback under gpu_mutex.
+using GpuPhysicalMemoryWriter = void (*)(
+    std::uint32_t physical_address, const std::vector<std::uint8_t>& bytes);
 struct GpuDrawCommand {
     std::uint32_t initiator = 0;
     // PM4_DRAW_INDX carries the original visibility-query condition before
@@ -121,6 +125,7 @@ struct GpuDrawCommand {
     // Copy source buffers referenced by the original Xenos fetch registers.
     // Valid only while this draw's submitter callback is running.
     GpuPhysicalMemoryReader copy_physical_memory = nullptr;
+    GpuPhysicalMemoryWriter write_physical_memory = nullptr;
     // CPU MMIO writes are included, not only the PM4 register shadow.
     std::vector<std::uint32_t> register_words;
     // Original Xenos vertex fetch constants decoded from the 0x4800 register bank.
