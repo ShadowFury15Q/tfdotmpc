@@ -73,6 +73,25 @@ std::vector<std::uint8_t> copy_draw_physical_bytes(
     const auto* data = guest_memory->address(*guest);
     return {data, data + byte_count};
 }
+// EDRAM copy writes are allowed only during an original PM4 DRAW submitter.
+// Always validate the complete physical destination before modifying guest
+// memory; an unsupported resolve must leave the original allocation intact.
+void write_draw_physical_bytes(
+    std::uint32_t physical_address, const std::vector<std::uint8_t>& bytes) {
+    constexpr std::size_t kMaxCopyBytes = 64ULL * 1024U * 1024U;
+    if (!draw_read_window_open)
+        throw std::runtime_error("Xenos EDRAM write outside active GPU submit");
+    if (bytes.size() > kMaxCopyBytes ||
+        std::uint64_t(physical_address) + bytes.size() > 0x100000000ULL)
+        throw std::runtime_error("Xenos EDRAM physical write exceeds limits");
+    if (bytes.empty()) return;
+    const auto guest = mm_bound_resolve_physical_range(
+        physical_address, static_cast<std::uint32_t>(bytes.size()));
+    if (!guest || !readable(*guest, bytes.size()))
+        throw std::runtime_error(
+            "Original Xenos EDRAM resolve destination is not allocated");
+    std::memcpy(guest_memory->address(*guest), bytes.data(), bytes.size());
+}
 // Microcode is read from the original PE's guest pages, not a hardcoded
 // synthetic command stream. Fingerprints allow later GPU backend validation.
 std::uint64_t microcode_fingerprint(std::uint32_t address) {
@@ -1045,6 +1064,7 @@ std::uint32_t vd_bound_execute_ring(std::uint32_t write_pointer_dwords,
                 draw.vertex_shader_words = active_shader_microcode[0];
                 draw.pixel_shader_words = active_shader_microcode[1];
                 draw.copy_physical_memory = &copy_draw_physical_bytes;
+                draw.write_physical_memory = &write_draw_physical_bytes;
                 // The scope closes on both success and exception. The GPU
                 // packet remains pending if the backend cannot fetch data.
                 ScopedDrawReadWindow read_window;
