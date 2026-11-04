@@ -21,7 +21,7 @@ inline std::vector<std::uint32_t> xenos_draw_float_constants(
         ? kRegisterVsConst : kRegisterPsConst;
     if (byte_count % 16U || byte_count > 256U * 16U)
         throw std::runtime_error("Invalid Xenos stage float constant buffer size");
-    if (draw.register_words.size() < kFloatBase + kFloatCount ||
+    if (draw.register_words.size() < kFloatBase + kFloatCount * 4U ||
         config_register >= draw.register_words.size())
         throw std::runtime_error("Incomplete original PM4 shader constant register shadow");
     if (!byte_count) return {};

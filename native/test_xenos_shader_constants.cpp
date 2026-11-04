@@ -45,6 +45,13 @@ int main() {
         rejects([&] { (void)dotm::xenos_draw_float_constants(
                     draw, dotm::XenosShaderStage::vertex, 2U * 16U); },
                 "Original SQ constant window cannot wrap physical register bank");
+        // A short snapshot must not pass validation then index outside
+        // the true 512-float4 (2048-DWORD) PM4 register bank.
+        draw.register_words[0x2307U] = 480U | (31U << 12U);
+        draw.register_words.resize(0x4700U);
+        rejects([&] { (void)dotm::xenos_draw_float_constants(
+                    draw, dotm::XenosShaderStage::vertex, 16U); },
+                "Truncated PM4 float4 register bank must fail closed");
         draw.register_words.resize(0x2300);
         rejects([&] { (void)dotm::xenos_draw_float_constants(
                     draw, dotm::XenosShaderStage::vertex, 16U); },

@@ -11,6 +11,7 @@
 #include "xenos_depth_state.hpp"
 #include "xenos_edram_resolve.hpp"
 #include "xenos_texture_upload.hpp"
+#include "xenos_gpu_texture_cache.hpp"
 #include <windows.h>
 #include <d3d11.h>
 #include <d3dcompiler.h>
@@ -326,6 +327,9 @@ struct Dx11LiveFirstDraw::Impl {
     ComPtr<ID3D11GeometryShader> rectangle_gs;
     ComPtr<ID3D11RasterizerState> raster;
     std::map<XenosShaderPair, CachedPipeline> pipelines;
+    XenosGpuTextureCache<ComPtr<ID3D11ShaderResourceView>> texture_cache;
+    using ConstantKey = std::tuple<XenosShaderStage, UINT, UINT>;
+    std::map<ConstantKey, ComPtr<ID3D11Buffer>> reusable_constant_buffers;
     struct DepthAttachment {
         ComPtr<ID3D11Texture2D> texture;
         ComPtr<ID3D11DepthStencilView> view;
@@ -633,28 +637,37 @@ struct Dx11LiveFirstDraw::Impl {
         context->PSSetShader(pipeline.ps.Get(), nullptr, 0);
         // PM4 can modify VS and PS constant windows between DRAWs using the
         // SAME shader pair. Re-upload the original float bits each time.
-        std::vector<ComPtr<ID3D11Buffer>> draw_constant_buffers;
+        // Reuse constant-buffer allocations, but write actual PM4 float
+        // registers on every draw. DISCARD gives earlier queued GPU draws
+        // independent backing storage while eliminating per-draw CreateBuffer.
         const auto upload_float_buffers = [&](const XenosShaderResources& resources,
                                              XenosShaderStage stage) {
             for (const auto& resource : resources.float_buffers) {
                 const auto original = xenos_draw_float_constants(
                     draw, stage, resource.bytes);
-                D3D11_BUFFER_DESC desc{};
-                desc.ByteWidth = resource.bytes;
-                desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-                desc.Usage = D3D11_USAGE_IMMUTABLE;
-                D3D11_SUBRESOURCE_DATA initial{};
-                initial.pSysMem = original.data();
-                ComPtr<ID3D11Buffer> buffer;
-                check(device->CreateBuffer(&desc, &initial, &buffer),
-                      "Create original per-draw Xenos shader constants");
+                auto& buffer = reusable_constant_buffers[
+                    std::make_tuple(stage, resource.slot, resource.bytes)];
+                if (!buffer) {
+                    D3D11_BUFFER_DESC desc{};
+                    desc.ByteWidth = resource.bytes;
+                    desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+                    desc.Usage = D3D11_USAGE_DYNAMIC;
+                    desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+                    check(device->CreateBuffer(&desc, nullptr, &buffer),
+                          "Allocate reusable original Xenos shader constant buffer");
+                }
+                D3D11_MAPPED_SUBRESOURCE mapped{};
+                check(context->Map(buffer.Get(), 0U, D3D11_MAP_WRITE_DISCARD,
+                                   0U, &mapped),
+                      "Map original PM4 shader constants with GPU DISCARD");
+                std::memcpy(mapped.pData, original.data(), resource.bytes);
+                context->Unmap(buffer.Get(), 0U);
                 if (stage == XenosShaderStage::vertex)
                     context->VSSetConstantBuffers(resource.slot, 1,
                                                   buffer.GetAddressOf());
                 else
                     context->PSSetConstantBuffers(resource.slot, 1,
                                                   buffer.GetAddressOf());
-                draw_constant_buffers.emplace_back(std::move(buffer));
             }
         };
         // Do not inherit stale shader registers from a previous pipeline.
@@ -673,24 +686,31 @@ struct Dx11LiveFirstDraw::Impl {
                     throw std::runtime_error("Xenos texture register exceeds D3D11 limit");
                 if (!views.count(slot)) {
                     const auto image = prepare_xenos_texture_2d(draw, slot);
-                    D3D11_TEXTURE2D_DESC texture_desc{};
-                    texture_desc.Width = image.width;
-                    texture_desc.Height = image.height;
-                    texture_desc.MipLevels = 1;
-                    texture_desc.ArraySize = 1;
-                    texture_desc.Format = xenos_texture_format(image.format);
-                    texture_desc.SampleDesc.Count = 1;
-                    texture_desc.Usage = D3D11_USAGE_IMMUTABLE;
-                    texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-                    D3D11_SUBRESOURCE_DATA source{};
-                    source.pSysMem = image.bytes.data();
-                    source.SysMemPitch = image.row_pitch;
-                    ComPtr<ID3D11Texture2D> texture;
-                    check(device->CreateTexture2D(&texture_desc, &source, &texture),
-                          "Upload original PM4 texture from guest memory");
-                    ComPtr<ID3D11ShaderResourceView> view;
-                    check(device->CreateShaderResourceView(texture.Get(), nullptr, &view),
-                          "Create original PM4 texture view");
+                    // Guest memory is read and detiled each time; a DMA write
+                    // with the same fetch address cannot return a stale SRV.
+                    auto view = texture_cache.get_or_upload(image,
+                        [&](const XenosTextureUpload& original) {
+                            D3D11_TEXTURE2D_DESC texture_desc{};
+                            texture_desc.Width = original.width;
+                            texture_desc.Height = original.height;
+                            texture_desc.MipLevels = 1;
+                            texture_desc.ArraySize = 1;
+                            texture_desc.Format = xenos_texture_format(original.format);
+                            texture_desc.SampleDesc.Count = 1;
+                            texture_desc.Usage = D3D11_USAGE_IMMUTABLE;
+                            texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+                            D3D11_SUBRESOURCE_DATA source{};
+                            source.pSysMem = original.bytes.data();
+                            source.SysMemPitch = original.row_pitch;
+                            ComPtr<ID3D11Texture2D> texture;
+                            check(device->CreateTexture2D(&texture_desc, &source, &texture),
+                                  "Upload actual original PM4 texture to DX11");
+                            ComPtr<ID3D11ShaderResourceView> created;
+                            check(device->CreateShaderResourceView(
+                                      texture.Get(), nullptr, &created),
+                                  "Create original PM4 shader texture view");
+                            return created;
+                        });
                     views.emplace(slot, std::move(view));
                 }
                 auto* srv = views.at(slot).Get();
