@@ -78,6 +78,9 @@ add_test(NAME xenos_original_pm4_shader_float_constant_windows
 add_executable(dotm_xenos_sampler_state_test test_xenos_sampler_state.cpp)
 add_test(NAME xenos_original_filter_and_clamp_sampler_modes
   COMMAND dotm_xenos_sampler_state_test)
+add_executable(dotm_xenos_raster_state_test test_xenos_raster_state.cpp)
+add_test(NAME xenos_original_pm4_window_screen_scissor_and_edram_mode
+  COMMAND dotm_xenos_raster_state_test)
 add_executable(dotm_xenos_blend_state_test test_xenos_blend_state.cpp)
 add_test(NAME xenos_original_pm4_rgb_alpha_blending_and_color_mask
   COMMAND dotm_xenos_blend_state_test)

@@ -10,6 +10,7 @@
 #include "xenos_sampler_state.hpp"
 #include "xenos_depth_state.hpp"
 #include "xenos_blend_state.hpp"
+#include "xenos_raster_state.hpp"
 #include "xenos_edram_resolve.hpp"
 #include "xenos_edram_color_lifetime.hpp"
 #include "xenos_texture_upload.hpp"
@@ -392,6 +393,7 @@ struct Dx11LiveFirstDraw::Impl {
         rs.FillMode = D3D11_FILL_SOLID;
         rs.CullMode = D3D11_CULL_NONE;
         rs.DepthClipEnable = TRUE;
+        rs.ScissorEnable = TRUE;
         check(device->CreateRasterizerState(&rs, &raster),
               "Create original Xenos rasterizer");
         ShowWindow(window, SW_SHOW);
@@ -657,11 +659,16 @@ struct Dx11LiveFirstDraw::Impl {
     bool submit(const GpuDrawCommand& draw) {
         std::lock_guard lock(dx11_context_mutex);
         if (stopped.load(std::memory_order_acquire)) return false;
-        // Never acknowledge unknown original conditions or geometry. Resource
-        // captures happen in the *live* GPU callback under its read window.
+        // Honor real RB_MODECONTROL before any shader/resource upload. A
+        // no-operation DRAW must not fabricate color; a depth-only pass must
+        // not accidentally modify the color EDRAM attachment.
+        const auto mode = decode_xenos_edram_draw_mode(draw.register_words);
+        if (mode == XenosEdramDrawMode::no_operation) return true;
+        if (mode == XenosEdramDrawMode::depth_only)
+            throw std::runtime_error(
+                "Original Xenos RB depth-only pass requires separate depth-only renderer");
         initialize();
-        if (draw.register_words.size() > 0x2208U &&
-            (draw.register_words[0x2208U] & 7U) == 6U)
+        if (mode == XenosEdramDrawMode::copy)
             return resolve_original_edram_copy(draw);
         auto& pipeline = pipeline_for(draw);
         const auto native = prepare_original_xenos_draw(draw, pipeline.layout);
@@ -685,6 +692,11 @@ struct Dx11LiveFirstDraw::Impl {
         vp.MaxDepth = 1.f;
         context->RSSetViewports(1, &vp);
         context->RSSetState(raster.Get());
+        const auto guest_rect =
+            decode_xenos_scissor(draw.register_words, width, height);
+        D3D11_RECT scissor{guest_rect.left, guest_rect.top,
+                          guest_rect.right, guest_rect.bottom};
+        context->RSSetScissorRects(1, &scissor);
         auto* depth_view = bind_original_depth_state(draw);
         bind_original_blend_state(draw);
         context->OMSetRenderTargets(1, edram_target.GetAddressOf(), depth_view);
