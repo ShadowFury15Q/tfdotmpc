@@ -360,6 +360,8 @@ set(DOTM_PRIVATE_PPC_DIR "" CACHE PATH "Private XenonRecomp C++ directory (never
 set(DOTM_PRIVATE_PE_FILE "" CACHE FILEPATH "Private original decrypted PPC PE for intra-function bctr repair")
 if(DOTM_PRIVATE_PPC_DIR)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME xenos_original_shader_container_indexing
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/test_index_original_xenos_shader_containers.py")
   # The original XenonRecomp output uses Clang builtins and SIMDe x86 headers.
   # Keep these dependencies private: public synthetic CI needs neither.
   if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
