@@ -72,6 +72,9 @@ add_test(NAME xenos_original_pm4_shader_float_constant_windows
 add_executable(dotm_xenos_sampler_state_test test_xenos_sampler_state.cpp)
 add_test(NAME xenos_original_filter_and_clamp_sampler_modes
   COMMAND dotm_xenos_sampler_state_test)
+add_executable(dotm_xenos_depth_state_test test_xenos_depth_state.cpp)
+add_test(NAME xenos_original_depth_stencil_pm4_state
+  COMMAND dotm_xenos_depth_state_test)
 
 add_executable(dotm_gpu_engines_ppc_test test_gpu_engines.cpp gpu_engines_ppc.cpp)
 target_include_directories(dotm_gpu_engines_ppc_test PRIVATE
