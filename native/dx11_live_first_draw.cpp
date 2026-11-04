@@ -7,6 +7,7 @@
 #include "live_xenos_first_draw.hpp"
 #include "xenos_draw_pipeline.hpp"
 #include "xenos_shader_constants.hpp"
+#include "xenos_sampler_state.hpp"
 #include "xenos_texture_upload.hpp"
 #include <windows.h>
 #include <d3d11.h>
@@ -529,9 +530,50 @@ struct Dx11LiveFirstDraw::Impl {
             for (const UINT slot : resources.samplers) {
                 if (slot >= D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT)
                     throw std::runtime_error("Xenos sampler register exceeds D3D11 limit");
-                // Sampler-state decoding is required before enabling sampling:
-                // default filtering/wrap would silently change game output.
-                throw std::runtime_error("Original Xenos sampler state not decoded");
+                if (!samplers.count(slot)) {
+                    const auto found = std::find_if(
+                        draw.texture_fetch_constants.begin(),
+                        draw.texture_fetch_constants.end(),
+                        [slot](const XenosTextureFetchConstant& t) {
+                            return t.slot == slot;
+                        });
+                    if (found == draw.texture_fetch_constants.end())
+                        throw std::runtime_error("Original Xenos sampler fetch slot unbound");
+                    const auto host = decode_xenos_host_sampler(*found);
+                    const auto address = [](XenosHostAddress mode) {
+                        switch (mode) {
+                        case XenosHostAddress::wrap:
+                            return D3D11_TEXTURE_ADDRESS_WRAP;
+                        case XenosHostAddress::mirror:
+                            return D3D11_TEXTURE_ADDRESS_MIRROR;
+                        case XenosHostAddress::clamp:
+                            return D3D11_TEXTURE_ADDRESS_CLAMP;
+                        }
+                        throw std::runtime_error("Unknown Xenos sampler address mode");
+                    };
+                    D3D11_SAMPLER_DESC desc{};
+                    desc.AddressU = address(host.u);
+                    desc.AddressV = address(host.v);
+                    desc.AddressW = address(host.w);
+                    desc.Filter =
+                        host.min_linear && host.mag_linear
+                            ? D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT
+                        : host.min_linear
+                            ? D3D11_FILTER_MIN_LINEAR_MAG_MIP_POINT
+                        : host.mag_linear
+                            ? D3D11_FILTER_MIN_POINT_MAG_LINEAR_MIP_POINT
+                            : D3D11_FILTER_MIN_MAG_MIP_POINT;
+                    desc.MinLOD = 0.0f;
+                    desc.MaxLOD = 0.0f;
+                    desc.MaxAnisotropy = 1U;
+                    ComPtr<ID3D11SamplerState> state;
+                    check(device->CreateSamplerState(&desc, &state),
+                          "Create original Xenos sampler from PM4 fetch constants");
+                    samplers.emplace(slot, std::move(state));
+                }
+                auto* state = samplers.at(slot).Get();
+                if (vertex) context->VSSetSamplers(slot, 1, &state);
+                else context->PSSetSamplers(slot, 1, &state);
             }
         };
         bind_stage(pipeline.vs_resources, true);
