@@ -39,7 +39,7 @@ int main() {
         draw.copy_physical_memory = &read_guest;
         const std::array<float, 6> coords{0.f,0.f,32.f,0.f,0.f,32.f};
         std::memcpy(vf0.data(), coords.data(), sizeof(coords));
-        const auto copy = dotm::prepare_xenos_full_surface_resolve(draw, 32, 32);
+        const auto copy = dotm::prepare_xenos_surface_resolve(draw, 32, 32);
         check(copy.has_value() && copy->physical_address == 0x4000U &&
               copy->tiled_layout.pitch_elements == 32U &&
               copy->required_physical_bytes == 4096U,
@@ -58,27 +58,55 @@ int main() {
         check(dotm::detile_xenos_2d_elements(resolved, copy->tiled_layout) ==
                   original, "Guest physical tiled EDRAM resolve preserves every color texel");
         draw.register_words[0x2208U] = 4U; // Ordinary color/depth DRAW.
-        check(!dotm::prepare_xenos_full_surface_resolve(draw, 32, 32),
+        check(!dotm::prepare_xenos_surface_resolve(draw, 32, 32),
               "Normal original PM4 raster draw is not an EDRAM resolve");
         draw.register_words[0x2208U] = 6U;
         const std::array<float,6> partial{0.f,0.f,16.f,0.f,0.f,32.f};
         std::memcpy(vf0.data(), partial.data(), sizeof(partial));
-        rejects([&] { (void)dotm::prepare_xenos_full_surface_resolve(draw,32,32); });
+        const auto partial_copy = dotm::prepare_xenos_surface_resolve(draw,32,32);
+        check(partial_copy && partial_copy->left == 0U &&
+              partial_copy->top == 0U && partial_copy->right == 16U &&
+              partial_copy->bottom == 32U,
+              "Original partial resolve uses the actual VF0 rectangle");
+        std::vector<std::uint8_t> readback(32U * 136U, 0);
+        for (std::uint32_t y = 0; y < 32U; ++y)
+            for (std::uint32_t x = 0; x < 32U; ++x)
+                for (std::uint32_t c = 0; c < 4U; ++c)
+                    readback[y * 136U + x * 4U + c] =
+                        static_cast<std::uint8_t>((x * 7U + y * 11U + c * 23U) & 255U);
+        std::vector<std::uint8_t> partial_tiles(partial_copy->required_physical_bytes, 0xA5);
+        dotm::write_xenos_color_resolve_rgba8(
+            *partial_copy, readback.data(), 136U, 32U, partial_tiles);
+        const auto linear_partial = dotm::detile_xenos_2d_elements(
+            partial_tiles, partial_copy->tiled_layout);
+        for (std::uint32_t y = 0; y < 32U; ++y)
+            for (std::uint32_t x = 0; x < 32U; ++x)
+                for (std::uint32_t c = 0; c < 4U; ++c)
+                    check(linear_partial[(y * 32U + x) * 4U + c] ==
+                          (x < 16U ? readback[y * 136U + x * 4U + c] : 0xA5U),
+                          "Partial resolve overwrote an unrelated physical tile");
+        rejects([&] { dotm::write_xenos_color_resolve_rgba8(
+            *partial_copy, readback.data(), 32U, 32U, partial_tiles); });
+        rejects([&] { dotm::write_xenos_color_resolve_rgba8(
+            *partial_copy, readback.data(), 136U, 16U, partial_tiles); });
+        const std::array<float,6> invalid{0.f,0.f,16.f,0.f,8.f,32.f};
+        std::memcpy(vf0.data(), invalid.data(), sizeof(invalid));
+        rejects([&] { (void)dotm::prepare_xenos_surface_resolve(draw,32,32); });
         std::memcpy(vf0.data(), coords.data(), sizeof(coords));
         draw.register_words[0x2000U] |= 1U << 16U; // 2x MSAA.
-        rejects([&] { (void)dotm::prepare_xenos_full_surface_resolve(draw,32,32); });
+        rejects([&] { (void)dotm::prepare_xenos_surface_resolve(draw,32,32); });
         draw.register_words[0x2000U] = 32U;
         draw.register_words[0x231BU] = 7U << 7U; // 10:10:10:2 not RGBA8.
-        rejects([&] { (void)dotm::prepare_xenos_full_surface_resolve(draw,32,32); });
+        rejects([&] { (void)dotm::prepare_xenos_surface_resolve(draw,32,32); });
         draw.register_words[0x231BU] = 6U << 7U;
         draw.register_words[0x2319U] = 0x4004U; // Unaligned destination.
-        rejects([&] { (void)dotm::prepare_xenos_full_surface_resolve(draw,32,32); });
+        rejects([&] { (void)dotm::prepare_xenos_surface_resolve(draw,32,32); });
         draw.register_words[0x2319U] = 0x4000U;
         draw.register_words[0x2318U] = 1U << 8U; // Guest color clear needs separate pass.
-        rejects([&] { (void)dotm::prepare_xenos_full_surface_resolve(draw,32,32); });
+        rejects([&] { (void)dotm::prepare_xenos_surface_resolve(draw,32,32); });
         draw.register_words[0x2318U] = 0U;
         draw.vertex_fetch_constants.clear();
-        rejects([&] { (void)dotm::prepare_xenos_full_surface_resolve(draw,32,32); });
+        rejects([&] { (void)dotm::prepare_xenos_surface_resolve(draw,32,32); });
         dotm::XenosEdramColorLifetime lifetime;
         check(!lifetime.can_resolve(), "Uninitialized host EDRAM must not resolve");
         lifetime.on_original_draw_submitted();
@@ -92,7 +120,7 @@ int main() {
         lifetime.on_original_draw_submitted();
         check(lifetime.can_resolve(),
               "New guest draw enables full-surface EDRAM resolve again");
-        std::cout << "Original PM4 EDRAM full color resolve plan and tiled data PASS\n";
+        std::cout << "Original PM4 EDRAM full and partial color tiled resolve PASS\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << e.what() << '\n';

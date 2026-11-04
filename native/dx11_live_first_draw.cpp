@@ -612,7 +612,7 @@ struct Dx11LiveFirstDraw::Impl {
         return inserted->second;
     }
     bool resolve_original_edram_copy(const GpuDrawCommand& draw) {
-        const auto operation = prepare_xenos_full_surface_resolve(
+        const auto operation = prepare_xenos_surface_resolve(
             draw, width, height);
         if (!operation)
             throw std::runtime_error("Native EDRAM resolve called without RB copy mode");
@@ -639,16 +639,10 @@ struct Dx11LiveFirstDraw::Impl {
         check(context->Map(edram_readback.Get(), 0U, D3D11_MAP_READ, 0U, &source),
               "Read actual Xenos shader output for native EDRAM resolve");
         try {
-            for (std::uint32_t y = 0U; y < height; ++y) {
-                for (std::uint32_t x = 0U; x < width; ++x) {
-                    const auto destination = xenos_tiled_2d_offset(
-                        x, y, operation->tiled_layout.pitch_elements, 4U);
-                    const auto* rgba =
-                        static_cast<const std::uint8_t*>(source.pData) +
-                        std::size_t(y) * source.RowPitch + std::size_t(x) * 4U;
-                    std::memcpy(physical.data() + destination, rgba, 4U);
-                }
-            }
+            write_xenos_color_resolve_rgba8(
+                *operation,
+                static_cast<const std::uint8_t*>(source.pData),
+                source.RowPitch, height, physical);
         } catch (...) {
             context->Unmap(edram_readback.Get(), 0U);
             throw;
