@@ -8,6 +8,7 @@
 #include "xenos_draw_pipeline.hpp"
 #include "xenos_shader_constants.hpp"
 #include "xenos_sampler_state.hpp"
+#include "xenos_depth_state.hpp"
 #include "xenos_texture_upload.hpp"
 #include <windows.h>
 #include <d3d11.h>
@@ -25,6 +26,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -315,6 +317,15 @@ struct Dx11LiveFirstDraw::Impl {
     ComPtr<ID3D11GeometryShader> rectangle_gs;
     ComPtr<ID3D11RasterizerState> raster;
     std::map<XenosShaderPair, CachedPipeline> pipelines;
+    struct DepthAttachment {
+        ComPtr<ID3D11Texture2D> texture;
+        ComPtr<ID3D11DepthStencilView> view;
+    };
+    // Separate original EDRAM depth bases retain their own depth surfaces.
+    // Full guest EDRAM aliasing, resolves and clears require further support.
+    std::map<std::uint32_t, DepthAttachment> depth_attachments;
+    using DepthStateKey = std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>;
+    std::map<DepthStateKey, ComPtr<ID3D11DepthStencilState>> depth_states;
 
     void initialize() {
         if (device) return;
@@ -362,6 +373,76 @@ struct Dx11LiveFirstDraw::Impl {
         check(device->CreateRasterizerState(&rs, &raster),
               "Create original Xenos rasterizer");
         ShowWindow(window, SW_SHOW);
+    }
+    ID3D11DepthStencilView* bind_original_depth_state(
+            const GpuDrawCommand& draw) {
+        const auto state = decode_xenos_depth_state(draw.register_words);
+        if (!state.depth_enable && !state.stencil_enable) {
+            context->OMSetDepthStencilState(nullptr, 0U);
+            return nullptr;
+        }
+        const DepthStateKey key{
+            draw.register_words[0x2200U],
+            draw.register_words[0x210DU],
+            draw.register_words[0x210CU]};
+        auto depth_state = depth_states.find(key);
+        if (depth_state == depth_states.end()) {
+            D3D11_DEPTH_STENCIL_DESC desc{};
+            desc.DepthEnable = state.depth_enable ? TRUE : FALSE;
+            desc.DepthWriteMask = state.depth_write
+                ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
+            // R400 comparison and stencil op encodings are zero-based;
+            // D3D11's corresponding enumerators start at one.
+            desc.DepthFunc = static_cast<D3D11_COMPARISON_FUNC>(
+                state.depth_compare + 1U);
+            desc.StencilEnable = state.stencil_enable ? TRUE : FALSE;
+            desc.StencilReadMask = state.stencil_read_mask;
+            desc.StencilWriteMask = state.stencil_write_mask;
+            const auto fill_face = [](D3D11_DEPTH_STENCILOP_DESC& output,
+                                      const XenosStencilFace& original) {
+                output.StencilFunc = static_cast<D3D11_COMPARISON_FUNC>(
+                    original.compare + 1U);
+                output.StencilFailOp = static_cast<D3D11_STENCIL_OP>(
+                    original.fail + 1U);
+                output.StencilDepthFailOp = static_cast<D3D11_STENCIL_OP>(
+                    original.depth_fail + 1U);
+                output.StencilPassOp = static_cast<D3D11_STENCIL_OP>(
+                    original.pass + 1U);
+            };
+            fill_face(desc.FrontFace, state.front);
+            fill_face(desc.BackFace, state.back);
+            ComPtr<ID3D11DepthStencilState> created;
+            check(device->CreateDepthStencilState(&desc, &created),
+                  "Create actual original PM4 depth/stencil state");
+            depth_state = depth_states.emplace(key, std::move(created)).first;
+        }
+        context->OMSetDepthStencilState(depth_state->second.Get(),
+                                        state.stencil_ref);
+        auto depth = depth_attachments.find(state.edram_base_tiles);
+        if (depth == depth_attachments.end()) {
+            D3D11_TEXTURE2D_DESC tex{};
+            tex.Width = width;
+            tex.Height = height;
+            tex.MipLevels = 1;
+            tex.ArraySize = 1;
+            tex.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+            tex.SampleDesc.Count = 1;
+            tex.Usage = D3D11_USAGE_DEFAULT;
+            tex.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+            DepthAttachment attachment;
+            check(device->CreateTexture2D(&tex, nullptr, &attachment.texture),
+                  "Allocate original Xenos depth EDRAM host attachment");
+            check(device->CreateDepthStencilView(attachment.texture.Get(),
+                  nullptr, &attachment.view),
+                  "Create original Xenos depth EDRAM view");
+            // Host depth is initialized on first use while genuine guest
+            // depth clears / EDRAM tile resolves are not implemented yet.
+            context->ClearDepthStencilView(attachment.view.Get(),
+                  D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+            depth = depth_attachments.emplace(state.edram_base_tiles,
+                                               std::move(attachment)).first;
+        }
+        return depth->second.view.Get();
     }
     CachedPipeline& pipeline_for(const GpuDrawCommand& draw) {
         const auto key = xenos_shader_pair(draw);
@@ -453,7 +534,8 @@ struct Dx11LiveFirstDraw::Impl {
         vp.MaxDepth = 1.f;
         context->RSSetViewports(1, &vp);
         context->RSSetState(raster.Get());
-        context->OMSetRenderTargets(1, target.GetAddressOf(), nullptr);
+        auto* depth_view = bind_original_depth_state(draw);
+        context->OMSetRenderTargets(1, target.GetAddressOf(), depth_view);
         context->IASetInputLayout(pipeline.input.Get());
         context->IASetPrimitiveTopology(map_topology(native.topology));
         context->VSSetShader(pipeline.vs.Get(), nullptr, 0);
