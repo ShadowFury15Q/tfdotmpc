@@ -42,6 +42,16 @@ int main() {
           plain.streams[0].bytes.size() == 64 &&
           plain.streams[1].bytes.size() == 16,
           "PM4 auto-indexed multi-slot draw validation incorrect");
+    auto depth_draw = draw;
+    depth_draw.pixel_shader_words.clear();
+    auto depth = dotm::prepare_original_xenos_draw(depth_draw, layout, true);
+    check(depth.shaders.vertex == plain.shaders.vertex &&
+          depth.shaders.pixel == 0U &&
+          depth.count == plain.count &&
+          depth.streams[0].bytes == plain.streams[0].bytes,
+          "Original depth-only PM4 draw uses its real VS and DMA without a PS");
+    fail([&] { (void)dotm::prepare_original_xenos_draw(depth_draw, layout); },
+         "Color pass must reject missing original pixel microcode");
     draw.source_select = 0;
     draw.index_size_bytes = 2;
     draw.decoded_indices = {0, 2, 7, 1};

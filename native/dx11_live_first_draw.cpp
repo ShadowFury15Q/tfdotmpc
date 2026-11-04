@@ -546,8 +546,9 @@ struct Dx11LiveFirstDraw::Impl {
         context->OMSetBlendState(it->second.Get(), state.constant_factor.data(),
                                  0xFFFFFFFFU);
     }
-    CachedPipeline& pipeline_for(const GpuDrawCommand& draw) {
-        const auto key = xenos_shader_pair(draw);
+    CachedPipeline& pipeline_for(const GpuDrawCommand& draw,
+                                 bool depth_only) {
+        const auto key = xenos_shader_pair(draw, depth_only);
         if (auto found = pipelines.find(key); found != pipelines.end())
             return found->second;
         if (pipelines.size() >= 512)
@@ -556,6 +557,7 @@ struct Dx11LiveFirstDraw::Impl {
         // draws with different index counts and physical vertex allocations.
         // Never tie pipeline selection to a single initiator/first frame.
         const bool known_rectangle_pair =
+            !depth_only &&
             key.vertex == 0x539EA9E08AA83F0CULL &&
             key.pixel == 0x438C2AF84C78A133ULL;
         const auto vs_name = xenos_shader_hex(key.vertex);
@@ -580,16 +582,18 @@ struct Dx11LiveFirstDraw::Impl {
             ps_path = shader_root / "pixel.hlsl";
         const auto vs_blob = compile_source(private_hlsl(vs_path), "vs_5_0",
                                             "original-xenos-vertex");
-        const auto ps_blob = compile_source(private_hlsl(ps_path), "ps_5_0",
-                                            "original-xenos-pixel");
         p.vs_resources = reflect_shader_resources(
             vs_blob.Get(), XenosShaderStage::vertex);
-        p.ps_resources = reflect_shader_resources(
-            ps_blob.Get(), XenosShaderStage::pixel);
         check(device->CreateVertexShader(vs_blob->GetBufferPointer(),
             vs_blob->GetBufferSize(), nullptr, &p.vs), "Create original Xenos VS");
-        check(device->CreatePixelShader(ps_blob->GetBufferPointer(),
-            ps_blob->GetBufferSize(), nullptr, &p.ps), "Create original Xenos PS");
+        if (!depth_only) {
+            const auto ps_blob = compile_source(private_hlsl(ps_path), "ps_5_0",
+                                                "original-xenos-pixel");
+            p.ps_resources = reflect_shader_resources(
+                ps_blob.Get(), XenosShaderStage::pixel);
+            check(device->CreatePixelShader(ps_blob->GetBufferPointer(),
+                ps_blob->GetBufferSize(), nullptr, &p.ps), "Create original Xenos PS");
+        }
         std::vector<D3D11_INPUT_ELEMENT_DESC> elements;
         std::map<std::uint32_t, UINT> slots;
         for (const auto& attribute : p.layout.attributes) {
@@ -664,14 +668,19 @@ struct Dx11LiveFirstDraw::Impl {
         // not accidentally modify the color EDRAM attachment.
         const auto mode = decode_xenos_edram_draw_mode(draw.register_words);
         if (mode == XenosEdramDrawMode::no_operation) return true;
-        if (mode == XenosEdramDrawMode::depth_only)
-            throw std::runtime_error(
-                "Original Xenos RB depth-only pass requires separate depth-only renderer");
+        const bool depth_only = mode == XenosEdramDrawMode::depth_only;
         initialize();
         if (mode == XenosEdramDrawMode::copy)
             return resolve_original_edram_copy(draw);
-        auto& pipeline = pipeline_for(draw);
-        const auto native = prepare_original_xenos_draw(draw, pipeline.layout);
+        if (depth_only) {
+            const auto depth_state = decode_xenos_depth_state(draw.register_words);
+            if (!depth_state.depth_enable && !depth_state.stencil_enable)
+                throw std::runtime_error(
+                    "Original Xenos depth-only draw has no active depth/stencil attachment");
+        }
+        auto& pipeline = pipeline_for(draw, depth_only);
+        const auto native = prepare_original_xenos_draw(
+            draw, pipeline.layout, depth_only);
         if (native.topology == XenosHostTopology::rectangle_list &&
             (native.shaders.vertex != 0x539EA9E08AA83F0CULL ||
              native.shaders.pixel != 0x438C2AF84C78A133ULL))
@@ -698,15 +707,20 @@ struct Dx11LiveFirstDraw::Impl {
                           guest_rect.right, guest_rect.bottom};
         context->RSSetScissorRects(1, &scissor);
         auto* depth_view = bind_original_depth_state(draw);
-        bind_original_blend_state(draw);
-        context->OMSetRenderTargets(1, edram_target.GetAddressOf(), depth_view);
+        if (depth_only) {
+            context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFU);
+            context->OMSetRenderTargets(0, nullptr, depth_view);
+        } else {
+            bind_original_blend_state(draw);
+            context->OMSetRenderTargets(1, edram_target.GetAddressOf(), depth_view);
+        }
         context->IASetInputLayout(pipeline.input.Get());
         context->IASetPrimitiveTopology(map_topology(native.topology));
         context->VSSetShader(pipeline.vs.Get(), nullptr, 0);
         context->GSSetShader(
             native.topology == XenosHostTopology::rectangle_list ?
                 rectangle_gs.Get() : nullptr, nullptr, 0);
-        context->PSSetShader(pipeline.ps.Get(), nullptr, 0);
+        context->PSSetShader(depth_only ? nullptr : pipeline.ps.Get(), nullptr, 0);
         // PM4 can modify VS and PS constant windows between DRAWs using the
         // SAME shader pair. Re-upload the original float bits each time.
         // Reuse constant-buffer allocations, but write actual PM4 float
@@ -747,7 +761,8 @@ struct Dx11LiveFirstDraw::Impl {
         context->VSSetConstantBuffers(0, 3, null_constant_buffers);
         context->PSSetConstantBuffers(0, 3, null_constant_buffers);
         upload_float_buffers(pipeline.vs_resources, XenosShaderStage::vertex);
-        upload_float_buffers(pipeline.ps_resources, XenosShaderStage::pixel);
+        if (!depth_only)
+            upload_float_buffers(pipeline.ps_resources, XenosShaderStage::pixel);
         // Bind original live texture DMA, never placeholder resources. A shader
         // requiring an unsupported descriptor layout fails before Draw().
         std::map<UINT, ComPtr<ID3D11ShaderResourceView>> views;
@@ -839,7 +854,7 @@ struct Dx11LiveFirstDraw::Impl {
             }
         };
         bind_stage(pipeline.vs_resources, true);
-        bind_stage(pipeline.ps_resources, false);
+        if (!depth_only) bind_stage(pipeline.ps_resources, false);
         std::vector<ComPtr<ID3D11Buffer>> host_vbs;
         host_vbs.reserve(native.streams.size());
         for (std::size_t i = 0; i < native.streams.size(); ++i) {
@@ -896,7 +911,7 @@ struct Dx11LiveFirstDraw::Impl {
         // ordering and Present flushes accumulated work at the frame boundary.
         // A validated original guest VdSwap request triggers host composition.
         ++pending_draw_count;
-        edram_lifetime.on_original_draw_submitted();
+        if (!depth_only) edram_lifetime.on_original_draw_submitted();
         return true;
     }
     void notify_swap(const GpuSwapRequest& request) {

@@ -40,9 +40,12 @@ struct XenosShaderPair {
     }
     bool operator==(const XenosShaderPair& other) const noexcept = default;
 };
-inline XenosShaderPair xenos_shader_pair(const GpuDrawCommand& draw) {
+inline XenosShaderPair xenos_shader_pair(const GpuDrawCommand& draw,
+                                          bool depth_only = false) {
+    // Depth-only Xenos passes do not execute a pixel shader. The guest may
+    // leave the PS bank unset; no substitute shader is inserted into the draw.
     return {xenos_shader_hash(draw.vertex_shader_words),
-            xenos_shader_hash(draw.pixel_shader_words)};
+            depth_only ? 0U : xenos_shader_hash(draw.pixel_shader_words)};
 }
 inline std::filesystem::path xenos_shader_source(
         const std::filesystem::path& root, const char* stage,
@@ -196,7 +199,8 @@ struct XenosNativeDraw {
 // No guest pointer survives this operation. Unsupported Xenos features fail
 // before acknowledging the ring (visibility query, instancing, tessellation).
 inline XenosNativeDraw prepare_original_xenos_draw(
-        const GpuDrawCommand& draw, const XenosVertexLayout& layout) {
+        const GpuDrawCommand& draw, const XenosVertexLayout& layout,
+        bool depth_only = false) {
     if (draw.has_visibility_query_token)
         throw std::runtime_error("Unresolved original Xenos visibility predicate");
     if (draw.major_mode != 0)
@@ -262,7 +266,7 @@ inline XenosNativeDraw prepare_original_xenos_draw(
     }
     // Shader pair is part of the plan, not the primitive number. This works
     // for consecutive original draws using different VS/PS combinations.
-    out.shaders = xenos_shader_pair(draw);
+    out.shaders = xenos_shader_pair(draw, depth_only);
     std::map<std::uint32_t, std::uint32_t> slots;
     for (const auto& a : layout.attributes)
         slots[a.fetch_slot] = a.stride;
