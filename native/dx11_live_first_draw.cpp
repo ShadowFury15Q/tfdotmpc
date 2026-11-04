@@ -24,6 +24,8 @@
 #include <iterator>
 #include <map>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -303,10 +305,13 @@ struct Dx11LiveFirstDraw::Impl {
     explicit Impl(std::filesystem::path root, std::filesystem::path output)
         : shader_root(std::move(root)), bmp(std::move(output)) {}
     std::filesystem::path shader_root, bmp;
-    bool stopped = false, wrote_bmp = false;
+    std::atomic<bool> stopped{false};
+    bool wrote_bmp = false;
     std::uint64_t pending_draw_count = 0;
     std::uint64_t last_presented_request = 0;
     std::atomic<std::uint64_t> requested_swaps{0};
+    std::mutex swap_request_mutex, dx11_context_mutex;
+    std::optional<GpuSwapRequest> latest_swap_request;
     HWND window = nullptr;
     UINT width = 0, height = 0;
     ComPtr<ID3D11Device> device;
@@ -506,7 +511,8 @@ struct Dx11LiveFirstDraw::Impl {
         return inserted->second;
     }
     bool submit(const GpuDrawCommand& draw) {
-        if (stopped) return false;
+        std::lock_guard lock(dx11_context_mutex);
+        if (stopped.load(std::memory_order_acquire)) return false;
         // Never acknowledge unknown original conditions or geometry. Resource
         // captures happen in the *live* GPU callback under its read window.
         initialize();
@@ -703,29 +709,73 @@ struct Dx11LiveFirstDraw::Impl {
     void notify_swap(const GpuSwapRequest& request) {
         if (!request.width || !request.height || !request.physical_address)
             return;
+        // Observers run under the guest GPU lock, potentially on the PPC
+        // thread. Queue by value; never enter D3D11 or reenter GPU here.
+        {
+            std::lock_guard lock(swap_request_mutex);
+            latest_swap_request = request;
+        }
         requested_swaps.fetch_add(1, std::memory_order_release);
     }
     void pump() {
-        if (stopped) return;
+        if (stopped.load(std::memory_order_acquire)) return;
         MSG message{};
         while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
-            if (message.message == WM_QUIT) { stopped = true; break; }
+            if (message.message == WM_QUIT) {
+                stopped.store(true, std::memory_order_release);
+                break;
+            }
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
         const auto target_swap = requested_swaps.load(std::memory_order_acquire);
-        if (!device || !pending_draw_count ||
-            target_swap <= last_presented_request)
+        if (target_swap <= last_presented_request ||
+            stopped.load(std::memory_order_acquire))
             return;
-        // This is a preview of accumulated native draws at the VdSwap
-        // request boundary. The real Xenos EDRAM resolve/frontbuffer
-        // ownership must still be implemented to claim a full game frame.
+        GpuSwapRequest request;
+        {
+            std::lock_guard lock(swap_request_mutex);
+            if (!latest_swap_request) return;
+            request = *latest_swap_request;
+        }
+        // Acquire the ACTUAL guest frontbuffer before the DX11 context
+        // mutex. PM4 submit owns the GPU lock first, so reversing this
+        // order would deadlock the PPC renderer on concurrent VdSwap.
+        // If the original game has not resolved EDRAM into this allocation,
+        // those unresolved guest pixels (not our preview DRAWs) are shown.
+        const auto scanout = vd_bound_copy_frontbuffer_scanout(request);
+        std::lock_guard lock(dx11_context_mutex);
+        if (stopped.load(std::memory_order_acquire)) return;
+        initialize();
+        context->OMSetRenderTargets(0, nullptr, nullptr);
+        if (width != scanout.width || height != scanout.height) {
+            // The original scanout width/height, not a hard-coded host
+            // window dimension, owns the scanout buffer dimensions.
+            context->ClearState();
+            target.Reset();
+            surface.Reset();
+            depth_attachments.clear();
+            check(swap->ResizeBuffers(1, scanout.width, scanout.height,
+                    DXGI_FORMAT_R8G8B8A8_UNORM, 0),
+                  "Resize DXGI buffer to original Xbox frontbuffer");
+            width = scanout.width;
+            height = scanout.height;
+            check(swap->GetBuffer(0, IID_PPV_ARGS(&surface)),
+                  "Get original Xbox scanout DXGI surface");
+            check(device->CreateRenderTargetView(surface.Get(), nullptr, &target),
+                  "Create original scanout RTV");
+        }
+        // No fake clear, debug geometry or host preview framebuffer:
+        // upload the independently validated guest scanout bytes verbatim.
+        context->UpdateSubresource(surface.Get(), 0, nullptr,
+                                   scanout.pixels.data(),
+                                   scanout.row_pitch, 0);
         if (!bmp.empty() && !wrote_bmp) {
             save_gpu_draw_bmp(device.Get(), context.Get(), surface.Get(), bmp);
             wrote_bmp = true;
         }
         check(swap->Present(1U, 0U),
-              "Present accumulated original Xenos PM4 draw batch");
+              "Present original Xbox VdSwap physical frontbuffer");
         pending_draw_count = 0;
         last_presented_request = target_swap;
     }
