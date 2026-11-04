@@ -6,6 +6,7 @@
 #include "dx11_live_first_draw.hpp"
 #include "live_xenos_first_draw.hpp"
 #include "xenos_draw_pipeline.hpp"
+#include "xenos_texture_upload.hpp"
 #include <windows.h>
 #include <d3d11.h>
 #include <d3dcompiler.h>
@@ -215,7 +216,11 @@ DXGI_FORMAT map_format(XenosInputFormat fmt) {
 }
 // Vertex/pixel shaders referencing unbound textures, constant buffers or
 // samplers must never be submitted as if they were valid original game output.
-void reject_missing_shader_resources(ID3DBlob* blob) {
+struct XenosShaderResources {
+    std::vector<UINT> textures;
+    std::vector<UINT> samplers;
+};
+XenosShaderResources reflect_shader_resources(ID3DBlob* blob) {
     ComPtr<ID3D11ShaderReflection> reflection;
     check(D3DReflect(blob->GetBufferPointer(), blob->GetBufferSize(),
                      IID_ID3D11ShaderReflection,
@@ -223,9 +228,31 @@ void reject_missing_shader_resources(ID3DBlob* blob) {
           "Reflect original translated shader resources");
     D3D11_SHADER_DESC desc{};
     check(reflection->GetDesc(&desc), "Describe original translated shader");
-    if (desc.BoundResources)
-        throw std::runtime_error(
-            "Original shader uses Xenos resources not yet translated to DX11");
+    XenosShaderResources resources;
+    for (UINT i = 0; i < desc.BoundResources; ++i) {
+        D3D11_SHADER_INPUT_BIND_DESC binding{};
+        check(reflection->GetResourceBindingDesc(i, &binding),
+              "Reflect original Xenos shader binding");
+        if (binding.BindCount != 1)
+            throw std::runtime_error("Unbounded Xenos descriptor array requires DX12 backend");
+        if (binding.Type == D3D_SIT_TEXTURE && binding.Dimension == D3D_SRV_DIMENSION_TEXTURE2D)
+            resources.textures.push_back(binding.BindPoint);
+        else if (binding.Type == D3D_SIT_SAMPLER)
+            resources.samplers.push_back(binding.BindPoint);
+        else
+            throw std::runtime_error("Unsupported original Xenos shader resource binding");
+    }
+    return resources;
+}
+DXGI_FORMAT xenos_texture_format(std::uint32_t format) {
+    switch (format) {
+        case 6: return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case 18: return DXGI_FORMAT_BC1_UNORM;
+        case 19: return DXGI_FORMAT_BC2_UNORM;
+        case 20: return DXGI_FORMAT_BC3_UNORM;
+        case 49: return DXGI_FORMAT_BC5_UNORM;
+        default: throw std::runtime_error("Unsupported original Xenos texture format");
+    }
 }
 LRESULT CALLBACK live_wndproc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
     if (message == WM_CLOSE) { DestroyWindow(window); return 0; }
@@ -244,6 +271,7 @@ struct Dx11LiveFirstDraw::Impl {
         ComPtr<ID3D11VertexShader> vs;
         ComPtr<ID3D11PixelShader> ps;
         ComPtr<ID3D11InputLayout> input;
+        XenosShaderResources vs_resources, ps_resources;
     };
     explicit Impl(std::filesystem::path root, std::filesystem::path output)
         : shader_root(std::move(root)), bmp(std::move(output)) {}
@@ -346,8 +374,8 @@ struct Dx11LiveFirstDraw::Impl {
                                             "original-xenos-vertex");
         const auto ps_blob = compile_source(private_hlsl(ps_path), "ps_5_0",
                                             "original-xenos-pixel");
-        reject_missing_shader_resources(vs_blob.Get());
-        reject_missing_shader_resources(ps_blob.Get());
+        p.vs_resources = reflect_shader_resources(vs_blob.Get());
+        p.ps_resources = reflect_shader_resources(ps_blob.Get());
         check(device->CreateVertexShader(vs_blob->GetBufferPointer(),
             vs_blob->GetBufferSize(), nullptr, &p.vs), "Create original Xenos VS");
         check(device->CreatePixelShader(ps_blob->GetBufferPointer(),
@@ -406,6 +434,50 @@ struct Dx11LiveFirstDraw::Impl {
             native.topology == XenosHostTopology::rectangle_list ?
                 rectangle_gs.Get() : nullptr, nullptr, 0);
         context->PSSetShader(pipeline.ps.Get(), nullptr, 0);
+        // Bind original live texture DMA, never placeholder resources. A shader
+        // requiring an unsupported descriptor layout fails before Draw().
+        std::map<UINT, ComPtr<ID3D11ShaderResourceView>> views;
+        std::map<UINT, ComPtr<ID3D11SamplerState>> samplers;
+        const auto bind_stage = [&](const XenosShaderResources& resources, bool vertex) {
+            for (const UINT slot : resources.textures) {
+                if (slot >= D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT)
+                    throw std::runtime_error("Xenos texture register exceeds D3D11 limit");
+                if (!views.count(slot)) {
+                    const auto image = prepare_xenos_texture_2d(draw, slot);
+                    D3D11_TEXTURE2D_DESC texture_desc{};
+                    texture_desc.Width = image.width;
+                    texture_desc.Height = image.height;
+                    texture_desc.MipLevels = 1;
+                    texture_desc.ArraySize = 1;
+                    texture_desc.Format = xenos_texture_format(image.format);
+                    texture_desc.SampleDesc.Count = 1;
+                    texture_desc.Usage = D3D11_USAGE_IMMUTABLE;
+                    texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+                    D3D11_SUBRESOURCE_DATA source{};
+                    source.pSysMem = image.bytes.data();
+                    source.SysMemPitch = image.row_pitch;
+                    ComPtr<ID3D11Texture2D> texture;
+                    check(device->CreateTexture2D(&texture_desc, &source, &texture),
+                          "Upload original PM4 texture from guest memory");
+                    ComPtr<ID3D11ShaderResourceView> view;
+                    check(device->CreateShaderResourceView(texture.Get(), nullptr, &view),
+                          "Create original PM4 texture view");
+                    views.emplace(slot, std::move(view));
+                }
+                auto* srv = views.at(slot).Get();
+                if (vertex) context->VSSetShaderResources(slot, 1, &srv);
+                else context->PSSetShaderResources(slot, 1, &srv);
+            }
+            for (const UINT slot : resources.samplers) {
+                if (slot >= D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT)
+                    throw std::runtime_error("Xenos sampler register exceeds D3D11 limit");
+                // Sampler-state decoding is required before enabling sampling:
+                // default filtering/wrap would silently change game output.
+                throw std::runtime_error("Original Xenos sampler state not decoded");
+            }
+        };
+        bind_stage(pipeline.vs_resources, true);
+        bind_stage(pipeline.ps_resources, false);
         std::vector<ComPtr<ID3D11Buffer>> host_vbs;
         host_vbs.reserve(native.streams.size());
         for (std::size_t i = 0; i < native.streams.size(); ++i) {
