@@ -9,6 +9,7 @@
 #include <map>
 #include <sstream>
 #include <stdexcept>
+#include <tuple>
 #include <string>
 #include <utility>
 #include <vector>
@@ -214,7 +215,9 @@ inline XenosNativeDraw prepare_original_xenos_draw(
     } else if (draw.source_select != 2) {
         throw std::runtime_error("Unsupported original Xenos immediate or reserved index source");
     }
-    std::uint32_t max_index = out.count - 1;
+    // Indexed primitives may legally reuse a single vertex many times;
+    // don't read the (index_count - 1)th vertex unless it is referenced.
+    std::uint32_t max_index = out.indices.empty() ? out.count - 1 : 0;
     for (auto index : out.indices) {
         if (index >= 1'000'000U)
             throw std::runtime_error("Original Xenos index exceeds host limit");

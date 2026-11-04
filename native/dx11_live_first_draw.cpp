@@ -313,7 +313,12 @@ struct Dx11LiveFirstDraw::Impl {
             return found->second;
         if (pipelines.size() >= 512)
             throw std::runtime_error("Original Xenos DX11 shader cache limit reached");
-        const bool verified_first = is_original_first_xenos_draw(draw);
+        // The verified original shader pair may be reused by many later PM4
+        // draws with different index counts and physical vertex allocations.
+        // Never tie pipeline selection to a single initiator/first frame.
+        const bool known_rectangle_pair =
+            key.vertex == 0x539EA9E08AA83F0CULL &&
+            key.pixel == 0x438C2AF84C78A133ULL;
         const auto vs_name = xenos_shader_hex(key.vertex);
         const auto ps_name = xenos_shader_hex(key.pixel);
         const auto layout_file = shader_root / "layouts" / (vs_name + ".layout");
@@ -321,7 +326,7 @@ struct Dx11LiveFirstDraw::Impl {
         p.key = key;
         p.layout = std::filesystem::exists(layout_file)
             ? XenosVertexLayout::load(layout_file)
-            : verified_first
+            : known_rectangle_pair
                 ? XenosVertexLayout::original_first_rectangle()
                 : throw std::runtime_error(
                     "Missing original Xenos vertex shader reflection/layout: " +
@@ -330,9 +335,9 @@ struct Dx11LiveFirstDraw::Impl {
         auto ps_path = xenos_shader_source(shader_root, "pixel", key.pixel);
         // Preserve the existing private first-draw XenosRecomp output format
         // only for the verified original first draw's exact shader hashes.
-        if (verified_first && !std::filesystem::exists(vs_path))
+        if (known_rectangle_pair && !std::filesystem::exists(vs_path))
             vs_path = shader_root / "vertex.hlsl";
-        if (verified_first && !std::filesystem::exists(ps_path))
+        if (known_rectangle_pair && !std::filesystem::exists(ps_path))
             ps_path = shader_root / "pixel.hlsl";
         const auto vs_blob = compile_source(private_hlsl(vs_path), "vs_5_0",
                                             "original-xenos-vertex");
@@ -369,7 +374,8 @@ struct Dx11LiveFirstDraw::Impl {
         auto& pipeline = pipeline_for(draw);
         const auto native = prepare_original_xenos_draw(draw, pipeline.layout);
         if (native.topology == XenosHostTopology::rectangle_list &&
-            !is_original_first_xenos_draw(draw))
+            (native.shaders.vertex != 0x539EA9E08AA83F0CULL ||
+             native.shaders.pixel != 0x438C2AF84C78A133ULL))
             throw std::runtime_error(
                 "Generic Xenos rectangle shader output reflection not implemented");
         if (native.topology == XenosHostTopology::rectangle_list && !rectangle_gs) {
@@ -431,9 +437,9 @@ struct Dx11LiveFirstDraw::Impl {
             context->IASetIndexBuffer(ib.Get(), DXGI_FORMAT_R32_UINT, 0);
             context->DrawIndexed(native.count, 0, 0);
         }
-        // The draw is GPU-submitted; NO per-primitive Present() here.
+        // Do not stall the CPU/GPU for each primitive. D3D11 preserves draw
+        // ordering and Present flushes accumulated work at the frame boundary.
         // A validated original guest VdSwap request triggers host composition.
-        context->Flush();
         ++pending_draw_count;
         return true;
     }
