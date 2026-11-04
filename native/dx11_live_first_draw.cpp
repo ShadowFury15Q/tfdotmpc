@@ -9,6 +9,7 @@
 #include "xenos_shader_constants.hpp"
 #include "xenos_sampler_state.hpp"
 #include "xenos_depth_state.hpp"
+#include "xenos_blend_state.hpp"
 #include "xenos_edram_resolve.hpp"
 #include "xenos_edram_color_lifetime.hpp"
 #include "xenos_texture_upload.hpp"
@@ -344,6 +345,8 @@ struct Dx11LiveFirstDraw::Impl {
     std::map<std::uint32_t, DepthAttachment> depth_attachments;
     using DepthStateKey = std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>;
     std::map<DepthStateKey, ComPtr<ID3D11DepthStencilState>> depth_states;
+    using BlendKey = std::pair<std::uint32_t, std::uint8_t>;
+    std::map<BlendKey, ComPtr<ID3D11BlendState>> blend_states;
 
     void initialize() {
         if (device) return;
@@ -490,6 +493,57 @@ struct Dx11LiveFirstDraw::Impl {
         }
         return depth->second.view.Get();
     }
+    static D3D11_BLEND host_blend_factor(std::uint32_t value, bool alpha) {
+        switch (value) {
+            case 0U: return D3D11_BLEND_ZERO;
+            case 1U: return D3D11_BLEND_ONE;
+            case 4U: return alpha ? D3D11_BLEND_SRC_ALPHA : D3D11_BLEND_SRC_COLOR;
+            case 5U: return alpha ? D3D11_BLEND_INV_SRC_ALPHA : D3D11_BLEND_INV_SRC_COLOR;
+            case 6U: return D3D11_BLEND_SRC_ALPHA;
+            case 7U: return D3D11_BLEND_INV_SRC_ALPHA;
+            case 8U: return alpha ? D3D11_BLEND_DEST_ALPHA : D3D11_BLEND_DEST_COLOR;
+            case 9U: return alpha ? D3D11_BLEND_INV_DEST_ALPHA : D3D11_BLEND_INV_DEST_COLOR;
+            case 10U: return D3D11_BLEND_DEST_ALPHA;
+            case 11U: return D3D11_BLEND_INV_DEST_ALPHA;
+            case 12U: case 14U: return D3D11_BLEND_BLEND_FACTOR;
+            case 13U: case 15U: return D3D11_BLEND_INV_BLEND_FACTOR;
+            case 16U: if (!alpha) return D3D11_BLEND_SRC_ALPHA_SAT;
+        }
+        throw std::runtime_error("Original Xenos blend factor unsupported by DX11");
+    }
+    static D3D11_BLEND_OP host_blend_op(std::uint32_t value) {
+        switch (value) {
+            case 0U: return D3D11_BLEND_OP_ADD;
+            case 1U: return D3D11_BLEND_OP_SUBTRACT;
+            case 2U: return D3D11_BLEND_OP_MIN;
+            case 3U: return D3D11_BLEND_OP_MAX;
+            case 4U: return D3D11_BLEND_OP_REV_SUBTRACT;
+        }
+        throw std::runtime_error("Original Xenos blend operation unsupported by DX11");
+    }
+    void bind_original_blend_state(const GpuDrawCommand& draw) {
+        const auto state = decode_xenos_blend_state(draw.register_words);
+        const BlendKey key{state.raw_control, state.write_mask};
+        auto it = blend_states.find(key);
+        if (it == blend_states.end()) {
+            D3D11_BLEND_DESC desc{};
+            auto& rt = desc.RenderTarget[0];
+            rt.BlendEnable = state.enabled ? TRUE : FALSE;
+            rt.RenderTargetWriteMask = state.write_mask;
+            rt.SrcBlend = host_blend_factor(state.rgb_source, false);
+            rt.DestBlend = host_blend_factor(state.rgb_destination, false);
+            rt.BlendOp = host_blend_op(state.rgb_operation);
+            rt.SrcBlendAlpha = host_blend_factor(state.alpha_source, true);
+            rt.DestBlendAlpha = host_blend_factor(state.alpha_destination, true);
+            rt.BlendOpAlpha = host_blend_op(state.alpha_operation);
+            ComPtr<ID3D11BlendState> created;
+            check(device->CreateBlendState(&desc, &created),
+                  "Create exact original Xenos RT0 RGB/alpha blend and color mask");
+            it = blend_states.emplace(key, std::move(created)).first;
+        }
+        context->OMSetBlendState(it->second.Get(), state.constant_factor.data(),
+                                 0xFFFFFFFFU);
+    }
     CachedPipeline& pipeline_for(const GpuDrawCommand& draw) {
         const auto key = xenos_shader_pair(draw);
         if (auto found = pipelines.find(key); found != pipelines.end())
@@ -632,6 +686,7 @@ struct Dx11LiveFirstDraw::Impl {
         context->RSSetViewports(1, &vp);
         context->RSSetState(raster.Get());
         auto* depth_view = bind_original_depth_state(draw);
+        bind_original_blend_state(draw);
         context->OMSetRenderTargets(1, edram_target.GetAddressOf(), depth_view);
         context->IASetInputLayout(pipeline.input.Get());
         context->IASetPrimitiveTopology(map_topology(native.topology));
