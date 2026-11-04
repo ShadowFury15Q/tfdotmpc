@@ -252,6 +252,7 @@ struct GpuDrawCommand {
             case 6U:   // Xenos 8_8_8_8
             case 50U:  // 8_8_8_8_AS_16_16_16_16
             case 62U:  // 8_8_8_8_GAMMA_EDRAM
+            case 54U:  // 2_10_10_10_AS_16_16_16_16 (32-bit packed storage)
                 expected_bytes_per_element = 4U;
                 break;
             case 18U:  // DXT1 / BC1
