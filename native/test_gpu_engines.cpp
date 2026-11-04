@@ -27,6 +27,12 @@ PPC_EXTERN_FUNC(__imp__VdPersistDisplay);
 PPC_EXTERN_FUNC(__imp__KiApcNormalRoutineNop);
 
 namespace {
+dotm::GpuSwapRequest observed_original_swap{};
+bool received_original_swap = false;
+void capture_original_swap(const dotm::GpuSwapRequest& request, void*) {
+    observed_original_swap = request;
+    received_original_swap = true;
+}
 void check(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
@@ -137,11 +143,19 @@ int main() {
             1U, 4096U, 4U, 0U, 0x1FFFFFFFU, 4096U);
         check(swap_virtual != 0U, "VdSwap test allocates actual Xbox physical pages");
         const auto swap_physical = dotm::mm_bound_get_physical_address(swap_virtual);
+        // Distinct actual guest RGBA pixels. Native VdSwap must copy THIS
+        // allocation, not capture a preview render target on the host.
+        for (std::uint32_t i = 0; i < 16U; ++i)
+            memory.address(swap_virtual)[i] =
+                static_cast<std::uint8_t>((i * 19U + 7U) & 255U);
+        dotm::vd_bound_set_swap_observer(&capture_original_swap, nullptr);
         swap_store(swap_fetch, 2U);
         swap_store(swap_fetch + 4U, (swap_virtual & 0xFFFFF000U) | 6U);
         swap_store(swap_fetch + 8U, (1U << 13U) | 1U); // 2x2 frontbuffer
-        for (std::uint32_t i = 3U; i < 6U; ++i)
-            swap_store(swap_fetch + i * 4U, 0x100U + i);
+        // Xenos 2D scanout descriptor: no mip chain, no synthetic texture.
+        swap_store(swap_fetch + 12U, 0U);
+        swap_store(swap_fetch + 16U, 0U);
+        swap_store(swap_fetch + 20U, 1U << 9U);
         swap_store(swap_args, swap_virtual);
         swap_store(swap_args + 4U, 6U);
         swap_store(swap_args + 8U, 0U);
@@ -168,6 +182,36 @@ int main() {
         swap_store(swap_args + 4U, 6U);
         __imp__VdSwap(ctx, memory.base());
         const auto swap_state = dotm::vd_bound_gpu_snapshot();
+        check(received_original_swap &&
+              observed_original_swap.physical_address == swap_physical &&
+              observed_original_swap.width == 2U &&
+              observed_original_swap.height == 2U &&
+              observed_original_swap.texture_format == 6U &&
+              observed_original_swap.fetch_words[1] ==
+                  ((swap_physical & 0xFFFFF000U) | 6U) &&
+              observed_original_swap.fetch_words[5] == (1U << 9U),
+              "Original VdSwap observer receives complete physical fetch descriptor");
+        const auto original_scanout =
+            dotm::vd_bound_copy_frontbuffer_scanout(observed_original_swap);
+        check(original_scanout.width == 2U &&
+              original_scanout.height == 2U &&
+              original_scanout.row_pitch == 8U &&
+              original_scanout.pixels.size() == 16U,
+              "Original guest frontbuffer DMA produces native sized scanout");
+        for (std::uint32_t i = 0; i < 16U; ++i)
+            check(original_scanout.pixels[i] ==
+                      static_cast<std::uint8_t>((i * 19U + 7U) & 255U),
+                  "Original frontbuffer pixels copied byte-exact from guest memory");
+        auto mutated_swap = observed_original_swap;
+        mutated_swap.fetch_words[1] ^= 0x1000U;
+        expect_throw([&] {
+            (void)dotm::vd_bound_copy_frontbuffer_scanout(mutated_swap);
+        }, "Scanout must reject modified GPU physical address");
+        mutated_swap = observed_original_swap;
+        mutated_swap.fetch_words[5] = 0U;
+        expect_throw([&] {
+            (void)dotm::vd_bound_copy_frontbuffer_scanout(mutated_swap);
+        }, "Scanout must reject unsupported 1D frontbuffer descriptor");
         check(swap_state.swap_requests == 1U &&
               swap_state.last_swap_physical_address == swap_physical &&
               swap_state.last_swap_width == 2U &&
@@ -249,6 +293,10 @@ int main() {
         dotm::mm_bound_free_physical_memory(1U, swap_virtual);
         check(dotm::mm_bound_query_physical_allocation_size(swap_virtual) == 0U,
               "VdSwap frontbuffer test releases tracked physical pages");
+        expect_throw([&] {
+            (void)dotm::vd_bound_copy_frontbuffer_scanout(observed_original_swap);
+        }, "Freed original frontbuffer must never be scanned out");
+        dotm::vd_bound_set_swap_observer(nullptr, nullptr);
         // Retail DOTM 0x82512C70 passes a guest display descriptor at r3
         // and receives a physical allocation through r4. The caller frees
         // it with MmFreePhysicalMemory(type=1). Do not fabricate a pointer.
