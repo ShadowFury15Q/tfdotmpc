@@ -1,19 +1,28 @@
+// Live original PPC/PM4 renderer: multiple shader pairs and draw calls are
+// dispatched through a GPU pipeline cache. Unsupported guest state fails closed.
+// DX11 is a limited host backend; full Xenos EDRAM/texture parity is not claimed.
 #ifdef _WIN32
 #define NOMINMAX
 #include "dx11_live_first_draw.hpp"
 #include "live_xenos_first_draw.hpp"
+#include "xenos_draw_pipeline.hpp"
 #include <windows.h>
 #include <d3d11.h>
 #include <d3dcompiler.h>
+#include <d3d11shader.h>
 #include <wrl/client.h>
-#include <array>
+#include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
@@ -24,8 +33,10 @@ void check(HRESULT hr, const char* operation) {
 }
 std::string private_hlsl(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary);
-    if (!stream) throw std::runtime_error("Missing privately translated ORIGINAL HLSL shader");
-    return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+    if (!stream) throw std::runtime_error(
+        "Missing original privately translated Xenos shader: " + path.string());
+    return {std::istreambuf_iterator<char>(stream),
+            std::istreambuf_iterator<char>()};
 }
 void replace_all(std::string& text, const std::string& before,
                  const std::string& after) {
@@ -170,6 +181,49 @@ void save_gpu_draw_bmp(ID3D11Device* device, ID3D11DeviceContext* context,
     if (!out) throw std::runtime_error("Cannot finish original GPU screenshot");
 }
 
+
+D3D11_PRIMITIVE_TOPOLOGY map_topology(XenosHostTopology topology) {
+    switch (topology) {
+    case XenosHostTopology::point_list: return D3D11_PRIMITIVE_TOPOLOGY_POINTLIST;
+    case XenosHostTopology::line_list: return D3D11_PRIMITIVE_TOPOLOGY_LINELIST;
+    case XenosHostTopology::line_strip: return D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP;
+    case XenosHostTopology::triangle_list: return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    case XenosHostTopology::triangle_strip: return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
+    case XenosHostTopology::rectangle_list: return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    }
+    throw std::runtime_error("Unhandled original Xenos GPU topology");
+}
+DXGI_FORMAT map_format(XenosInputFormat fmt) {
+    switch (fmt) {
+    case XenosInputFormat::float1: return DXGI_FORMAT_R32_FLOAT;
+    case XenosInputFormat::float2: return DXGI_FORMAT_R32G32_FLOAT;
+    case XenosInputFormat::float3: return DXGI_FORMAT_R32G32B32_FLOAT;
+    case XenosInputFormat::float4: return DXGI_FORMAT_R32G32B32A32_FLOAT;
+    case XenosInputFormat::unorm8x4: return DXGI_FORMAT_R8G8B8A8_UNORM;
+    case XenosInputFormat::uint8x4: return DXGI_FORMAT_R8G8B8A8_UINT;
+    case XenosInputFormat::sint16x2: return DXGI_FORMAT_R16G16_SINT;
+    case XenosInputFormat::unorm16x2: return DXGI_FORMAT_R16G16_UNORM;
+    case XenosInputFormat::float16x2: return DXGI_FORMAT_R16G16_FLOAT;
+    case XenosInputFormat::sint16x4: return DXGI_FORMAT_R16G16B16A16_SINT;
+    case XenosInputFormat::unorm16x4: return DXGI_FORMAT_R16G16B16A16_UNORM;
+    case XenosInputFormat::float16x4: return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    }
+    throw std::runtime_error("Unsupported original Xenos vertex format");
+}
+// Vertex/pixel shaders referencing unbound textures, constant buffers or
+// samplers must never be submitted as if they were valid original game output.
+void reject_missing_shader_resources(ID3DBlob* blob) {
+    ComPtr<ID3D11ShaderReflection> reflection;
+    check(D3DReflect(blob->GetBufferPointer(), blob->GetBufferSize(),
+                     IID_ID3D11ShaderReflection,
+                     reinterpret_cast<void**>(reflection.GetAddressOf())),
+          "Reflect original translated shader resources");
+    D3D11_SHADER_DESC desc{};
+    check(reflection->GetDesc(&desc), "Describe original translated shader");
+    if (desc.BoundResources)
+        throw std::runtime_error(
+            "Original shader uses Xenos resources not yet translated to DX11");
+}
 LRESULT CALLBACK live_wndproc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
     if (message == WM_CLOSE) { DestroyWindow(window); return 0; }
     if (message == WM_DESTROY) { PostQuitMessage(0); return 0; }
@@ -181,11 +235,20 @@ LRESULT CALLBACK live_wndproc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
 }  // namespace
 
 struct Dx11LiveFirstDraw::Impl {
-    explicit Impl(std::filesystem::path hlsl, std::filesystem::path screenshot)
-        : hlsl_dir(std::move(hlsl)), bmp(std::move(screenshot)) {}
-    std::filesystem::path hlsl_dir, bmp;
-    bool stopped = false;
-    bool submitted = false;
+    struct CachedPipeline {
+        XenosShaderPair key{};
+        XenosVertexLayout layout;
+        ComPtr<ID3D11VertexShader> vs;
+        ComPtr<ID3D11PixelShader> ps;
+        ComPtr<ID3D11InputLayout> input;
+    };
+    explicit Impl(std::filesystem::path root, std::filesystem::path output)
+        : shader_root(std::move(root)), bmp(std::move(output)) {}
+    std::filesystem::path shader_root, bmp;
+    bool stopped = false, wrote_bmp = false;
+    std::uint64_t pending_draw_count = 0;
+    std::uint64_t last_presented_request = 0;
+    std::atomic<std::uint64_t> requested_swaps{0};
     HWND window = nullptr;
     UINT width = 0, height = 0;
     ComPtr<ID3D11Device> device;
@@ -193,31 +256,25 @@ struct Dx11LiveFirstDraw::Impl {
     ComPtr<IDXGISwapChain> swap;
     ComPtr<ID3D11Texture2D> surface;
     ComPtr<ID3D11RenderTargetView> target;
-    ComPtr<ID3D11VertexShader> vs;
-    ComPtr<ID3D11PixelShader> ps;
-    ComPtr<ID3D11GeometryShader> gs;
-    ComPtr<ID3D11InputLayout> layout;
+    ComPtr<ID3D11GeometryShader> rectangle_gs;
     ComPtr<ID3D11RasterizerState> raster;
+    std::map<XenosShaderPair, CachedPipeline> pipelines;
+
     void initialize() {
         if (device) return;
-        const auto vertex = compile_source(
-            private_hlsl(hlsl_dir / "vertex.hlsl"), "vs_5_0", "original-live-vertex");
-        const auto pixel = compile_source(
-            private_hlsl(hlsl_dir / "pixel.hlsl"), "ps_5_0", "original-live-pixel");
-        const auto rectangle = compile_rectangle_geometry();
-        const auto instance = GetModuleHandleW(nullptr);
+        const HINSTANCE instance = GetModuleHandleW(nullptr);
         WNDCLASSW cls{};
         cls.hInstance = instance;
         cls.lpfnWndProc = &live_wndproc;
-        cls.lpszClassName = L"DOTM_LIVE_ORIGINAL_XENOS_FIRST_DRAW";
+        cls.lpszClassName = L"DOTM_LIVE_ORIGINAL_XENOS_MULTI_DRAW";
         cls.hCursor = LoadCursor(nullptr, IDC_ARROW);
         if (!RegisterClassW(&cls) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
-            throw std::runtime_error("Register live original Xenos window");
+            throw std::runtime_error("Register original Xenos multi-draw window");
         window = CreateWindowW(cls.lpszClassName,
-            L"DOTM original live PM4 GPU draw (NOT full frame)",
-            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 720,
-            nullptr, nullptr, instance, nullptr);
-        if (!window) throw std::runtime_error("Create live Xenos output window");
+            L"DOTM native original PM4 draw stream (incomplete GPU emulation)",
+            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+            1280, 720, nullptr, nullptr, instance, nullptr);
+        if (!window) throw std::runtime_error("Create original Xenos live output window");
         RECT rect{};
         GetClientRect(window, &rect);
         width = static_cast<UINT>(rect.right - rect.left);
@@ -234,103 +291,201 @@ struct Dx11LiveFirstDraw::Impl {
         desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
         D3D_FEATURE_LEVEL level{};
         check(D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE,
-              nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &desc,
-              &swap, &device, &level, &context),
-              "Create native D3D11 live Xenos device and swapchain");
+              nullptr, 0, nullptr, 0, D3D11_SDK_VERSION,
+              &desc, &swap, &device, &level, &context),
+              "Create original Xenos streaming DX11 GPU device");
         if (level < D3D_FEATURE_LEVEL_11_0)
-            throw std::runtime_error("Live original Xenos rectangle needs D3D11 FL11");
-        check(swap->GetBuffer(0, IID_PPV_ARGS(&surface)), "Get live Xenos surface");
+            throw std::runtime_error("Original Xenos streaming path needs D3D11 FL11");
+        check(swap->GetBuffer(0, IID_PPV_ARGS(&surface)), "Get original render surface");
         check(device->CreateRenderTargetView(surface.Get(), nullptr, &target),
-              "Create live Xenos render target");
-        check(device->CreateVertexShader(vertex->GetBufferPointer(),
-              vertex->GetBufferSize(), nullptr, &vs), "Create original live VS");
-        check(device->CreatePixelShader(pixel->GetBufferPointer(),
-              pixel->GetBufferSize(), nullptr, &ps), "Create original live PS");
-        check(device->CreateGeometryShader(rectangle->GetBufferPointer(),
-              rectangle->GetBufferSize(), nullptr, &gs), "Create Xenos rectangle GS");
-        // The exact, verified first retail draw fetches POSITION0 and COLOR0
-        // from 3 live 28-byte Xenos vertices, decoded by its fetch endian mode.
-        constexpr D3D11_INPUT_ELEMENT_DESC input[] = {
-            {"POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0,
-             D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 16,
-             D3D11_INPUT_PER_VERTEX_DATA, 0},
-        };
-        check(device->CreateInputLayout(input, 2, vertex->GetBufferPointer(),
-              vertex->GetBufferSize(), &layout), "Create original live VS input layout");
+              "Create original Xenos RTV");
         D3D11_RASTERIZER_DESC rs{};
         rs.FillMode = D3D11_FILL_SOLID;
         rs.CullMode = D3D11_CULL_NONE;
         rs.DepthClipEnable = TRUE;
         check(device->CreateRasterizerState(&rs, &raster),
-              "Create live Xenos rasterizer");
+              "Create original Xenos rasterizer");
         ShowWindow(window, SW_SHOW);
     }
+    CachedPipeline& pipeline_for(const GpuDrawCommand& draw) {
+        const auto key = xenos_shader_pair(draw);
+        if (auto found = pipelines.find(key); found != pipelines.end())
+            return found->second;
+        if (pipelines.size() >= 512)
+            throw std::runtime_error("Original Xenos DX11 shader cache limit reached");
+        const bool verified_first = is_original_first_xenos_draw(draw);
+        const auto vs_name = xenos_shader_hex(key.vertex);
+        const auto ps_name = xenos_shader_hex(key.pixel);
+        const auto layout_file = shader_root / "layouts" / (vs_name + ".layout");
+        CachedPipeline p;
+        p.key = key;
+        p.layout = std::filesystem::exists(layout_file)
+            ? XenosVertexLayout::load(layout_file)
+            : verified_first
+                ? XenosVertexLayout::original_first_rectangle()
+                : throw std::runtime_error(
+                    "Missing original Xenos vertex shader reflection/layout: " +
+                    layout_file.string());
+        auto vs_path = xenos_shader_source(shader_root, "vertex", key.vertex);
+        auto ps_path = xenos_shader_source(shader_root, "pixel", key.pixel);
+        // Preserve the existing private first-draw XenosRecomp output format
+        // only for the verified original first draw's exact shader hashes.
+        if (verified_first && !std::filesystem::exists(vs_path))
+            vs_path = shader_root / "vertex.hlsl";
+        if (verified_first && !std::filesystem::exists(ps_path))
+            ps_path = shader_root / "pixel.hlsl";
+        const auto vs_blob = compile_source(private_hlsl(vs_path), "vs_5_0",
+                                            "original-xenos-vertex");
+        const auto ps_blob = compile_source(private_hlsl(ps_path), "ps_5_0",
+                                            "original-xenos-pixel");
+        reject_missing_shader_resources(vs_blob.Get());
+        reject_missing_shader_resources(ps_blob.Get());
+        check(device->CreateVertexShader(vs_blob->GetBufferPointer(),
+            vs_blob->GetBufferSize(), nullptr, &p.vs), "Create original Xenos VS");
+        check(device->CreatePixelShader(ps_blob->GetBufferPointer(),
+            ps_blob->GetBufferSize(), nullptr, &p.ps), "Create original Xenos PS");
+        std::vector<D3D11_INPUT_ELEMENT_DESC> elements;
+        std::map<std::uint32_t, UINT> slots;
+        for (const auto& attribute : p.layout.attributes) {
+            if (!slots.count(attribute.fetch_slot))
+                slots.emplace(attribute.fetch_slot, static_cast<UINT>(slots.size()));
+            elements.push_back({attribute.semantic.c_str(),
+                                attribute.semantic_index, map_format(attribute.format),
+                                slots.at(attribute.fetch_slot), attribute.byte_offset,
+                                D3D11_INPUT_PER_VERTEX_DATA, 0U});
+        }
+        check(device->CreateInputLayout(elements.data(),
+            static_cast<UINT>(elements.size()), vs_blob->GetBufferPointer(),
+            vs_blob->GetBufferSize(), &p.input),
+            "Create original shader-reflected multi-stream input layout");
+        auto [inserted, ok] = pipelines.emplace(key, std::move(p));
+        return inserted->second;
+    }
     bool submit(const GpuDrawCommand& draw) {
-        if (stopped || !is_original_first_xenos_draw(draw)) return false;
-        // The caller holds the GPU register lock and grants a read window only
-        // for this callback. Copy guest physical vertex data synchronously.
-        const auto vertices = read_original_first_xenos_vertices(draw);
+        if (stopped) return false;
+        // Never acknowledge unknown original conditions or geometry. Resource
+        // captures happen in the *live* GPU callback under its read window.
         initialize();
-        D3D11_BUFFER_DESC vertex_desc{};
-        vertex_desc.ByteWidth = static_cast<UINT>(vertices.size());
-        vertex_desc.Usage = D3D11_USAGE_IMMUTABLE;
-        vertex_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-        D3D11_SUBRESOURCE_DATA init{};
-        init.pSysMem = vertices.data();
-        ComPtr<ID3D11Buffer> vertex_buffer;
-        check(device->CreateBuffer(&vertex_desc, &init, &vertex_buffer),
-              "Upload LIVE original Xenos vertex DMA");
-        const UINT stride = 28U, offset = 0U;
-        D3D11_VIEWPORT viewport{};
-        viewport.Width = static_cast<float>(width);
-        viewport.Height = static_cast<float>(height);
-        viewport.MinDepth = 0.f; viewport.MaxDepth = 1.f;
-        context->IASetInputLayout(layout.Get());
-        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        context->IASetVertexBuffers(0, 1, vertex_buffer.GetAddressOf(), &stride, &offset);
-        context->VSSetShader(vs.Get(), nullptr, 0);
-        context->GSSetShader(gs.Get(), nullptr, 0);
-        context->PSSetShader(ps.Get(), nullptr, 0);
-        context->RSSetViewports(1, &viewport);
+        auto& pipeline = pipeline_for(draw);
+        const auto native = prepare_original_xenos_draw(draw, pipeline.layout);
+        if (native.topology == XenosHostTopology::rectangle_list &&
+            !is_original_first_xenos_draw(draw))
+            throw std::runtime_error(
+                "Generic Xenos rectangle shader output reflection not implemented");
+        if (native.topology == XenosHostTopology::rectangle_list && !rectangle_gs) {
+            const auto shader = compile_rectangle_geometry();
+            check(device->CreateGeometryShader(shader->GetBufferPointer(),
+                shader->GetBufferSize(), nullptr, &rectangle_gs),
+                "Create native Xenos rectangle geometry shader");
+        }
+        if (pending_draw_count == 0) {
+            const float black[] = {0, 0, 0, 1};
+            context->ClearRenderTargetView(target.Get(), black);
+        }
+        D3D11_VIEWPORT vp{};
+        vp.Width = static_cast<float>(width);
+        vp.Height = static_cast<float>(height);
+        vp.MinDepth = 0.f;
+        vp.MaxDepth = 1.f;
+        context->RSSetViewports(1, &vp);
         context->RSSetState(raster.Get());
         context->OMSetRenderTargets(1, target.GetAddressOf(), nullptr);
-        if (!submitted) {
-            const float clear[] = {0, 0, 0, 1};
-            context->ClearRenderTargetView(target.Get(), clear);
+        context->IASetInputLayout(pipeline.input.Get());
+        context->IASetPrimitiveTopology(map_topology(native.topology));
+        context->VSSetShader(pipeline.vs.Get(), nullptr, 0);
+        context->GSSetShader(
+            native.topology == XenosHostTopology::rectangle_list ?
+                rectangle_gs.Get() : nullptr, nullptr, 0);
+        context->PSSetShader(pipeline.ps.Get(), nullptr, 0);
+        std::vector<ComPtr<ID3D11Buffer>> host_vbs;
+        host_vbs.reserve(native.streams.size());
+        for (std::size_t i = 0; i < native.streams.size(); ++i) {
+            const auto& stream = native.streams[i];
+            D3D11_BUFFER_DESC desc{};
+            desc.ByteWidth = static_cast<UINT>(stream.bytes.size());
+            desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+            desc.Usage = D3D11_USAGE_IMMUTABLE;
+            D3D11_SUBRESOURCE_DATA bytes{};
+            bytes.pSysMem = stream.bytes.data();
+            ComPtr<ID3D11Buffer> gpu_buffer;
+            check(device->CreateBuffer(&desc, &bytes, &gpu_buffer),
+                  "Upload original live Xenos vertex allocation");
+            const UINT stride = stream.stride, offset = 0;
+            context->IASetVertexBuffers(static_cast<UINT>(i), 1,
+                gpu_buffer.GetAddressOf(), &stride, &offset);
+            host_vbs.emplace_back(std::move(gpu_buffer));
         }
-        // This Draw(3) consists exclusively of ORIGINAL live PM4 vertices and
-        // shaders, expanded to the correct Xenos rectangle by the GS.
-        context->Draw(3U, 0U);
+        if (native.indices.empty()) {
+            context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0);
+            context->Draw(native.count, 0);
+        } else {
+            D3D11_BUFFER_DESC desc{};
+            desc.ByteWidth = static_cast<UINT>(native.indices.size() * sizeof(std::uint32_t));
+            desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+            desc.Usage = D3D11_USAGE_IMMUTABLE;
+            D3D11_SUBRESOURCE_DATA data{};
+            data.pSysMem = native.indices.data();
+            ComPtr<ID3D11Buffer> ib;
+            check(device->CreateBuffer(&desc, &data, &ib),
+                  "Upload original indexed PM4 draw");
+            context->IASetIndexBuffer(ib.Get(), DXGI_FORMAT_R32_UINT, 0);
+            context->DrawIndexed(native.count, 0, 0);
+        }
+        // The draw is GPU-submitted; NO per-primitive Present() here.
+        // A validated original guest VdSwap request triggers host composition.
         context->Flush();
-        if (!bmp.empty() && !submitted)
-            save_gpu_draw_bmp(device.Get(), context.Get(), surface.Get(), bmp);
-        check(swap->Present(1U, 0U), "Present live original PM4 draw");
-        submitted = true;
-        return true; // Acknowledge PM4 only after real native GPU submission.
+        ++pending_draw_count;
+        return true;
+    }
+    void notify_swap(const GpuSwapRequest& request) {
+        if (!request.width || !request.height || !request.physical_address)
+            return;
+        requested_swaps.fetch_add(1, std::memory_order_release);
     }
     void pump() {
-        if (!window || stopped) return;
-        MSG msg{};
-        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT) { stopped = true; break; }
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+        if (stopped) return;
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+            if (message.message == WM_QUIT) { stopped = true; break; }
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
         }
+        const auto target_swap = requested_swaps.load(std::memory_order_acquire);
+        if (!device || !pending_draw_count ||
+            target_swap <= last_presented_request)
+            return;
+        // This is a preview of accumulated native draws at the VdSwap
+        // request boundary. The real Xenos EDRAM resolve/frontbuffer
+        // ownership must still be implemented to claim a full game frame.
+        if (!bmp.empty() && !wrote_bmp) {
+            save_gpu_draw_bmp(device.Get(), context.Get(), surface.Get(), bmp);
+            wrote_bmp = true;
+        }
+        check(swap->Present(1U, 0U),
+              "Present accumulated original Xenos PM4 draw batch");
+        pending_draw_count = 0;
+        last_presented_request = target_swap;
     }
 };
-Dx11LiveFirstDraw::Dx11LiveFirstDraw(std::filesystem::path hlsl,
+Dx11LiveFirstDraw::Dx11LiveFirstDraw(std::filesystem::path root,
                                      std::filesystem::path gpu_bmp)
-    : impl_(std::make_unique<Impl>(std::move(hlsl), std::move(gpu_bmp))) {}
+    : impl_(std::make_unique<Impl>(std::move(root), std::move(gpu_bmp))) {}
 Dx11LiveFirstDraw::~Dx11LiveFirstDraw() = default;
 bool Dx11LiveFirstDraw::submit(const GpuDrawCommand& draw) {
     return impl_->submit(draw);
 }
 void Dx11LiveFirstDraw::pump_messages() { impl_->pump(); }
+void Dx11LiveFirstDraw::request_swap(const GpuSwapRequest& request) {
+    impl_->notify_swap(request);
+}
+void Dx11LiveFirstDraw::swap_callback(const GpuSwapRequest& request,
+                                     void* context) {
+    if (context) static_cast<Dx11LiveFirstDraw*>(context)->request_swap(request);
+}
 bool Dx11LiveFirstDraw::callback(const GpuDrawCommand& draw, void* context) {
     return context && static_cast<Dx11LiveFirstDraw*>(context)->submit(draw);
 }
 } // namespace dotm
 #else
-#error Live Xenos native DX11 pipeline is Windows-only.
+#error Native original Xenos D3D11 GPU pipeline is available only on Windows.
 #endif
