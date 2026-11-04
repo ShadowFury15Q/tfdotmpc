@@ -26,7 +26,7 @@ inline XenosTextureUpload prepare_xenos_texture_2d(
         throw std::runtime_error("Unsupported Xenos texture dimension or mip chain");
     std::uint32_t block = 1, element_bytes = 0;
     switch (b.format) {
-        case 6: element_bytes = 4; break;  // Xenos FMT_8_8_8_8
+        case 6: case 54: element_bytes = 4; break;  // RGBA8 / packed RGB10A2
         case 18: block = 4; element_bytes = 8; break; // DXT1
         case 19: case 20: block = 4; element_bytes = 16; break; // DXT3/5
         case 49: block = 4; element_bytes = 16; break; // DXN
