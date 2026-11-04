@@ -54,9 +54,27 @@ int main() {
     fail([&] { dotm::prepare_original_xenos_draw(draw, layout); },
          "Conditional original GPU draw was incorrectly accepted");
     draw.has_visibility_query_token = false;
+    draw.source_select = 2;
+    draw.decoded_indices.clear();
     draw.primitive_type = 5;
-    fail([&] { dotm::prepare_original_xenos_draw(draw, layout); },
-         "Unsupported triangle fan silently accepted");
+    auto fan = dotm::prepare_original_xenos_draw(draw, layout);
+    check(fan.topology == dotm::XenosHostTopology::triangle_list &&
+          fan.count == 6U &&
+          fan.indices == std::vector<std::uint32_t>({0, 1, 2, 0, 2, 3}),
+          "Original Xenos triangle fan did not preserve original winding");
+    draw.primitive_type = 12;
+    auto loop = dotm::prepare_original_xenos_draw(draw, layout);
+    check(loop.topology == dotm::XenosHostTopology::line_strip &&
+          loop.count == 5U &&
+          loop.indices == std::vector<std::uint32_t>({0, 1, 2, 3, 0}),
+          "Original Xenos line loop lost closing edge");
+    draw.source_select = 0;
+    draw.decoded_indices = {0, 2, 7, 1};
+    draw.primitive_type = 5;
+    auto indexed_fan = dotm::prepare_original_xenos_draw(draw, layout);
+    check(indexed_fan.indices ==
+          std::vector<std::uint32_t>({0, 2, 7, 0, 7, 1}),
+          "DMA-indexed original triangle fan indices were altered");
     draw.primitive_type = 4;
     draw.decoded_indices = {0, 2, 80, 1};
     fail([&] { dotm::prepare_original_xenos_draw(draw, layout); },

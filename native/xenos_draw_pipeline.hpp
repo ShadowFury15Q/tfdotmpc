@@ -53,7 +53,7 @@ inline std::filesystem::path xenos_shader_source(
 // Xenos primitive numbers. Rectangle-list needs its post-VS geometry stage.
 enum class XenosHostTopology {
     point_list, line_list, line_strip, triangle_list,
-    triangle_strip, rectangle_list
+    triangle_strip, rectangle_list, triangle_fan, line_loop
 };
 inline XenosHostTopology xenos_host_topology(std::uint32_t primitive) {
     switch (primitive) {
@@ -61,8 +61,10 @@ inline XenosHostTopology xenos_host_topology(std::uint32_t primitive) {
         case 2: return XenosHostTopology::line_list;
         case 3: return XenosHostTopology::line_strip;
         case 4: return XenosHostTopology::triangle_list;
+        case 5: return XenosHostTopology::triangle_fan;
         case 6: return XenosHostTopology::triangle_strip;
         case 8: return XenosHostTopology::rectangle_list;
+        case 12: return XenosHostTopology::line_loop;
         default: throw std::runtime_error("Unsupported original Xenos primitive topology");
     }
 }
@@ -71,9 +73,11 @@ inline std::uint32_t xenos_minimum_primitive_vertices(
     switch (kind) {
         case XenosHostTopology::point_list: return 1;
         case XenosHostTopology::line_list:
-        case XenosHostTopology::line_strip: return 2;
+        case XenosHostTopology::line_strip:
+        case XenosHostTopology::line_loop: return 2;
         case XenosHostTopology::triangle_list:
         case XenosHostTopology::triangle_strip:
+        case XenosHostTopology::triangle_fan:
         case XenosHostTopology::rectangle_list: return 3;
     }
     throw std::runtime_error("Unreachable Xenos topology");
@@ -222,6 +226,39 @@ inline XenosNativeDraw prepare_original_xenos_draw(
         if (index >= 1'000'000U)
             throw std::runtime_error("Original Xenos index exceeds host limit");
         max_index = std::max(max_index, index);
+    }
+    // D3D11 has no triangle-fan or closed line-loop topology. Convert only
+    // the original hardware vertex ordering to equivalent native indices;
+    // never replace positions or shader inputs with synthetic geometry.
+    // Keep the conversion after original index-buffer decode so DMA and auto
+    // index sources use exactly the same original guest vertex references.
+    if (out.topology == XenosHostTopology::triangle_fan ||
+        out.topology == XenosHostTopology::line_loop) {
+        std::vector<std::uint32_t> source_indices = out.indices;
+        if (source_indices.empty()) {
+            source_indices.reserve(out.count);
+            for (std::uint32_t i = 0; i < out.count; ++i)
+                source_indices.push_back(i);
+        }
+        out.indices.clear();
+        if (out.topology == XenosHostTopology::triangle_fan) {
+            if (out.count > 333333U)
+                throw std::runtime_error("Original Xenos fan exceeds native index bounds");
+            out.indices.reserve((out.count - 2U) * 3U);
+            for (std::uint32_t i = 1; i + 1U < out.count; ++i) {
+                out.indices.push_back(source_indices[0]);
+                out.indices.push_back(source_indices[i]);
+                out.indices.push_back(source_indices[i + 1U]);
+            }
+            out.topology = XenosHostTopology::triangle_list;
+        } else {
+            if (out.count >= 1'000'000U)
+                throw std::runtime_error("Original Xenos line loop exceeds native index bounds");
+            out.indices = std::move(source_indices);
+            out.indices.push_back(out.indices.front());
+            out.topology = XenosHostTopology::line_strip;
+        }
+        out.count = static_cast<std::uint32_t>(out.indices.size());
     }
     // Shader pair is part of the plan, not the primitive number. This works
     // for consecutive original draws using different VS/PS combinations.

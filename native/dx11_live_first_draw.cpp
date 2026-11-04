@@ -190,6 +190,9 @@ D3D11_PRIMITIVE_TOPOLOGY map_topology(XenosHostTopology topology) {
     case XenosHostTopology::triangle_list: return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
     case XenosHostTopology::triangle_strip: return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
     case XenosHostTopology::rectangle_list: return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    case XenosHostTopology::triangle_fan:
+    case XenosHostTopology::line_loop:
+        throw std::runtime_error("Original primitive must be converted before D3D11 submission");
     }
     throw std::runtime_error("Unhandled original Xenos GPU topology");
 }
