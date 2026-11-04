@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'native/**'
+      - 'tools/index_original_xenos_shader_containers.py'
+      - 'tools/test_index_original_xenos_shader_containers.py'
       - 'scripts/private_ppc_preflight.py'
       - 'scripts/test_private_ppc_preflight.py'
       - 'scripts/audit_ppc_call_sites.py'

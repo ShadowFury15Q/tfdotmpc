@@ -53,6 +53,18 @@ full-native production pipeline should use a DX12/Vulkan shader execution
 layer (with real resource binding, texture tiling, EDRAM and scanout) rather
 than assuming this limited DX11 bridge can render the entire game.
 
+### Generate the cache without writing every shader layout by hand
+
+Run `python tools/index_original_xenos_shader_containers.py <private-original-shader-containers> <private-cache> --xenosrecomp <XenosRecomp> --header <shader_common.h>`.
+The indexer scans genuine original Xenos binary shader containers,
+derives each shader FNV64 identity, decodes vertex element reflection and
+the original matching 96-bit VFETCH instructions, generates
+`layouts/<hash>.layout`, and invokes upstream XenosRecomp for each shader.
+For a metadata-only audit, omit both compiler options. Indexed shaders
+with formats or vertex addressing beyond implemented DX11 support are
+**rejected**, not provided with fake host layouts. The original files stay
+outside GitHub. This cache is a preparation step, not proof of a running game.
+
 To opt in to private live rendering on Windows, set
 `DOTM_PRIVATE_LIVE_HLSL_DIR` and run the normal original PPC private boot.
 Optional `DOTM_PRIVATE_LIVE_FIRST_DRAW_BMP` writes one readback of the
