@@ -315,20 +315,22 @@ void replay(const std::filesystem::path& capture,
     ShowWindow(wnd, SW_SHOW);
     // Execute the actual submitted VS -> rectangle GS -> PS immediately;
     // redraw after uncovering the window, never wait for arbitrary input.
-    const auto draw_original = [&]() {
+    const auto draw_original = [&](bool capture_image) {
         const float black[] = {0, 0, 0, 1};
         context->ClearRenderTargetView(rtv.Get(), black);
         context->Draw(3, 0);
+        // DISCARD swapchains invalidate backbuffer contents on Present.
+        // Copy the real GPU pixels BEFORE presentation, never after it.
+        if (capture_image)
+            save_gpu_draw_bmp(device.Get(), context.Get(), surface.Get(), screenshot);
         check(swapchain->Present(1, 0), "Present first original Xenos draw");
     };
-    draw_original();
-    if (!screenshot.empty())
-        save_gpu_draw_bmp(device.Get(), context.Get(), surface.Get(), screenshot);
+    draw_original(!screenshot.empty());
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
-        if (msg.message == WM_PAINT) draw_original();
+        if (msg.message == WM_PAINT) draw_original(false);
     }
 }
 } // namespace
