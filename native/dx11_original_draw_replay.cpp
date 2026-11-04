@@ -248,19 +248,20 @@ void replay(const std::filesystem::path& capture,
     context->RSSetState(raster.Get());
     context->OMSetRenderTargets(1, rtv.GetAddressOf(), nullptr);
     ShowWindow(wnd, SW_SHOW);
-    MSG msg{};
-    bool needs_redraw = true;
-    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
-        if (!needs_redraw) continue;
-        // Clearing the host presentation surface is not a simulated DOTM
-        // frame. The sole draw below executes captured game VS/PS bytecode.
+    // Execute the actual submitted VS -> rectangle GS -> PS immediately;
+    // redraw after uncovering the window, never wait for arbitrary input.
+    const auto draw_original = [&]() {
         const float black[] = {0, 0, 0, 1};
         context->ClearRenderTargetView(rtv.Get(), black);
         context->Draw(3, 0);
         check(swapchain->Present(1, 0), "Present first original Xenos draw");
-        needs_redraw = false;
+    };
+    draw_original();
+    MSG msg{};
+    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+        if (msg.message == WM_PAINT) draw_original();
     }
 }
 } // namespace
@@ -273,8 +274,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             "Usage: dotm_dx11_original_draw_replay.exe <private-capture/first-original-draw> <private-translated-output>\n"
             "No data is generated: the ORIGINAL first Xenos draw and XenosRecomp HLSL are required.");
         const std::filesystem::path capture(argv[1]), translated(argv[2]);
-        LocalFree(argv);
         replay(capture, translated);
+        LocalFree(argv);
         return 0;
     } catch (const std::exception& e) {
         LocalFree(argv);
