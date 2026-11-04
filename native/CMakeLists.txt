@@ -57,6 +57,9 @@ target_link_libraries(dotm_gpu_engines PUBLIC dotm_kernel_guest_memory)
 add_executable(dotm_original_draw_capture_test test_original_xenos_draw_capture.cpp)
 add_test(NAME xenos_private_original_draw_capture_preserves_shader_bytes
   COMMAND dotm_original_draw_capture_test)
+add_executable(dotm_live_first_draw_test test_live_xenos_first_draw.cpp)
+add_test(NAME xenos_live_original_draw_validation
+  COMMAND dotm_live_first_draw_test)
 
 add_executable(dotm_gpu_engines_ppc_test test_gpu_engines.cpp gpu_engines_ppc.cpp)
 target_include_directories(dotm_gpu_engines_ppc_test PRIVATE
@@ -271,6 +274,8 @@ if(WIN32)
   # using its captured DMA and privately translated VS/PS HLSL.
   add_executable(dotm_dx11_original_draw_replay WIN32 dx11_original_draw_replay.cpp)
   target_link_libraries(dotm_dx11_original_draw_replay PRIVATE d3d11 d3dcompiler dxgi user32 shell32)
+  add_library(dotm_dx11_live_xenos STATIC dx11_live_first_draw.cpp)
+  target_link_libraries(dotm_dx11_live_xenos PUBLIC dotm_gpu_engines PRIVATE d3d11 d3dcompiler dxgi user32 shell32)
 endif()
 
 # Platform-independent native Windows keyboard/mouse action-state engine.
@@ -450,6 +455,9 @@ if(DOTM_PRIVATE_PPC_DIR)
     "${DOTM_PRIVATE_PPC_DIR}/ppc_recomp_shared.h")
   target_link_libraries(dotm_private_link_probe
     PRIVATE dotm_recomp_bridge dotm_xam_input dotm_xnet_startup dotm_xam_launch_data dotm_kernel_guest_memory dotm_kernel_title_termination dotm_gpu_engines dotm_kernel_tls dotm_kernel_critical_sections dotm_kernel_mutant dotm_kernel_thread dotm_kernel_file_cache dotm_kernel_file_io dotm_kernel_rtl_memory dotm_xex_optional_header dotm_xex_privilege dotm_xex_title_boot)
+  if(WIN32)
+    target_link_libraries(dotm_private_link_probe PRIVATE dotm_dx11_live_xenos)
+  endif()
   if(MSVC)
     target_compile_options(dotm_private_link_probe PRIVATE /bigobj)
   endif()

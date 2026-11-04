@@ -4,6 +4,9 @@
 #include "kernel_guest_memory.hpp"
 #include "gpu_engines.hpp"
 #include "original_xenos_draw_capture.hpp"
+#if defined(_WIN32) && !defined(DOTM_SYNTHETIC_PRIVATE_BOOT)
+#include "dx11_live_first_draw.hpp"
+#endif
 #include "kernel_title_termination.hpp"
 #include "kernel_critical_sections.hpp"
 #include "kernel_mutant.hpp"
@@ -72,6 +75,22 @@ struct ScopedHostBindings {
         // Back the real guest MMIO aperture before executing _xstart.
         dotm::vd_bound_map_gpu_mmio();
         const char* draw_capture = std::getenv("DOTM_PRIVATE_DRAW_CAPTURE_DIR");
+        const char* live_hlsl = std::getenv("DOTM_PRIVATE_LIVE_HLSL_DIR");
+        if (live_hlsl && *live_hlsl && draw_capture && *draw_capture)
+            throw std::runtime_error("Choose live original GPU output OR private draw capture");
+#if defined(_WIN32)
+        if (live_hlsl && *live_hlsl) {
+            const char* output = std::getenv("DOTM_PRIVATE_LIVE_FIRST_DRAW_BMP");
+            live_dx11_ = std::make_unique<dotm::Dx11LiveFirstDraw>(
+                std::filesystem::path(live_hlsl),
+                output && *output ? std::filesystem::path(output) : std::filesystem::path());
+            dotm::vd_bound_set_draw_submitter(
+                &dotm::Dx11LiveFirstDraw::callback, live_dx11_.get());
+        }
+#else
+        if (live_hlsl && *live_hlsl)
+            throw std::runtime_error("Live Xenos DX11 rendering requires Windows");
+#endif
         if (draw_capture && *draw_capture) {
             private_draw_capture_ = std::make_unique<dotm::OriginalXenosDrawCapture>(
                 std::filesystem::path(draw_capture));
@@ -114,7 +133,16 @@ struct ScopedHostBindings {
         dotm::bind_kernel_critical_sections(nullptr);
         dotm::bind_kernel_guest_memory(nullptr, nullptr);
     }
+
+    void pump_gpu_messages() {
+#if defined(_WIN32) && !defined(DOTM_SYNTHETIC_PRIVATE_BOOT)
+        if (live_dx11_) live_dx11_->pump_messages();
+#endif
+    }
     std::unique_ptr<dotm::OriginalXenosDrawCapture> private_draw_capture_;
+#if defined(_WIN32) && !defined(DOTM_SYNTHETIC_PRIVATE_BOOT)
+    std::unique_ptr<dotm::Dx11LiveFirstDraw> live_dx11_;
+#endif
     dotm::KernelFileCache file_cache_;
     dotm::XNetStartupHost xnet_;
     ScopedHostBindings(const ScopedHostBindings&) = delete;
@@ -250,7 +278,7 @@ void execute_guest_entry(dotm::GuestMemory& memory, std::uint32_t entry) {
     // Consume the actual ring concurrently while _xstart executes; otherwise
     // the PPC title spins waiting for CP_RB_RPTR and its DMA writeback.
     // This worker does not fabricate frames or suppress unsupported commands.
-    std::jthread gpu_command_worker([](std::stop_token stop) {
+    std::jthread gpu_command_worker([&bindings](std::stop_token stop) {
         while (!stop.stop_requested()) {
             try {
                 (void)dotm::vd_bound_drain_mmio_ring(4096U);
@@ -268,6 +296,7 @@ void execute_guest_entry(dotm::GuestMemory& memory, std::uint32_t entry) {
                 std::fflush(stderr);
                 break;
             }
+            bindings.pump_gpu_messages();
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     });
