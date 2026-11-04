@@ -295,6 +295,15 @@ struct GpuDrawCommand {
 };
 using GpuDrawSubmitter = bool (*)(const GpuDrawCommand&, void*);
 void vd_bound_set_draw_submitter(GpuDrawSubmitter submitter, void* context);
+// VdSwap builds a real guest fetch command, not a synthetic XE_SWAP.
+// Observers only receive the original caller's validated frontbuffer request.
+// They must NOT call vd_bound_* under the GPU lock or treat this as a frame.
+struct GpuSwapRequest {
+    std::uint32_t physical_address = 0;
+    std::uint32_t width = 0, height = 0, texture_format = 0;
+};
+using GpuSwapObserver = void (*)(const GpuSwapRequest&, void*);
+void vd_bound_set_swap_observer(GpuSwapObserver observer, void* context);
 
 // The binding must be removed before the guest address space is destroyed.
 void bind_gpu_engines(GuestMemory* memory) noexcept;

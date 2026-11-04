@@ -36,6 +36,8 @@ struct IndirectFrame {
 std::vector<IndirectFrame> indirect_frames;
 GpuDrawSubmitter draw_submitter = nullptr;
 void* draw_submitter_context = nullptr;
+GpuSwapObserver swap_observer = nullptr;
+void* swap_observer_context = nullptr;
 constexpr std::size_t kMaxIndirectDepth = 8;
 constexpr std::uint32_t kXenosMmioBase = 0x7FC80000U;
 constexpr std::uint32_t kXenosMmioBytes = 0x00080000U;
@@ -249,11 +251,18 @@ void vd_bound_set_draw_submitter(GpuDrawSubmitter submitter, void* context) {
     draw_submitter = submitter;
     draw_submitter_context = submitter ? context : nullptr;
 }
+void vd_bound_set_swap_observer(GpuSwapObserver observer, void* context) {
+    std::lock_guard lock(gpu_mutex);
+    swap_observer = observer;
+    swap_observer_context = observer ? context : nullptr;
+}
 void bind_gpu_engines(GuestMemory* memory) noexcept {
     std::lock_guard lock(gpu_mutex);
     guest_memory = memory;
     draw_submitter = nullptr;
     draw_submitter_context = nullptr;
+    swap_observer = nullptr;
+    swap_observer_context = nullptr;
     engine = {};
     indirect_frames.clear();
     gpu_registers.fill(0);
@@ -551,6 +560,12 @@ void vd_bound_swap(std::uint32_t command_buffer, std::uint32_t texture_fetch,
     engine.last_swap_width = width;
     engine.last_swap_height = height;
     engine.last_swap_texture_format = texture_format;
+    if (swap_observer) {
+        // Invoke under the GPU state lock. The observer must only queue a
+        // host-side request; it must not invoke D3D11 from the PPC thread.
+        swap_observer({physical, width, height, texture_format},
+                      swap_observer_context);
+    }
     (void)gpu_identifier;
 }
 std::uint32_t vd_bound_initialize_scaler_command_buffer(

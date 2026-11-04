@@ -86,6 +86,8 @@ struct ScopedHostBindings {
                 output && *output ? std::filesystem::path(output) : std::filesystem::path());
             dotm::vd_bound_set_draw_submitter(
                 &dotm::Dx11LiveFirstDraw::callback, live_dx11_.get());
+            dotm::vd_bound_set_swap_observer(
+                &dotm::Dx11LiveFirstDraw::swap_callback, live_dx11_.get());
         }
 #else
         if (live_hlsl && *live_hlsl)

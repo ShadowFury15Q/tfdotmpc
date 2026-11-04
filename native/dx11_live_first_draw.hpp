@@ -16,6 +16,8 @@ public:
     Dx11LiveFirstDraw& operator=(const Dx11LiveFirstDraw&) = delete;
     bool submit(const GpuDrawCommand& draw);
     void pump_messages();
+    void request_swap(const GpuSwapRequest& request);
+    static void swap_callback(const GpuSwapRequest& request, void* context);
     static bool callback(const GpuDrawCommand& draw, void* context);
 private:
     struct Impl;
